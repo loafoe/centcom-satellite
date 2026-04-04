@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write # For creating releases
   packages: write
   id-token: write # For cosign keyless signing
 
