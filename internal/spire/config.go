@@ -3,6 +3,7 @@ package spire
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -56,12 +57,5 @@ func (c *Config) IsIDAllowed(spiffeID string) bool {
 	if len(c.AllowedSPIFFEIDs) == 0 {
 		return true
 	}
-
-	for _, allowed := range c.AllowedSPIFFEIDs {
-		if spiffeID == allowed {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(c.AllowedSPIFFEIDs, spiffeID)
 }

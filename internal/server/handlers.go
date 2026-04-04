@@ -98,28 +98,28 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 // HandleHealthz handles liveness probe requests.
 func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // HandleReadyz handles readiness probe requests.
 func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 	// Could add additional checks here (e.g., k8s connectivity)
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // HandleListTasks returns the list of registered tasks.
 func (h *Handlers) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := h.registry.List()
-	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+	h.writeJSON(w, http.StatusOK, map[string]any{
 		"tasks": tasks,
 	})
 }
 
-func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func (h *Handlers) writeError(w http.ResponseWriter, status int, message string) {
