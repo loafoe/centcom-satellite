@@ -1,0 +1,13 @@
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+
+builds:
+  - id: pico-agent
+    dir: .
+    main: ./cmd/pico-agent
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Env.VERSION}}

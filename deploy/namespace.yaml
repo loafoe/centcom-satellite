@@ -1,0 +1,7 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pico-agent
+  labels:
+    app.kubernetes.io/name: pico-agent

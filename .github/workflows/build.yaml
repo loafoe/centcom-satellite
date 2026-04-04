@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - uses: ko-build/setup-ko@v0.7
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get short SHA
+        id: sha
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push with ko
+        id: ko
+        env:
+          KO_DOCKER_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ steps.sha.outputs.SHORT_SHA }}
+        run: |
+          IMAGE=$(ko build ./cmd/pico-agent \
+            --bare \
+            --tags=main,${{ steps.sha.outputs.SHORT_SHA }})
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Sign image with cosign
+        env:
+          IMAGE: ${{ steps.ko.outputs.image }}
+        run: |
+          cosign sign --yes "${IMAGE}"

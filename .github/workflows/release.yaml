@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # For cosign keyless signing
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - uses: ko-build/setup-ko@v0.7
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push with ko
+        id: ko
+        env:
+          KO_DOCKER_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          # Build and push the image
+          IMAGE=$(ko build ./cmd/pico-agent \
+            --bare \
+            --tags=${{ steps.version.outputs.VERSION }},latest \
+            --image-refs=image-refs.txt)
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "Built image: ${IMAGE}"
+
+      - name: Sign image with cosign
+        env:
+          IMAGE: ${{ steps.ko.outputs.image }}
+        run: |
+          # Sign the image using keyless signing (OIDC)
+          cosign sign --yes "${IMAGE}"
+
+          # Also sign by tag for convenience
+          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}"
+
+      - name: Generate SBOM
+        env:
+          IMAGE: ${{ steps.ko.outputs.image }}
+        run: |
+          # Generate and attach SBOM
+          cosign attach sbom --sbom <(ko sbom ./cmd/pico-agent) "${IMAGE}" || true
+
+      - name: Verify signature
+        env:
+          IMAGE: ${{ steps.ko.outputs.image }}
+        run: |
+          # Verify the signature we just created
+          cosign verify "${IMAGE}" \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}/*" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Container Image
+
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+            ```
+
+            ## Verify Signature
+
+            ```bash
+            cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }} \
+              --certificate-identity-regexp="https://github.com/${{ github.repository }}/*" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            ```
