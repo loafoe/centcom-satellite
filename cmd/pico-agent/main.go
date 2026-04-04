@@ -13,6 +13,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/k8s"
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/server"
+	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
 	"github.com/loafoe/pico-agent/internal/webhook"
@@ -65,8 +66,26 @@ func main() {
 	registry := task.NewRegistry()
 	registry.Register(pv_resize.New(k8sClient.Clientset))
 
-	// Setup webhook verifier
-	verifier := webhook.NewVerifier(cfg.WebhookSecret)
+	// Setup webhook verifier (may be nil if SPIRE-only auth)
+	var verifier *webhook.Verifier
+	if cfg.WebhookSecret != "" {
+		verifier = webhook.NewVerifier(cfg.WebhookSecret)
+	}
+
+	// Setup SPIRE client if enabled
+	var spireClient *spire.Client
+	if cfg.SPIRE.Enabled {
+		spireClient = spire.NewClient(&cfg.SPIRE)
+		if err := spireClient.Start(ctx); err != nil {
+			slog.Error("failed to start SPIRE client", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := spireClient.Close(); err != nil {
+				slog.Error("failed to close SPIRE client", "error", err)
+			}
+		}()
+	}
 
 	// Create and start server
 	srv := server.New(
@@ -77,6 +96,7 @@ func main() {
 		registry,
 		verifier,
 		metrics,
+		spireClient,
 	)
 
 	// Start server in goroutine

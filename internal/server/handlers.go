@@ -48,13 +48,21 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Verify signature
-	signature := r.Header.Get(webhook.SignatureHeader)
-	if err := h.verifier.Verify(signature, body); err != nil {
-		slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
-		h.writeError(w, http.StatusUnauthorized, "invalid signature")
+	// Verify signature (skip if using SPIRE mTLS - connection already authenticated)
+	if h.verifier != nil {
+		signature := r.Header.Get(webhook.SignatureHeader)
+		if err := h.verifier.Verify(signature, body); err != nil {
+			slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
+			h.writeError(w, http.StatusUnauthorized, "invalid signature")
+			return
+		}
+	} else if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		// No webhook verifier and no mTLS - reject
+		slog.Warn("unauthenticated request rejected", "remote_addr", r.RemoteAddr)
+		h.writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	// If we get here with r.TLS and peer certs, SPIRE mTLS already validated the client
 
 	// Parse request
 	req, err := task.ParseRequest(body)

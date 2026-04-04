@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/loafoe/pico-agent/internal/observability"
+	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
 	"github.com/loafoe/pico-agent/internal/webhook"
 )
@@ -22,21 +24,23 @@ type Config struct {
 
 // Server is the main HTTP server.
 type Server struct {
-	config   Config
-	handlers *Handlers
-	metrics  *observability.Metrics
-	main     *http.Server
-	mux      *http.Server
+	config      Config
+	handlers    *Handlers
+	metrics     *observability.Metrics
+	spireClient *spire.Client
+	main        *http.Server
+	mux         *http.Server
 }
 
 // New creates a new server instance.
-func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics) *Server {
+func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics, spireClient *spire.Client) *Server {
 	handlers := NewHandlers(registry, verifier, metrics)
 
 	return &Server{
-		config:   cfg,
-		handlers: handlers,
-		metrics:  metrics,
+		config:      cfg,
+		handlers:    handlers,
+		metrics:     metrics,
+		spireClient: spireClient,
 	}
 }
 
@@ -85,12 +89,51 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 
-	// Start main server
-	slog.Info("starting main server", "port", s.config.Port)
+	// Start main server (with or without SPIRE mTLS)
+	if s.spireClient != nil && s.spireClient.IsEnabled() {
+		return s.startWithSPIRE()
+	}
+
+	return s.startPlain()
+}
+
+// startPlain starts the server without TLS.
+func (s *Server) startPlain() error {
+	slog.Info("starting main server (plain HTTP)", "port", s.config.Port)
 	if err := s.main.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("main server error: %w", err)
 	}
+	return nil
+}
 
+// startWithSPIRE starts the server with SPIRE mTLS.
+func (s *Server) startWithSPIRE() error {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.Port))
+	if err != nil {
+		return fmt.Errorf("failed to create listener: %w", err)
+	}
+
+	tlsListener, err := s.spireClient.WrapListener(listener)
+	if err != nil {
+		listener.Close()
+		return fmt.Errorf("failed to wrap listener with SPIRE TLS: %w", err)
+	}
+
+	allowedIDs := s.spireClient.GetAllowedIDs()
+	if len(allowedIDs) > 0 {
+		slog.Info("starting main server (SPIRE mTLS)",
+			"port", s.config.Port,
+			"allowed_spiffe_ids", allowedIDs,
+		)
+	} else {
+		slog.Info("starting main server (SPIRE mTLS, any valid SVID)",
+			"port", s.config.Port,
+		)
+	}
+
+	if err := s.main.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("main server error: %w", err)
+	}
 	return nil
 }
 
