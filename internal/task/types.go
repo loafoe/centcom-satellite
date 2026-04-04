@@ -25,6 +25,9 @@ type Result struct {
 
 	// Error contains error details if the task failed.
 	Error string `json:"error,omitempty"`
+
+	// Details contains task-specific additional information.
+	Details any `json:"details,omitempty"`
 }
 
 // NewSuccessResult creates a successful result with a message.
@@ -32,6 +35,15 @@ func NewSuccessResult(message string) *Result {
 	return &Result{
 		Success: true,
 		Message: message,
+	}
+}
+
+// NewSuccessResultWithDetails creates a successful result with a message and details.
+func NewSuccessResultWithDetails(message string, details any) *Result {
+	return &Result{
+		Success: true,
+		Message: message,
+		Details: details,
 	}
 }
 
