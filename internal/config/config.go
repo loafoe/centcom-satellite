@@ -51,7 +51,7 @@ func Load() (*Config, error) {
 		SPIRE: spire.Config{
 			Enabled:          getEnvBool("SPIRE_ENABLED", false),
 			AgentSocket:      getEnvString("SPIRE_AGENT_SOCKET", "unix:///run/spire/agent/sockets/spire-agent.sock"),
-			TrustDomain:      os.Getenv("SPIRE_TRUST_DOMAIN"),
+			TrustDomains:     loadTrustDomains(),
 			AllowedSPIFFEIDs: getEnvStringSlice("SPIRE_ALLOWED_SPIFFE_IDS"),
 		},
 	}
@@ -149,4 +149,19 @@ func getEnvStringSlice(key string) []string {
 		}
 	}
 	return result
+}
+
+// loadTrustDomains loads SPIFFE trust domains from environment variables.
+// Supports both SPIRE_TRUST_DOMAINS (comma-separated list) and
+// SPIRE_TRUST_DOMAIN (single, for backward compatibility).
+func loadTrustDomains() []string {
+	// Prefer the new multi-domain variable
+	if domains := getEnvStringSlice("SPIRE_TRUST_DOMAINS"); len(domains) > 0 {
+		return domains
+	}
+	// Fall back to single trust domain for backward compatibility
+	if domain := os.Getenv("SPIRE_TRUST_DOMAIN"); domain != "" {
+		return []string{domain}
+	}
+	return nil
 }

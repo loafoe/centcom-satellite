@@ -14,11 +14,20 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "enabled - valid config",
+			name: "enabled - valid config with single trust domain",
 			config: Config{
-				Enabled:     true,
-				AgentSocket: "unix:///run/spire/agent.sock",
-				TrustDomain: "example.org",
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"example.org"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "enabled - valid config with multiple trust domains",
+			config: Config{
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"example.org", "partner.com"},
 			},
 			wantErr: false,
 		},
@@ -27,7 +36,7 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				Enabled:          true,
 				AgentSocket:      "unix:///run/spire/agent.sock",
-				TrustDomain:      "example.org",
+				TrustDomains:     []string{"example.org"},
 				AllowedSPIFFEIDs: []string{"spiffe://example.org/ai-agent"},
 			},
 			wantErr: false,
@@ -35,16 +44,34 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "enabled - missing socket",
 			config: Config{
-				Enabled:     true,
-				TrustDomain: "example.org",
+				Enabled:      true,
+				TrustDomains: []string{"example.org"},
 			},
 			wantErr: true,
 		},
 		{
-			name: "enabled - missing trust domain",
+			name: "enabled - missing trust domains",
 			config: Config{
 				Enabled:     true,
 				AgentSocket: "unix:///run/spire/agent.sock",
+			},
+			wantErr: true,
+		},
+		{
+			name: "enabled - invalid trust domain format (has spiffe prefix)",
+			config: Config{
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"spiffe://example.org"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "enabled - empty trust domain in list",
+			config: Config{
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"example.org", ""},
 			},
 			wantErr: true,
 		},
@@ -53,7 +80,7 @@ func TestConfig_Validate(t *testing.T) {
 			config: Config{
 				Enabled:          true,
 				AgentSocket:      "unix:///run/spire/agent.sock",
-				TrustDomain:      "example.org",
+				TrustDomains:     []string{"example.org"},
 				AllowedSPIFFEIDs: []string{"invalid-id"},
 			},
 			wantErr: true,
@@ -114,6 +141,71 @@ func TestConfig_IsIDAllowed(t *testing.T) {
 			got := tt.config.IsIDAllowed(tt.spiffeID)
 			if got != tt.want {
 				t.Errorf("IsIDAllowed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_IsTrustDomainAllowed(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      Config
+		trustDomain string
+		want        bool
+	}{
+		{
+			name: "single trust domain - allowed",
+			config: Config{
+				TrustDomains: []string{"example.org"},
+			},
+			trustDomain: "example.org",
+			want:        true,
+		},
+		{
+			name: "single trust domain - not allowed",
+			config: Config{
+				TrustDomains: []string{"example.org"},
+			},
+			trustDomain: "other.org",
+			want:        false,
+		},
+		{
+			name: "multiple trust domains - first allowed",
+			config: Config{
+				TrustDomains: []string{"example.org", "partner.com"},
+			},
+			trustDomain: "example.org",
+			want:        true,
+		},
+		{
+			name: "multiple trust domains - second allowed",
+			config: Config{
+				TrustDomains: []string{"example.org", "partner.com"},
+			},
+			trustDomain: "partner.com",
+			want:        true,
+		},
+		{
+			name: "multiple trust domains - not allowed",
+			config: Config{
+				TrustDomains: []string{"example.org", "partner.com"},
+			},
+			trustDomain: "untrusted.org",
+			want:        false,
+		},
+		{
+			name:        "empty trust domains - not allowed",
+			config:      Config{},
+			trustDomain: "example.org",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.IsTrustDomainAllowed(tt.trustDomain)
+			if got != tt.want {
+				t.Errorf("IsTrustDomainAllowed() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -90,7 +90,8 @@ Environment variables:
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE mTLS
 - `SPIRE_AGENT_SOCKET` (default: unix:///run/spire/agent/sockets/spire-agent.sock)
-- `SPIRE_TRUST_DOMAIN` - Expected SPIFFE trust domain
+- `SPIRE_TRUST_DOMAINS` - Comma-separated list of SPIFFE trust domains (supports federation)
+- `SPIRE_TRUST_DOMAIN` - Single trust domain (backward compat, use SPIRE_TRUST_DOMAINS for new deployments)
 - `SPIRE_ALLOWED_SPIFFE_IDS` - Comma-separated list of allowed SPIFFE IDs
 
 ## Build & Deploy
@@ -122,12 +123,14 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --namespace pico-agent --create-namespace
 ```
 
-The chart auto-generates webhook secrets if not provided. For SPIRE mode:
+The chart auto-generates webhook secrets if not provided. For SPIRE mode with federated trust domains:
 ```bash
 helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --set spire.enabled=true \
-  --set spire.trustDomain=example.org \
-  --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
+  --set 'spire.trustDomains[0]=example.org' \
+  --set 'spire.trustDomains[1]=partner.com' \
+  --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent' \
+  --set 'spire.allowedSPIFFEIDs[1]=spiffe://partner.com/service'
 ```
 
 ## Development

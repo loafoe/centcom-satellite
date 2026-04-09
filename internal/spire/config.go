@@ -17,13 +17,14 @@ type Config struct {
 	// or unix:///tmp/spire-agent/public/api.sock (local dev)
 	AgentSocket string
 
-	// TrustDomain is the SPIFFE trust domain.
-	// Example: "example.org"
-	TrustDomain string
+	// TrustDomains is the list of SPIFFE trust domains to accept.
+	// Supports federated SPIFFE deployments with multiple trust domains.
+	// Example: ["example.org", "partner.com"]
+	TrustDomains []string
 
 	// AllowedSPIFFEIDs is a list of SPIFFE IDs allowed to connect.
-	// If empty, any valid SVID from the trust domain is accepted.
-	// Example: ["spiffe://example.org/ai-agent", "spiffe://example.org/monitoring"]
+	// If empty, any valid SVID from the configured trust domains is accepted.
+	// Example: ["spiffe://example.org/ai-agent", "spiffe://partner.com/service"]
 	AllowedSPIFFEIDs []string
 }
 
@@ -37,8 +38,18 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("SPIRE_AGENT_SOCKET is required when SPIRE is enabled")
 	}
 
-	if c.TrustDomain == "" {
-		return fmt.Errorf("SPIRE_TRUST_DOMAIN is required when SPIRE is enabled")
+	if len(c.TrustDomains) == 0 {
+		return fmt.Errorf("SPIRE_TRUST_DOMAINS is required when SPIRE is enabled")
+	}
+
+	// Validate trust domain format (should not contain spiffe:// prefix)
+	for _, td := range c.TrustDomains {
+		if strings.HasPrefix(td, "spiffe://") {
+			return fmt.Errorf("invalid trust domain format: %s (should not include spiffe:// prefix)", td)
+		}
+		if td == "" {
+			return fmt.Errorf("empty trust domain in SPIRE_TRUST_DOMAINS")
+		}
 	}
 
 	// Validate SPIFFE ID format
@@ -52,10 +63,15 @@ func (c *Config) Validate() error {
 }
 
 // IsIDAllowed checks if a SPIFFE ID is in the allowed list.
-// Returns true if the allowed list is empty (allow all from trust domain).
+// Returns true if the allowed list is empty (allow all from trust domains).
 func (c *Config) IsIDAllowed(spiffeID string) bool {
 	if len(c.AllowedSPIFFEIDs) == 0 {
 		return true
 	}
 	return slices.Contains(c.AllowedSPIFFEIDs, spiffeID)
+}
+
+// IsTrustDomainAllowed checks if a trust domain is in the configured list.
+func (c *Config) IsTrustDomainAllowed(trustDomain string) bool {
+	return slices.Contains(c.TrustDomains, trustDomain)
 }

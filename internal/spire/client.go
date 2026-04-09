@@ -37,7 +37,7 @@ func (c *Client) Start(ctx context.Context) error {
 
 	slog.Info("connecting to SPIRE workload API",
 		"socket", c.config.AgentSocket,
-		"trust_domain", c.config.TrustDomain,
+		"trust_domains", c.config.TrustDomains,
 	)
 
 	source, err := workloadapi.NewX509Source(ctx,
@@ -88,19 +88,27 @@ func (c *Client) GetTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("SPIRE client not started")
 	}
 
-	td, err := spiffeid.TrustDomainFromString(c.config.TrustDomain)
-	if err != nil {
-		return nil, fmt.Errorf("invalid trust domain: %w", err)
+	// Parse all configured trust domains
+	trustDomains := make([]spiffeid.TrustDomain, 0, len(c.config.TrustDomains))
+	for _, tdStr := range c.config.TrustDomains {
+		td, err := spiffeid.TrustDomainFromString(tdStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trust domain %q: %w", tdStr, err)
+		}
+		trustDomains = append(trustDomains, td)
 	}
+
+	// Build authorizer that accepts SVIDs from any of the configured trust domains
+	authorizer := authorizeMemberOfAny(trustDomains)
 
 	// Create TLS config that:
 	// 1. Presents our SVID as server certificate
 	// 2. Requires client certificates (mTLS)
-	// 3. Validates client SVIDs against our trust domain
+	// 3. Validates client SVIDs against configured trust domains
 	tlsConfig := tlsconfig.MTLSServerConfig(
 		c.source,
 		c.source,
-		tlsconfig.AuthorizeMemberOf(td),
+		authorizer,
 	)
 
 	// Add custom verification to check allowed SPIFFE IDs
@@ -150,4 +158,17 @@ func (c *Client) IsEnabled() bool {
 // GetAllowedIDs returns the list of allowed SPIFFE IDs.
 func (c *Client) GetAllowedIDs() []string {
 	return c.config.AllowedSPIFFEIDs
+}
+
+// authorizeMemberOfAny returns an Authorizer that accepts SVIDs from any of the
+// specified trust domains. This supports federated SPIFFE deployments.
+func authorizeMemberOfAny(trustDomains []spiffeid.TrustDomain) tlsconfig.Authorizer {
+	return func(id spiffeid.ID, _ [][]*x509.Certificate) error {
+		for _, td := range trustDomains {
+			if id.MemberOf(td) {
+				return nil
+			}
+		}
+		return fmt.Errorf("SPIFFE ID %q is not a member of any allowed trust domain", id)
+	}
 }
