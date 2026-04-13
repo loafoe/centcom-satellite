@@ -10,6 +10,7 @@ This file tracks the progress and technical decisions for the `pico-agent` proje
 - [x] **Manual Release Support**: Added `workflow_dispatch` to `release.yaml` to allow triggering releases with custom tags.
 - [x] **Makefile Updates**: Updated `ko-push` target to support multi-arch builds locally.
 - [x] **SBOM Generation**: Automated SBOM generation and attachment using `ko` and `cosign` in the release pipeline.
+- [x] **License Documentation**: Added license details and badge to README.md.
 
 ## Project Context
 - **Base Image**: `gcr.io/distroless/static-debian12:nonroot`

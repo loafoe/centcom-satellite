@@ -1,5 +1,7 @@
 # pico-agent
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations.
 
 ## Features
