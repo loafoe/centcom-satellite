@@ -34,7 +34,7 @@ type Server struct {
 
 // New creates a new server instance.
 func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics, spireClient *spire.Client) *Server {
-	handlers := NewHandlers(registry, verifier, metrics)
+	handlers := NewHandlers(registry, verifier, spireClient, metrics)
 
 	return &Server{
 		config:      cfg,

@@ -42,7 +42,7 @@ func setupTestHandlers(t *testing.T) (*Handlers, *webhook.Verifier) {
 	// Use a fresh registry for each test to avoid duplicate registration
 	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
 
-	return NewHandlers(registry, verifier, metrics), verifier
+	return NewHandlers(registry, verifier, nil, metrics), verifier
 }
 
 func TestHandleTask_Success(t *testing.T) {

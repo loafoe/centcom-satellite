@@ -26,6 +26,21 @@ type Config struct {
 	// If empty, any valid SVID from the configured trust domains is accepted.
 	// Example: ["spiffe://example.org/ai-agent", "spiffe://partner.com/service"]
 	AllowedSPIFFEIDs []string
+
+	// JWT holds configuration for JWT-SVID authentication.
+	JWT JWTConfig
+}
+
+// JWTConfig holds JWT-SVID specific configuration.
+type JWTConfig struct {
+	// Enabled controls whether JWT-SVID authentication is active.
+	// Can be used alongside or instead of X.509 mTLS.
+	Enabled bool
+
+	// Audiences is the list of expected JWT audience values.
+	// The JWT must contain at least one of these audiences.
+	// Example: ["pico-agent", "https://pico-agent.example.org"]
+	Audiences []string
 }
 
 // Validate checks that the configuration is valid when SPIRE is enabled.
@@ -57,6 +72,11 @@ func (c *Config) Validate() error {
 		if !strings.HasPrefix(id, "spiffe://") {
 			return fmt.Errorf("invalid SPIFFE ID format: %s (must start with spiffe://)", id)
 		}
+	}
+
+	// Validate JWT config
+	if c.JWT.Enabled && len(c.JWT.Audiences) == 0 {
+		return fmt.Errorf("SPIRE_JWT_AUDIENCES is required when JWT-SVID auth is enabled")
 	}
 
 	return nil

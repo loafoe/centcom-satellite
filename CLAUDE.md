@@ -24,7 +24,7 @@ internal/
     types.go                    # TaskRequest, TaskResult, Task interface
     pv_resize/task.go           # PV resize implementation with wait support
   spire/
-    client.go                   # SPIRE workload API client for mTLS
+    client.go                   # SPIRE workload API client (X.509 mTLS + JWT-SVID)
     config.go                   # SPIRE configuration and validation
   k8s/client.go                 # Kubernetes client initialization
   observability/
@@ -35,10 +35,13 @@ internal/
 
 ## Authentication Modes
 
-The agent supports two authentication modes (mutually exclusive):
+The agent supports multiple authentication modes (can be combined):
 
 1. **Webhook Signature** (default): HMAC-SHA256 signature in `X-Grafana-Alertmanager-Signature` header
-2. **SPIRE mTLS**: X.509 SVID-based mutual TLS authentication
+2. **SPIRE X.509 mTLS**: X.509 SVID-based mutual TLS authentication
+3. **SPIRE JWT-SVID**: JWT token in `Authorization: Bearer <token>` header
+
+Authentication is checked in order: mTLS → JWT-SVID → Webhook signature. The first successful method authenticates the request.
 
 ## Current Tasks
 
@@ -88,11 +91,13 @@ Environment variables:
 - `OTEL_SERVICE_NAME` (default: pico-agent) - Service name for tracing
 
 SPIRE configuration:
-- `SPIRE_ENABLED` (default: false) - Enable SPIRE mTLS
+- `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication
 - `SPIRE_AGENT_SOCKET` (default: unix:///run/spire/agent/sockets/spire-agent.sock)
 - `SPIRE_TRUST_DOMAINS` - Comma-separated list of SPIFFE trust domains (supports federation)
 - `SPIRE_TRUST_DOMAIN` - Single trust domain (backward compat, use SPIRE_TRUST_DOMAINS for new deployments)
 - `SPIRE_ALLOWED_SPIFFE_IDS` - Comma-separated list of allowed SPIFFE IDs
+- `SPIRE_JWT_ENABLED` (default: false) - Enable JWT-SVID authentication
+- `SPIRE_JWT_AUDIENCES` - Comma-separated list of expected JWT audiences (required when JWT enabled)
 
 ## Build & Deploy
 
@@ -107,7 +112,7 @@ make docker-build
 
 **Verify image signature** (keyless cosign):
 ```bash
-cosign verify ghcr.io/loafoe/pico-agent:v0.3.0 \
+cosign verify ghcr.io/loafoe/pico-agent:v0.4.0 \
   --certificate-identity-regexp='https://github.com/loafoe/pico-agent/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
@@ -123,7 +128,7 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --namespace pico-agent --create-namespace
 ```
 
-The chart auto-generates webhook secrets if not provided. For SPIRE mode with federated trust domains:
+The chart auto-generates webhook secrets if not provided. For SPIRE mTLS with federated trust domains:
 ```bash
 helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --set spire.enabled=true \
@@ -131,6 +136,15 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --set 'spire.trustDomains[1]=partner.com' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent' \
   --set 'spire.allowedSPIFFEIDs[1]=spiffe://partner.com/service'
+```
+
+For JWT-SVID authentication (useful when mTLS is not feasible):
+```bash
+helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+  --set spire.enabled=true \
+  --set 'spire.trustDomains[0]=example.org' \
+  --set spire.jwt.enabled=true \
+  --set 'spire.jwt.audiences[0]=pico-agent'
 ```
 
 ## Development
@@ -169,8 +183,8 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.3.0
-- **Helm chart**: 0.3.0
+- **pico-agent**: v0.4.0
+- **Helm chart**: 0.4.0
 
 ## Key Dependencies
 

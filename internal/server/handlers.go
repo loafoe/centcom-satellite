@@ -6,26 +6,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/loafoe/pico-agent/internal/observability"
+	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
 	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
 // Handlers holds HTTP handler dependencies.
 type Handlers struct {
-	registry *task.Registry
-	verifier *webhook.Verifier
-	metrics  *observability.Metrics
+	registry    *task.Registry
+	verifier    *webhook.Verifier
+	spireClient *spire.Client
+	metrics     *observability.Metrics
 }
 
 // NewHandlers creates a new handlers instance.
-func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics) *Handlers {
+func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, spireClient *spire.Client, metrics *observability.Metrics) *Handlers {
 	return &Handlers{
-		registry: registry,
-		verifier: verifier,
-		metrics:  metrics,
+		registry:    registry,
+		verifier:    verifier,
+		spireClient: spireClient,
+		metrics:     metrics,
 	}
 }
 
@@ -48,21 +52,50 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Verify signature (skip if using SPIRE mTLS - connection already authenticated)
-	if h.verifier != nil {
-		signature := r.Header.Get(webhook.SignatureHeader)
-		if err := h.verifier.Verify(signature, body); err != nil {
-			slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
-			h.writeError(w, http.StatusUnauthorized, "invalid signature")
-			return
+	// Authentication: try methods in order of preference
+	authenticated := false
+
+	// 1. Check for mTLS (SPIRE X.509 SVID) - already validated at TLS layer
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		authenticated = true
+		slog.Debug("authenticated via mTLS", "remote_addr", r.RemoteAddr)
+	}
+
+	// 2. Check for JWT-SVID in Authorization header
+	if !authenticated && h.spireClient != nil && h.spireClient.IsJWTEnabled() {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") || strings.HasPrefix(authHeader, "bearer ") {
+			spiffeID, err := h.spireClient.ValidateJWTToken(ctx, authHeader)
+			if err != nil {
+				slog.Warn("JWT-SVID validation failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.writeError(w, http.StatusUnauthorized, "invalid JWT-SVID")
+				return
+			}
+			authenticated = true
+			slog.Debug("authenticated via JWT-SVID", "spiffe_id", spiffeID.String(), "remote_addr", r.RemoteAddr)
 		}
-	} else if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		// No webhook verifier and no mTLS - reject
+	}
+
+	// 3. Check for webhook signature
+	if !authenticated && h.verifier != nil {
+		signature := r.Header.Get(webhook.SignatureHeader)
+		if signature != "" {
+			if err := h.verifier.Verify(signature, body); err != nil {
+				slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.writeError(w, http.StatusUnauthorized, "invalid signature")
+				return
+			}
+			authenticated = true
+			slog.Debug("authenticated via webhook signature", "remote_addr", r.RemoteAddr)
+		}
+	}
+
+	// No valid authentication found
+	if !authenticated {
 		slog.Warn("unauthenticated request rejected", "remote_addr", r.RemoteAddr)
 		h.writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	// If we get here with r.TLS and peer certs, SPIRE mTLS already validated the client
 
 	// Parse request
 	req, err := task.ParseRequest(body)

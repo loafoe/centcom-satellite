@@ -27,3 +27,6 @@ Thumbs.db
 
 # Kubernetes local
 kubeconfig
+
+# AI
+.claude/
