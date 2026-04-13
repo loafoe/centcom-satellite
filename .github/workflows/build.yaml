@@ -46,6 +46,7 @@ jobs:
         run: |
           IMAGE=$(ko build ./cmd/pico-agent \
             --bare \
+            --platform=linux/amd64,linux/arm64 \
             --tags=main,${{ steps.sha.outputs.SHORT_SHA }})
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
 

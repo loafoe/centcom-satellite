@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: true
 
 permissions:
   contents: write # For creating releases
@@ -39,7 +44,12 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push with ko
         id: ko
@@ -50,6 +60,7 @@ jobs:
           # Build and push the image
           IMAGE=$(ko build ./cmd/pico-agent \
             --bare \
+            --platform=linux/amd64,linux/arm64 \
             --tags=${{ steps.version.outputs.VERSION }},latest \
             --image-refs=image-refs.txt)
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
@@ -61,9 +72,6 @@ jobs:
         run: |
           # Sign the image using keyless signing (OIDC)
           cosign sign --yes "${IMAGE}"
-
-          # Also sign by tag for convenience
-          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}"
 
       - name: Generate SBOM
         env:
@@ -84,6 +92,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           body: |
             ## Container Image

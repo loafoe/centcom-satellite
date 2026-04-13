@@ -29,7 +29,7 @@ ko-build:
 
 # Build and push image with ko
 ko-push:
-	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/pico-agent --bare --tags=$(VERSION),latest
+	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/pico-agent --bare --platform=linux/amd64,linux/arm64 --tags=$(VERSION),latest
 
 # Sign image with cosign (requires COSIGN_PASSWORD or keyless)
 sign:
