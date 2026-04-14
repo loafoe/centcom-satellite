@@ -27,6 +27,11 @@ type Config struct {
 	// Example: ["spiffe://example.org/ai-agent", "spiffe://partner.com/service"]
 	AllowedSPIFFEIDs []string
 
+	// MTLSEnabled controls whether to use X.509 mTLS for transport security.
+	// When false, the server runs plain HTTP and relies on JWT-SVID for auth.
+	// Default: true (for backward compatibility)
+	MTLSEnabled bool
+
 	// JWT holds configuration for JWT-SVID authentication.
 	JWT JWTConfig
 }

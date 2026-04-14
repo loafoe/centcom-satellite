@@ -90,7 +90,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	// Start main server (with or without SPIRE mTLS)
-	if s.spireClient != nil && s.spireClient.IsEnabled() {
+	// Use mTLS only if both SPIRE is enabled AND mTLS is enabled
+	// JWT-SVID auth can work without mTLS (over plain HTTP with TLS termination at gateway)
+	if s.spireClient != nil && s.spireClient.IsMTLSEnabled() {
 		return s.startWithSPIRE()
 	}
 

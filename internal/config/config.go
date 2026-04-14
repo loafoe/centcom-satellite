@@ -53,6 +53,7 @@ func Load() (*Config, error) {
 			AgentSocket:      getEnvString("SPIRE_AGENT_SOCKET", "unix:///run/spire/agent/sockets/spire-agent.sock"),
 			TrustDomains:     loadTrustDomains(),
 			AllowedSPIFFEIDs: getEnvStringSlice("SPIRE_ALLOWED_SPIFFE_IDS"),
+			MTLSEnabled:      getEnvBool("SPIRE_MTLS_ENABLED", false),
 			JWT: spire.JWTConfig{
 				Enabled:   getEnvBool("SPIRE_JWT_ENABLED", false),
 				Audiences: getEnvStringSlice("SPIRE_JWT_AUDIENCES"),

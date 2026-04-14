@@ -200,6 +200,11 @@ func (c *Client) IsJWTEnabled() bool {
 	return c.config.Enabled && c.config.JWT.Enabled
 }
 
+// IsMTLSEnabled returns whether X.509 mTLS is enabled.
+func (c *Client) IsMTLSEnabled() bool {
+	return c.config.Enabled && c.config.MTLSEnabled
+}
+
 // ValidateJWTToken validates a JWT-SVID token from the Authorization header.
 // Returns the validated SPIFFE ID on success.
 func (c *Client) ValidateJWTToken(ctx context.Context, token string) (spiffeid.ID, error) {
