@@ -15,8 +15,12 @@ import (
 	"github.com/loafoe/pico-agent/internal/server"
 	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/pico-agent/internal/task/cluster_health"
 	"github.com/loafoe/pico-agent/internal/task/cluster_info"
+	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
+	"github.com/loafoe/pico-agent/internal/task/resource_pressure"
+	"github.com/loafoe/pico-agent/internal/task/storage_status"
 	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
@@ -67,6 +71,10 @@ func main() {
 	registry := task.NewRegistry()
 	registry.Register(pv_resize.New(k8sClient.Clientset))
 	registry.Register(cluster_info.New(k8sClient.Clientset))
+	registry.Register(cluster_health.New(k8sClient.Clientset))
+	registry.Register(resource_pressure.New(k8sClient.Clientset))
+	registry.Register(storage_status.New(k8sClient.Clientset))
+	registry.Register(list_namespaces.New(k8sClient.Clientset))
 
 	// Setup webhook verifier (may be nil if SPIRE-only auth)
 	var verifier *webhook.Verifier
