@@ -53,12 +53,19 @@ type Payload struct {
 	// Timeout is the maximum time to wait for resize (e.g., "5m", "300s")
 	// Only used when Wait is true. Defaults to 5m.
 	Timeout string `json:"timeout,omitempty"`
+	// DryRun validates the resize without actually performing it
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // ResizeDetails contains additional information about the resize operation.
 type ResizeDetails struct {
-	Duration  string `json:"duration,omitempty"`
-	FinalSize string `json:"final_size,omitempty"`
+	Duration       string `json:"duration,omitempty"`
+	FinalSize      string `json:"final_size,omitempty"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+	CurrentSize    string `json:"current_size,omitempty"`
+	RequestedSize  string `json:"requested_size,omitempty"`
+	FilesystemSize string `json:"filesystem_size,omitempty"`
+	StorageClass   string `json:"storage_class,omitempty"`
 }
 
 // Task handles PVC resize operations.
@@ -119,9 +126,40 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// Verify new size is larger
 	currentSize := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+
+	// Get filesystem size for better error messages
+	fsSize := t.getFilesystemSize(ctx, payload.Namespace, payload.PVCName)
+	storageClassName := ""
+	if pvc.Spec.StorageClassName != nil {
+		storageClassName = *pvc.Spec.StorageClassName
+	}
+
 	if newSize.Cmp(currentSize) <= 0 {
-		return task.NewErrorResult(fmt.Sprintf("%s: current=%s, requested=%s",
-			ErrSizeMustIncrease, currentSize.String(), newSize.String())), nil
+		// Build helpful error message with filesystem info
+		errMsg := fmt.Sprintf("%s: PVC spec=%s, requested=%s",
+			ErrSizeMustIncrease, currentSize.String(), newSize.String())
+		if fsSize != "" && fsSize != currentSize.String() {
+			errMsg += fmt.Sprintf(". Note: filesystem is %s (expansion may be pending, pod restart might help)", fsSize)
+		} else if fsSize != "" {
+			errMsg += fmt.Sprintf(". Filesystem: %s", fsSize)
+		}
+		return task.NewErrorResult(errMsg), nil
+	}
+
+	// Handle dry-run mode
+	if payload.DryRun {
+		details := ResizeDetails{
+			DryRun:         true,
+			CurrentSize:    currentSize.String(),
+			RequestedSize:  newSize.String(),
+			FilesystemSize: fsSize,
+			StorageClass:   storageClassName,
+		}
+		return task.NewSuccessResultWithDetails(
+			fmt.Sprintf("[DRY-RUN] Would resize PVC %s/%s from %s to %s (storage class: %s, allows expansion: true)",
+				payload.Namespace, payload.PVCName, currentSize.String(), newSize.String(), storageClassName),
+			details,
+		), nil
 	}
 
 	// Update the PVC
@@ -266,4 +304,89 @@ func (t *Task) checkExpansionAllowed(ctx context.Context, pvc *corev1.Persistent
 	}
 
 	return nil
+}
+
+// getFilesystemSize queries kubelet to get actual filesystem size for the PVC.
+func (t *Task) getFilesystemSize(ctx context.Context, namespace, pvcName string) string {
+	nodes, err := t.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+
+	for _, node := range nodes.Items {
+		stats, err := t.getNodeStats(ctx, node.Name)
+		if err != nil {
+			continue
+		}
+
+		for _, pod := range stats.Pods {
+			for _, vol := range pod.Volume {
+				if vol.PVCRef != nil && vol.PVCRef.Namespace == namespace && vol.PVCRef.Name == pvcName {
+					return formatBytes(vol.CapacityBytes)
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func (t *Task) getNodeStats(ctx context.Context, nodeName string) (*kubeletStatsSummary, error) {
+	path := fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", nodeName)
+	data, err := t.clientset.CoreV1().RESTClient().Get().AbsPath(path).DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var stats kubeletStatsSummary
+	if err := json.Unmarshal(data, &stats); err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// kubelet stats types
+type kubeletStatsSummary struct {
+	Pods []podStats `json:"pods"`
+}
+
+type podStats struct {
+	PodRef  podReference  `json:"podRef"`
+	Volume  []volumeStats `json:"volume,omitempty"`
+}
+
+type podReference struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type volumeStats struct {
+	Name           string  `json:"name"`
+	PVCRef         *pvcRef `json:"pvcRef,omitempty"`
+	CapacityBytes  int64   `json:"capacityBytes"`
+	UsedBytes      int64   `json:"usedBytes"`
+	AvailableBytes int64   `json:"availableBytes"`
+}
+
+type pvcRef struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+func formatBytes(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2fGi", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.2fMi", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.2fKi", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%d", bytes)
+	}
 }

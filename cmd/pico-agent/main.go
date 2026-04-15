@@ -19,6 +19,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/cluster_info"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
+	"github.com/loafoe/pico-agent/internal/task/pv_resize_status"
 	"github.com/loafoe/pico-agent/internal/task/pv_usage"
 	"github.com/loafoe/pico-agent/internal/task/resource_pressure"
 	"github.com/loafoe/pico-agent/internal/task/storage_status"
@@ -71,6 +72,7 @@ func main() {
 	// Setup task registry
 	registry := task.NewRegistry()
 	registry.Register(pv_resize.New(k8sClient.Clientset))
+	registry.Register(pv_resize_status.New(k8sClient.Clientset))
 	registry.Register(cluster_info.New(k8sClient.Clientset))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
