@@ -8,10 +8,27 @@ A lightweight Kubernetes helper service that receives webhook-style task request
 
 - **Webhook Authentication**: Grafana Alertmanager-compatible HMAC-SHA256 signature verification
 - **Modular Task System**: Easy to extend with new task types
-- **PV Resize**: First task - resize PersistentVolumeClaims
 - **Full Observability**: Prometheus metrics, OpenTelemetry tracing, structured JSON logging
 - **Security First**: Non-root container, read-only filesystem, RBAC-scoped permissions
+- **SPIFFE/SPIRE Integration**: Workload identity with X.509 mTLS and JWT-SVID authentication
 - **Supply Chain Security**: Images signed with [cosign](https://github.com/sigstore/cosign) keyless signing
+
+## Available Tasks
+
+| Task | Description |
+|------|-------------|
+| `cluster_health` | Get cluster health status |
+| `cluster_info` | Get cluster information (version, nodes) |
+| `get_events` | Get Kubernetes events with filtering by type, object, and time range |
+| `get_logs` | Retrieve pod container logs with tail/since filtering |
+| `list_namespaces` | List namespaces in the cluster |
+| `list_pods` | List pods with status, containers, and resource details |
+| `list_workloads` | List deployments, statefulsets, and daemonsets |
+| `pv_resize` | Resize PersistentVolumeClaims |
+| `pv_resize_status` | Check PVC resize operation status |
+| `pv_usage` | Get PersistentVolume usage statistics |
+| `resource_pressure` | Check node resource pressure conditions |
+| `storage_status` | Get storage class and PV/PVC status |
 
 ## Container Image
 
@@ -79,6 +96,63 @@ kubectl apply -k deploy/
 | `LOG_FORMAT` | json | Log format (json, text) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | pico-agent | Service name for tracing |
+
+### SPIFFE/SPIRE Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `SPIRE_ENABLED` | false | Enable SPIFFE/SPIRE workload identity |
+| `SPIRE_AGENT_SOCKET` | (required if enabled) | Path to SPIRE agent socket |
+| `SPIRE_TRUST_DOMAINS` | (required if enabled) | Comma-separated list of trusted SPIFFE trust domains |
+| `SPIRE_ALLOWED_SPIFFE_IDS` | (all from trust domains) | Comma-separated list of allowed SPIFFE IDs |
+| `SPIRE_MTLS_ENABLED` | true | Enable X.509 mTLS for transport security |
+| `SPIRE_JWT_ENABLED` | false | Enable JWT-SVID authentication |
+| `SPIRE_JWT_AUDIENCES` | (required if JWT enabled) | Comma-separated list of expected JWT audiences |
+
+## SPIFFE/SPIRE Authentication
+
+pico-agent supports [SPIFFE](https://spiffe.io/) workload identity via SPIRE for secure, certificate-based authentication between services.
+
+### Authentication Modes
+
+**X.509 mTLS** (default when SPIRE enabled):
+- Server presents its SVID as the TLS certificate
+- Clients must present valid SVIDs from configured trust domains
+- Mutual TLS ensures both parties are authenticated
+
+**JWT-SVID** (can be used alongside or instead of mTLS):
+- Clients present JWT-SVID tokens in the `Authorization: Bearer <token>` header
+- Useful when running behind a load balancer that terminates TLS
+- Tokens are validated against configured audiences and trust domains
+
+### Federation Support
+
+pico-agent supports federated SPIFFE deployments with multiple trust domains:
+
+```yaml
+# Example: Accept SVIDs from multiple trust domains
+SPIRE_TRUST_DOMAINS: "cluster-a.example.org,cluster-b.example.org"
+SPIRE_ALLOWED_SPIFFE_IDS: "spiffe://cluster-a.example.org/ns/default/sa/pico-mcp"
+```
+
+### Kubernetes Deployment with SPIRE
+
+```yaml
+# Example values for Helm chart
+spire:
+  enabled: true
+  csi:
+    enabled: true
+  className: spire-system-spire
+  trustDomains:
+    - cluster.example.org
+  allowedSPIFFEIDs:
+    - spiffe://cluster.example.org/ns/pico-mcp/sa/pico-mcp
+  jwt:
+    enabled: true
+    audiences:
+      - pico-agent
+```
 
 ## API
 
