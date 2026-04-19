@@ -65,7 +65,7 @@ func (t *Task) Execute(ctx context.Context, payloadBytes json.RawMessage) (*task
 
 	// Block sensitive resource types
 	if strings.EqualFold(payload.Kind, "Secret") {
-		return task.NewErrorResult(NewForbiddenError("Secret", payload.Name).Error()), nil
+		return task.NewErrorResult(NewBlockedError("Secret").Error()), nil
 	}
 
 	// Parse apiVersion to GroupVersion

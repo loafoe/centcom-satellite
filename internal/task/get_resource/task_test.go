@@ -46,12 +46,12 @@ func TestTask_Execute_ValidationErrors(t *testing.T) {
 		{
 			name:       "secret blocked",
 			payload:    Payload{APIVersion: "v1", Kind: "Secret", Name: "my-secret"},
-			wantErrMsg: "FORBIDDEN",
+			wantErrMsg: "BLOCKED",
 		},
 		{
 			name:       "secret blocked case insensitive",
 			payload:    Payload{APIVersion: "v1", Kind: "secret", Name: "my-secret"},
-			wantErrMsg: "FORBIDDEN",
+			wantErrMsg: "BLOCKED",
 		},
 	}
 

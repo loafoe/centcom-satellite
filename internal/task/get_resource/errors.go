@@ -15,6 +15,7 @@ type ErrorCode string
 const (
 	ErrNotFound          ErrorCode = "NOT_FOUND"
 	ErrForbidden         ErrorCode = "FORBIDDEN"
+	ErrBlocked           ErrorCode = "BLOCKED"
 	ErrAPINotFound       ErrorCode = "API_NOT_FOUND"
 	ErrInvalidRequest    ErrorCode = "INVALID_REQUEST"
 	ErrNamespaceRequired ErrorCode = "NAMESPACE_REQUIRED"
@@ -52,6 +53,15 @@ func NewForbiddenError(kind, name string) *StructuredError {
 		Code:    ErrForbidden,
 		Message: fmt.Sprintf("access denied to %s %q", kind, name),
 		Hint:    "pico-agent needs RBAC permission for this resource",
+	}
+}
+
+// NewBlockedError creates a BLOCKED error for explicitly blocked resource types.
+func NewBlockedError(kind string) *StructuredError {
+	return &StructuredError{
+		Code:    ErrBlocked,
+		Message: fmt.Sprintf("%s resources are explicitly blocked", kind),
+		Hint:    "This resource type cannot be retrieved for security reasons",
 	}
 }
 
