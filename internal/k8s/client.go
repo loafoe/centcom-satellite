@@ -7,14 +7,20 @@ import (
 	"os"
 	"path/filepath"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Client wraps the Kubernetes clientset.
 type Client struct {
-	Clientset kubernetes.Interface
+	Clientset     kubernetes.Interface
+	DynamicClient dynamic.Interface
+	RESTMapper    meta.RESTMapper
 }
 
 // NewClient creates a new Kubernetes client.
@@ -30,7 +36,28 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	return &Client{Clientset: clientset}, nil
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discovery client: %w", err)
+	}
+
+	groupResources, err := restmapper.GetAPIGroupResources(discoveryClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get API group resources: %w", err)
+	}
+
+	restMapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+
+	return &Client{
+		Clientset:     clientset,
+		DynamicClient: dynamicClient,
+		RESTMapper:    restMapper,
+	}, nil
 }
 
 // NewClientWithInterface creates a client with a provided interface (for testing).
