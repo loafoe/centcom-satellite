@@ -36,6 +36,16 @@ type Config struct {
 
 	// SPIRE holds SPIFFE/SPIRE configuration for workload identity.
 	SPIRE spire.Config
+
+	// Features holds feature flags for optional functionality.
+	Features FeaturesConfig
+}
+
+// FeaturesConfig holds feature flags.
+type FeaturesConfig struct {
+	// GetResourceEnabled enables the get_resource task for fetching arbitrary resources.
+	// Disabled by default as it requires expanded RBAC permissions.
+	GetResourceEnabled bool
 }
 
 // Load reads configuration from environment variables.
@@ -58,6 +68,9 @@ func Load() (*Config, error) {
 				Enabled:   getEnvBool("SPIRE_JWT_ENABLED", false),
 				Audiences: getEnvStringSlice("SPIRE_JWT_AUDIENCES"),
 			},
+		},
+		Features: FeaturesConfig{
+			GetResourceEnabled: getEnvBool("GET_RESOURCE_ENABLED", false),
 		},
 	}
 

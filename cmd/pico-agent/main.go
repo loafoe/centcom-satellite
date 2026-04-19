@@ -88,7 +88,12 @@ func main() {
 	registry.Register(get_logs.New(k8sClient.Clientset))
 	registry.Register(list_workloads.New(k8sClient.Clientset))
 	registry.Register(get_events.New(k8sClient.Clientset))
-	registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
+
+	// Optional: get_resource task (requires expanded RBAC)
+	if cfg.Features.GetResourceEnabled {
+		registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
+		slog.Info("get_resource task enabled")
+	}
 
 	// Setup webhook verifier (may be nil if SPIRE-only auth)
 	var verifier *webhook.Verifier
