@@ -19,6 +19,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/cluster_info"
 	"github.com/loafoe/pico-agent/internal/task/get_events"
 	"github.com/loafoe/pico-agent/internal/task/get_logs"
+	"github.com/loafoe/pico-agent/internal/task/get_resource"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/list_pods"
 	"github.com/loafoe/pico-agent/internal/task/list_workloads"
@@ -87,6 +88,7 @@ func main() {
 	registry.Register(get_logs.New(k8sClient.Clientset))
 	registry.Register(list_workloads.New(k8sClient.Clientset))
 	registry.Register(get_events.New(k8sClient.Clientset))
+	registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
 
 	// Setup webhook verifier (may be nil if SPIRE-only auth)
 	var verifier *webhook.Verifier
