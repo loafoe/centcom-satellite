@@ -43,6 +43,16 @@ func TestTask_Execute_ValidationErrors(t *testing.T) {
 			payload:    Payload{APIVersion: "v1", Kind: "Pod"},
 			wantErrMsg: "name is required",
 		},
+		{
+			name:       "secret blocked",
+			payload:    Payload{APIVersion: "v1", Kind: "Secret", Name: "my-secret"},
+			wantErrMsg: "FORBIDDEN",
+		},
+		{
+			name:       "secret blocked case insensitive",
+			payload:    Payload{APIVersion: "v1", Kind: "secret", Name: "my-secret"},
+			wantErrMsg: "FORBIDDEN",
+		},
 	}
 
 	for _, tt := range tests {

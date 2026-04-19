@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,6 +61,11 @@ func (t *Task) Execute(ctx context.Context, payloadBytes json.RawMessage) (*task
 	}
 	if payload.Name == "" {
 		return task.NewErrorResult(NewInvalidRequestError("name is required").Error()), nil
+	}
+
+	// Block sensitive resource types
+	if strings.EqualFold(payload.Kind, "Secret") {
+		return task.NewErrorResult(NewForbiddenError("Secret", payload.Name).Error()), nil
 	}
 
 	// Parse apiVersion to GroupVersion
