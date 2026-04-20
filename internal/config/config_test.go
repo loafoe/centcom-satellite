@@ -62,7 +62,7 @@ func TestLoad(t *testing.T) {
 
 			// Set test environment
 			for k, v := range tt.envVars {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 
 			cfg, err := Load()
@@ -87,7 +87,7 @@ func TestLoad(t *testing.T) {
 
 func TestConfigDefaults(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("WEBHOOK_SECRET", "test-secret")
+	_ = os.Setenv("WEBHOOK_SECRET", "test-secret")
 
 	cfg, err := Load()
 	if err != nil {
@@ -124,13 +124,13 @@ func TestGetEnvInt(t *testing.T) {
 	}
 
 	// Test valid value
-	os.Setenv("TEST_INT", "123")
+	_ = os.Setenv("TEST_INT", "123")
 	if got := getEnvInt("TEST_INT", 42); got != 123 {
 		t.Errorf("expected 123, got %d", got)
 	}
 
 	// Test invalid value falls back to default
-	os.Setenv("TEST_INT", "notanumber")
+	_ = os.Setenv("TEST_INT", "notanumber")
 	if got := getEnvInt("TEST_INT", 42); got != 42 {
 		t.Errorf("expected 42, got %d", got)
 	}

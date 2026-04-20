@@ -271,8 +271,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	sort.Slice(nsList, func(i, j int) bool {
 		// Sort by CPU requests descending (parse back from string)
 		var cpuI, cpuJ int64
-		fmt.Sscanf(nsList[i].Requests.CPU, "%dm", &cpuI)
-		fmt.Sscanf(nsList[j].Requests.CPU, "%dm", &cpuJ)
+		_, _ = fmt.Sscanf(nsList[i].Requests.CPU, "%dm", &cpuI)
+		_, _ = fmt.Sscanf(nsList[j].Requests.CPU, "%dm", &cpuJ)
 		return cpuI > cpuJ
 	})
 	if len(nsList) > payload.TopNamespaces {

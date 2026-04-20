@@ -114,7 +114,7 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Authenticate
 	if !h.requireAuth(w, r, body) {

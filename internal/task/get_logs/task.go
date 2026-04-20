@@ -108,7 +108,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to get log stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Read with size limit
 	limitedReader := io.LimitReader(stream, maxLogBytes+1)

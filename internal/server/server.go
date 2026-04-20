@@ -117,7 +117,7 @@ func (s *Server) startWithSPIRE() error {
 
 	tlsListener, err := s.spireClient.WrapListener(listener)
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return fmt.Errorf("failed to wrap listener with SPIRE TLS: %w", err)
 	}
 
