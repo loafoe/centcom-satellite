@@ -33,9 +33,73 @@ func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, spireClien
 	}
 }
 
+// authResult contains the result of an authentication attempt.
+type authResult struct {
+	authenticated bool
+	rejected      bool // true if auth was attempted but failed (response already written)
+}
+
+// authenticate checks authentication using mTLS, JWT-SVID, or webhook signature.
+// If body is provided, webhook signature verification is attempted.
+// Returns authResult indicating whether the request is authenticated or was rejected.
+func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []byte) authResult {
+	ctx := r.Context()
+
+	// 1. Check for mTLS (SPIRE X.509 SVID) - already validated at TLS layer
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		slog.Debug("authenticated via mTLS", "remote_addr", r.RemoteAddr)
+		return authResult{authenticated: true}
+	}
+
+	// 2. Check for JWT-SVID in Authorization header
+	if h.spireClient != nil && h.spireClient.IsJWTEnabled() {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") || strings.HasPrefix(authHeader, "bearer ") {
+			spiffeID, err := h.spireClient.ValidateJWTToken(ctx, authHeader)
+			if err != nil {
+				slog.Warn("JWT-SVID validation failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.writeError(w, http.StatusUnauthorized, "invalid JWT-SVID")
+				return authResult{rejected: true}
+			}
+			slog.Debug("authenticated via JWT-SVID", "spiffe_id", spiffeID.String(), "remote_addr", r.RemoteAddr)
+			return authResult{authenticated: true}
+		}
+	}
+
+	// 3. Check for webhook signature (only if body is provided)
+	if body != nil && h.verifier != nil {
+		signature := r.Header.Get(webhook.SignatureHeader)
+		if signature != "" {
+			if err := h.verifier.Verify(signature, body); err != nil {
+				slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.writeError(w, http.StatusUnauthorized, "invalid signature")
+				return authResult{rejected: true}
+			}
+			slog.Debug("authenticated via webhook signature", "remote_addr", r.RemoteAddr)
+			return authResult{authenticated: true}
+		}
+	}
+
+	return authResult{}
+}
+
+// requireAuth checks authentication and returns true if the request should proceed.
+// If authentication fails, it writes an error response and returns false.
+func (h *Handlers) requireAuth(w http.ResponseWriter, r *http.Request, body []byte) bool {
+	result := h.authenticate(w, r, body)
+	if result.rejected {
+		return false
+	}
+	if !result.authenticated {
+		slog.Warn("unauthenticated request rejected", "remote_addr", r.RemoteAddr)
+		h.writeError(w, http.StatusUnauthorized, "authentication required")
+		return false
+	}
+	return true
+}
+
 // HandleTask processes incoming task requests.
 func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	start := time.Now()
 
 	// Only accept POST
@@ -52,48 +116,8 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Authentication: try methods in order of preference
-	authenticated := false
-
-	// 1. Check for mTLS (SPIRE X.509 SVID) - already validated at TLS layer
-	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		authenticated = true
-		slog.Debug("authenticated via mTLS", "remote_addr", r.RemoteAddr)
-	}
-
-	// 2. Check for JWT-SVID in Authorization header
-	if !authenticated && h.spireClient != nil && h.spireClient.IsJWTEnabled() {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") || strings.HasPrefix(authHeader, "bearer ") {
-			spiffeID, err := h.spireClient.ValidateJWTToken(ctx, authHeader)
-			if err != nil {
-				slog.Warn("JWT-SVID validation failed", "error", err, "remote_addr", r.RemoteAddr)
-				h.writeError(w, http.StatusUnauthorized, "invalid JWT-SVID")
-				return
-			}
-			authenticated = true
-			slog.Debug("authenticated via JWT-SVID", "spiffe_id", spiffeID.String(), "remote_addr", r.RemoteAddr)
-		}
-	}
-
-	// 3. Check for webhook signature
-	if !authenticated && h.verifier != nil {
-		signature := r.Header.Get(webhook.SignatureHeader)
-		if signature != "" {
-			if err := h.verifier.Verify(signature, body); err != nil {
-				slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
-				h.writeError(w, http.StatusUnauthorized, "invalid signature")
-				return
-			}
-			authenticated = true
-			slog.Debug("authenticated via webhook signature", "remote_addr", r.RemoteAddr)
-		}
-	}
-
-	// No valid authentication found
-	if !authenticated {
-		slog.Warn("unauthenticated request rejected", "remote_addr", r.RemoteAddr)
-		h.writeError(w, http.StatusUnauthorized, "authentication required")
+	// Authenticate
+	if !h.requireAuth(w, r, body) {
 		return
 	}
 
@@ -105,7 +129,7 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute task
-	ctx, span := observability.StartSpan(ctx, "task.execute")
+	ctx, span := observability.StartSpan(r.Context(), "task.execute")
 	result, err := h.registry.Execute(ctx, *req)
 	span.End()
 
@@ -143,6 +167,11 @@ func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 
 // HandleListTasks returns the list of registered tasks.
 func (h *Handlers) HandleListTasks(w http.ResponseWriter, r *http.Request) {
+	// Authenticate (no body for GET requests)
+	if !h.requireAuth(w, r, nil) {
+		return
+	}
+
 	tasks := h.registry.List()
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"tasks": tasks,

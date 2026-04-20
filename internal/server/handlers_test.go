@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -177,10 +179,26 @@ func TestHandleReadyz(t *testing.T) {
 	}
 }
 
-func TestHandleListTasks(t *testing.T) {
+func TestHandleListTasks_Unauthenticated(t *testing.T) {
 	handlers, _ := setupTestHandlers(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	rec := httptest.NewRecorder()
+	handlers.HandleListTasks(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestHandleListTasks_WithMTLS(t *testing.T) {
+	handlers, _ := setupTestHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	// Simulate mTLS by setting TLS with peer certificates
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{}},
+	}
 	rec := httptest.NewRecorder()
 	handlers.HandleListTasks(rec, req)
 
