@@ -22,6 +22,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/get_resource"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/list_pods"
+	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
 	"github.com/loafoe/pico-agent/internal/task/list_workloads"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize_status"
@@ -88,6 +89,7 @@ func main() {
 	registry.Register(get_logs.New(k8sClient.Clientset))
 	registry.Register(list_workloads.New(k8sClient.Clientset))
 	registry.Register(get_events.New(k8sClient.Clientset))
+	registry.Register(pod_resource_usage.New(k8sClient.Clientset))
 
 	// Optional: get_resource task (requires expanded RBAC)
 	if cfg.Features.GetResourceEnabled {
