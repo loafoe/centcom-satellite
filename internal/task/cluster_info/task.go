@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,15 +41,16 @@ type NodesInfo struct {
 
 // NodeInfo contains individual node details.
 type NodeInfo struct {
-	Name            string   `json:"name"`
-	Roles           []string `json:"roles"`
-	KubeletVersion  string   `json:"kubelet_version"`
-	OS              string   `json:"os"`
-	Architecture    string   `json:"architecture"`
-	ContainerRuntime string  `json:"container_runtime"`
-	Ready           bool     `json:"ready"`
-	CPUCapacity     string   `json:"cpu_capacity"`
-	MemoryCapacity  string   `json:"memory_capacity"`
+	Name             string   `json:"name"`
+	Roles            []string `json:"roles"`
+	KubeletVersion   string   `json:"kubelet_version"`
+	OS               string   `json:"os"`
+	Architecture     string   `json:"architecture"`
+	ContainerRuntime string   `json:"container_runtime"`
+	Ready            bool     `json:"ready"`
+	CPUCapacity      string   `json:"cpu_capacity"`
+	MemoryCapacity   string   `json:"memory_capacity"`
+	Age              string   `json:"age"`
 }
 
 // Capacity contains total cluster capacity.
@@ -138,6 +140,7 @@ func (t *Task) processNodes(nodes *corev1.NodeList) NodesInfo {
 			Ready:            ready,
 			CPUCapacity:      node.Status.Capacity.Cpu().String(),
 			MemoryCapacity:   node.Status.Capacity.Memory().String(),
+			Age:              formatAge(node.CreationTimestamp.Time),
 		})
 	}
 
@@ -201,5 +204,17 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%.2fKi", float64(bytes)/KB)
 	default:
 		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func formatAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
