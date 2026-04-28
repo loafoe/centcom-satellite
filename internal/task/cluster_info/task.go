@@ -23,6 +23,7 @@ type ClusterInfo struct {
 	Nodes      NodesInfo   `json:"nodes"`
 	Capacity   Capacity    `json:"capacity"`
 	Namespaces int         `json:"namespaces"`
+	Region     string      `json:"region,omitempty"`
 }
 
 // VersionInfo contains Kubernetes version details.
@@ -101,6 +102,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 
 	info.Nodes = t.processNodes(nodes)
 	info.Capacity = t.calculateCapacity(nodes)
+	info.Region = t.detectRegion(nodes)
 
 	// Get namespace count
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
@@ -217,4 +219,17 @@ func formatAge(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+func (t *Task) detectRegion(nodes *corev1.NodeList) string {
+	for _, node := range nodes.Items {
+		if region, ok := node.Labels["topology.kubernetes.io/region"]; ok {
+			return region
+		}
+		// Fallback to legacy label
+		if region, ok := node.Labels["failure-domain.beta.kubernetes.io/region"]; ok {
+			return region
+		}
+	}
+	return ""
 }
