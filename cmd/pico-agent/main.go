@@ -128,6 +128,7 @@ func main() {
 		verifier,
 		metrics,
 		spireClient,
+		Version,
 	)
 
 	// Start server in goroutine

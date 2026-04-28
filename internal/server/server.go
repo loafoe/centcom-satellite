@@ -28,19 +28,21 @@ type Server struct {
 	handlers    *Handlers
 	metrics     *observability.Metrics
 	spireClient *spire.Client
+	version     string
 	main        *http.Server
 	mux         *http.Server
 }
 
 // New creates a new server instance.
-func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics, spireClient *spire.Client) *Server {
-	handlers := NewHandlers(registry, verifier, spireClient, metrics)
+func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics, spireClient *spire.Client, version string) *Server {
+	handlers := NewHandlers(registry, verifier, spireClient, metrics, version)
 
 	return &Server{
 		config:      cfg,
 		handlers:    handlers,
 		metrics:     metrics,
 		spireClient: spireClient,
+		version:     version,
 	}
 }
 
@@ -52,6 +54,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mainMux.HandleFunc("/tasks", s.handlers.HandleListTasks)
 	mainMux.HandleFunc("/healthz", s.handlers.HandleHealthz)
 	mainMux.HandleFunc("/readyz", s.handlers.HandleReadyz)
+	mainMux.HandleFunc("/version", s.handlers.HandleVersion)
 
 	// Apply middleware
 	mainHandler := Chain(

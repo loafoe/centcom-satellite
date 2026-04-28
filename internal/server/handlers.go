@@ -21,15 +21,17 @@ type Handlers struct {
 	verifier    *webhook.Verifier
 	spireClient *spire.Client
 	metrics     *observability.Metrics
+	version     string
 }
 
 // NewHandlers creates a new handlers instance.
-func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, spireClient *spire.Client, metrics *observability.Metrics) *Handlers {
+func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, spireClient *spire.Client, metrics *observability.Metrics, version string) *Handlers {
 	return &Handlers{
 		registry:    registry,
 		verifier:    verifier,
 		spireClient: spireClient,
 		metrics:     metrics,
+		version:     version,
 	}
 }
 
@@ -186,4 +188,14 @@ func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data any) {
 
 func (h *Handlers) writeError(w http.ResponseWriter, status int, message string) {
 	h.writeJSON(w, status, map[string]string{"error": message})
+}
+
+// HandleVersion returns the agent version.
+func (h *Handlers) HandleVersion(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAuth(w, r, nil) {
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"version": h.version,
+	})
 }
