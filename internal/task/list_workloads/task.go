@@ -72,8 +72,10 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	if payload.Namespace == "" {
-		return task.NewErrorResult("namespace is required"), nil
+	// Empty namespace means all namespaces
+	namespace := payload.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
 	}
 
 	// Default kind to "all" if empty
@@ -85,7 +87,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// List Deployments
 	if payload.Kind == "deployment" || payload.Kind == "all" {
-		deployments, err := t.clientset.AppsV1().Deployments(payload.Namespace).List(ctx, metav1.ListOptions{})
+		deployments, err := t.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to list deployments: %w", err)
 		}
@@ -96,7 +98,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// List StatefulSets
 	if payload.Kind == "statefulset" || payload.Kind == "all" {
-		statefulsets, err := t.clientset.AppsV1().StatefulSets(payload.Namespace).List(ctx, metav1.ListOptions{})
+		statefulsets, err := t.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 		}
@@ -107,7 +109,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// List DaemonSets
 	if payload.Kind == "daemonset" || payload.Kind == "all" {
-		daemonsets, err := t.clientset.AppsV1().DaemonSets(payload.Namespace).List(ctx, metav1.ListOptions{})
+		daemonsets, err := t.clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to list daemonsets: %w", err)
 		}
@@ -130,7 +132,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	return task.NewSuccessResultWithDetails(
-		fmt.Sprintf("Found %d workloads in namespace %s", result.Total, payload.Namespace),
+		fmt.Sprintf("Found %d workloads in namespace %s", result.Total, namespace),
 		result,
 	), nil
 }

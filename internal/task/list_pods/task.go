@@ -76,8 +76,10 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	if payload.Namespace == "" {
-		return task.NewErrorResult("namespace is required"), nil
+	// Empty namespace means all namespaces
+	namespace := payload.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
 	}
 
 	listOpts := metav1.ListOptions{}
@@ -88,7 +90,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		listOpts.FieldSelector = payload.FieldSelector
 	}
 
-	pods, err := t.clientset.CoreV1().Pods(payload.Namespace).List(ctx, listOpts)
+	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, listOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -109,10 +111,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return result.Pods[i].Name < result.Pods[j].Name
 	})
 
-	return task.NewSuccessResultWithDetails(
-		fmt.Sprintf("Found %d pods in namespace %s", result.Total, payload.Namespace),
-		result,
-	), nil
+	msg := fmt.Sprintf("Found %d pods in namespace %s", result.Total, namespace)
+	if namespace == metav1.NamespaceAll {
+		msg = fmt.Sprintf("Found %d pods across all namespaces", result.Total)
+	}
+	return task.NewSuccessResultWithDetails(msg, result), nil
 }
 
 func (t *Task) buildPodInfo(pod *corev1.Pod) PodInfo {
