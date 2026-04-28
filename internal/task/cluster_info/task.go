@@ -51,6 +51,8 @@ type NodeInfo struct {
 	Ready            bool     `json:"ready"`
 	CPUCapacity      string   `json:"cpu_capacity"`
 	MemoryCapacity   string   `json:"memory_capacity"`
+	CPUPercent       float64  `json:"cpu_percent"`
+	MemoryPercent    float64  `json:"memory_percent"`
 	Age              string   `json:"age"`
 }
 
@@ -100,7 +102,16 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	info.Nodes = t.processNodes(nodes)
+	// Get pods for resource utilization calculation
+	pods, err := t.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	// Calculate per-node resource requests
+	nodeResources := t.calculateNodeResources(pods)
+
+	info.Nodes = t.processNodes(nodes, nodeResources)
 	info.Capacity = t.calculateCapacity(nodes)
 	info.Region = t.detectRegion(nodes)
 
@@ -118,7 +129,31 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	), nil
 }
 
-func (t *Task) processNodes(nodes *corev1.NodeList) NodesInfo {
+type nodeResourceUsage struct {
+	cpuRequests int64
+	memRequests int64
+}
+
+func (t *Task) calculateNodeResources(pods *corev1.PodList) map[string]nodeResourceUsage {
+	usage := make(map[string]nodeResourceUsage)
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == "" {
+			continue
+		}
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		nr := usage[pod.Spec.NodeName]
+		for _, c := range pod.Spec.Containers {
+			nr.cpuRequests += c.Resources.Requests.Cpu().MilliValue()
+			nr.memRequests += c.Resources.Requests.Memory().Value()
+		}
+		usage[pod.Spec.NodeName] = nr
+	}
+	return usage
+}
+
+func (t *Task) processNodes(nodes *corev1.NodeList, nodeResources map[string]nodeResourceUsage) NodesInfo {
 	ni := NodesInfo{
 		Total:   len(nodes.Items),
 		Details: make([]NodeInfo, 0, len(nodes.Items)),
@@ -132,6 +167,18 @@ func (t *Task) processNodes(nodes *corev1.NodeList) NodesInfo {
 			ni.NotReady++
 		}
 
+		allocatableCPU := node.Status.Allocatable.Cpu().MilliValue()
+		allocatableMem := node.Status.Allocatable.Memory().Value()
+		nr := nodeResources[node.Name]
+
+		var cpuPercent, memPercent float64
+		if allocatableCPU > 0 {
+			cpuPercent = float64(nr.cpuRequests) / float64(allocatableCPU) * 100
+		}
+		if allocatableMem > 0 {
+			memPercent = float64(nr.memRequests) / float64(allocatableMem) * 100
+		}
+
 		ni.Details = append(ni.Details, NodeInfo{
 			Name:             node.Name,
 			Roles:            getNodeRoles(&node),
@@ -142,6 +189,8 @@ func (t *Task) processNodes(nodes *corev1.NodeList) NodesInfo {
 			Ready:            ready,
 			CPUCapacity:      node.Status.Capacity.Cpu().String(),
 			MemoryCapacity:   node.Status.Capacity.Memory().String(),
+			CPUPercent:       cpuPercent,
+			MemoryPercent:    memPercent,
 			Age:              formatAge(node.CreationTimestamp.Time),
 		})
 	}
