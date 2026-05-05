@@ -48,6 +48,25 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list", "watch"]
+  # Service read access for list_services task
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Ingress read access for list_ingresses task
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  # Gateway API read access (optional, graceful degradation if CRDs missing)
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gateways
+      - gatewayclasses
+      - httproutes
+      - tlsroutes
+      - grpcroutes
+      - tcproutes
+      - udproutes
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
