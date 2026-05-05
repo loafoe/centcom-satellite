@@ -20,8 +20,12 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/get_events"
 	"github.com/loafoe/pico-agent/internal/task/get_logs"
 	"github.com/loafoe/pico-agent/internal/task/get_resource"
+	"github.com/loafoe/pico-agent/internal/task/list_gateways"
+	"github.com/loafoe/pico-agent/internal/task/list_ingresses"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/list_pods"
+	"github.com/loafoe/pico-agent/internal/task/list_routes"
+	"github.com/loafoe/pico-agent/internal/task/list_services"
 	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
 	"github.com/loafoe/pico-agent/internal/task/list_workloads"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
@@ -90,6 +94,10 @@ func main() {
 	registry.Register(list_workloads.New(k8sClient.Clientset))
 	registry.Register(get_events.New(k8sClient.Clientset))
 	registry.Register(pod_resource_usage.New(k8sClient.Clientset))
+	registry.Register(list_services.New(k8sClient.Clientset))
+	registry.Register(list_ingresses.New(k8sClient.Clientset))
+	registry.Register(list_gateways.New(k8sClient.DynamicClient))
+	registry.Register(list_routes.New(k8sClient.DynamicClient))
 
 	// Optional: get_resource task (requires expanded RBAC)
 	if cfg.Features.GetResourceEnabled {
