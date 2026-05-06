@@ -33,6 +33,10 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/pv_usage"
 	"github.com/loafoe/pico-agent/internal/task/resource_pressure"
 	"github.com/loafoe/pico-agent/internal/task/storage_status"
+	"github.com/loafoe/pico-agent/internal/task/connectivity_test"
+	"github.com/loafoe/pico-agent/internal/task/dns_check"
+	"github.com/loafoe/pico-agent/internal/task/list_endpoints"
+	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
 	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
@@ -98,6 +102,10 @@ func main() {
 	registry.Register(list_ingresses.New(k8sClient.Clientset))
 	registry.Register(list_gateways.New(k8sClient.DynamicClient))
 	registry.Register(list_routes.New(k8sClient.DynamicClient))
+	registry.Register(list_endpoints.New(k8sClient.Clientset))
+	registry.Register(list_network_policies.New(k8sClient.Clientset))
+	registry.Register(dns_check.New())
+	registry.Register(connectivity_test.New())
 
 	// Optional: get_resource task (requires expanded RBAC)
 	if cfg.Features.GetResourceEnabled {
