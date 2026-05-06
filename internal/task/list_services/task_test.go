@@ -409,3 +409,41 @@ func TestTask_Execute_WithoutPodCount(t *testing.T) {
 	// PodCount should be 0 when IncludePodCount is false (default)
 	assert.Equal(t, 0, details.Services[0].PodCount)
 }
+
+func TestTask_Execute_ExternalNameType(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "external-db",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "database.example.com",
+		},
+	}
+
+	clientset := fake.NewSimpleClientset(svc)
+	task := New(clientset)
+
+	payload := Payload{
+		Namespace: "default",
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payloadBytes)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	details, ok := result.Details.(*ServiceList)
+	require.True(t, ok)
+	assert.Equal(t, 1, details.Total)
+	require.Len(t, details.Services, 1)
+
+	svcInfo := details.Services[0]
+	assert.Equal(t, "ExternalName", svcInfo.Type)
+	assert.Equal(t, "database.example.com", svcInfo.ExternalName)
+	assert.Empty(t, svcInfo.ClusterIP) // ExternalName services have no ClusterIP
+}
