@@ -369,8 +369,8 @@ func (t *Task) extractConditions(route *unstructured.Unstructured) []ConditionIn
 		return conditions
 	}
 
-	// Collect all unique conditions from all parents
-	seenConditions := make(map[string]bool)
+	// Track best condition per type (prefer True over False)
+	bestByType := make(map[string]ConditionInfo)
 
 	for _, p := range parents {
 		pMap, ok := p.(map[string]interface{})
@@ -400,13 +400,16 @@ func (t *Task) extractConditions(route *unstructured.Unstructured) []ConditionIn
 				condition.Reason = reason
 			}
 
-			// Use a key to deduplicate conditions
-			key := fmt.Sprintf("%s:%s:%s", condition.Type, condition.Status, condition.Reason)
-			if !seenConditions[key] {
-				seenConditions[key] = true
-				conditions = append(conditions, condition)
+			// For each condition type, prefer True over False
+			existing, exists := bestByType[condition.Type]
+			if !exists || (existing.Status == "False" && condition.Status == "True") {
+				bestByType[condition.Type] = condition
 			}
 		}
+	}
+
+	for _, c := range bestByType {
+		conditions = append(conditions, c)
 	}
 
 	return conditions
