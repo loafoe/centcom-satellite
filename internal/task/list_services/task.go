@@ -33,15 +33,16 @@ type ServiceList struct {
 
 // ServiceInfo contains service details.
 type ServiceInfo struct {
-	Name        string            `json:"name"`
-	Namespace   string            `json:"namespace"`
-	Type        string            `json:"type"`
-	ClusterIP   string            `json:"cluster_ip"`
-	ExternalIPs []string          `json:"external_ips,omitempty"`
-	Ports       []PortInfo        `json:"ports"`
-	Selector    map[string]string `json:"selector,omitempty"`
-	PodCount    int               `json:"pod_count"`
-	Age         string            `json:"age"`
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Type         string            `json:"type"`
+	ClusterIP    string            `json:"cluster_ip"`
+	ExternalIPs  []string          `json:"external_ips,omitempty"`
+	ExternalName string            `json:"external_name,omitempty"`
+	Ports        []PortInfo        `json:"ports"`
+	Selector     map[string]string `json:"selector,omitempty"`
+	PodCount     int               `json:"pod_count"`
+	Age          string            `json:"age"`
 }
 
 // PortInfo contains port details.
@@ -161,6 +162,11 @@ func (t *Task) buildServiceInfo(svc *corev1.Service, podIndex map[string][]corev
 				info.ExternalIPs = append(info.ExternalIPs, ingress.IP)
 			}
 		}
+	}
+
+	// Include external name for ExternalName-type services
+	if svc.Spec.Type == corev1.ServiceTypeExternalName {
+		info.ExternalName = svc.Spec.ExternalName
 	}
 
 	// Count matching pods using pre-built index (if available)
