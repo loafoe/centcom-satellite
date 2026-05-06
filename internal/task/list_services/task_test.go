@@ -107,7 +107,8 @@ func TestTask_Execute_WithServices(t *testing.T) {
 	task := New(clientset)
 
 	payload := Payload{
-		Namespace: "default",
+		Namespace:       "default",
+		IncludePodCount: true, // Enable pod counting
 	}
 	payloadBytes, err := json.Marshal(payload)
 	require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestTask_Execute_WithServices(t *testing.T) {
 	assert.Equal(t, "default", svcInfo.Namespace)
 	assert.Equal(t, "ClusterIP", svcInfo.Type)
 	assert.Equal(t, "10.96.0.1", svcInfo.ClusterIP)
-	assert.Equal(t, 2, svcInfo.PodCount) // Both pods match selector
+	assert.Equal(t, 2, svcInfo.PodCount) // Both pods match selector (IncludePodCount=true)
 	assert.NotEmpty(t, svcInfo.Age)
 
 	// Verify ports
@@ -356,4 +357,55 @@ func TestTask_Execute_AllNamespaces(t *testing.T) {
 	assert.Equal(t, "svc1", details.Services[0].Name)
 	assert.Equal(t, "ns2", details.Services[1].Namespace)
 	assert.Equal(t, "svc2", details.Services[1].Name)
+}
+
+func TestTask_Execute_WithoutPodCount(t *testing.T) {
+	// Create test service with selector
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-service",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "10.96.0.1",
+			Selector: map[string]string{
+				"app": "test",
+			},
+		},
+	}
+
+	// Create matching pods
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app": "test",
+			},
+		},
+	}
+
+	clientset := fake.NewSimpleClientset(svc, pod)
+	task := New(clientset)
+
+	// Default: IncludePodCount is false
+	payload := Payload{
+		Namespace: "default",
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payloadBytes)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+
+	details, ok := result.Details.(*ServiceList)
+	require.True(t, ok)
+	require.Len(t, details.Services, 1)
+
+	// PodCount should be 0 when IncludePodCount is false (default)
+	assert.Equal(t, 0, details.Services[0].PodCount)
 }
