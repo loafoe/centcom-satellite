@@ -67,6 +67,14 @@ rules:
       - tcproutes
       - udproutes
     verbs: ["get", "list", "watch"]
+  # EndpointSlices for list_endpoints task
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  # NetworkPolicies for list_network_policies task
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
