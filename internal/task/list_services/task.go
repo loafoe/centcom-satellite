@@ -20,8 +20,9 @@ const TaskName = "list_services"
 
 // Payload for list_services task.
 type Payload struct {
-	Namespace     string `json:"namespace,omitempty"`
-	LabelSelector string `json:"label_selector,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	LabelSelector   string `json:"label_selector,omitempty"`
+	IncludePodCount bool   `json:"include_pod_count,omitempty"`
 }
 
 // ServiceList contains the service listing.
@@ -92,6 +93,16 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return nil, fmt.Errorf("failed to list services: %w", err)
 	}
 
+	// Build pod index only if pod counts are requested (avoids N+1 queries)
+	var podIndex map[string][]corev1.Pod
+	if payload.IncludePodCount {
+		podIndex, err = t.buildPodIndex(ctx, namespace)
+		if err != nil {
+			// Non-fatal: continue without pod counts
+			podIndex = nil
+		}
+	}
+
 	result := &ServiceList{
 		Total:    len(services.Items),
 		Services: make([]ServiceInfo, 0, len(services.Items)),
@@ -99,7 +110,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	for i := range services.Items {
 		svc := &services.Items[i]
-		svcInfo := t.buildServiceInfo(ctx, svc)
+		svcInfo := t.buildServiceInfo(svc, podIndex)
 		result.Services = append(result.Services, svcInfo)
 	}
 
@@ -118,7 +129,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	return task.NewSuccessResultWithDetails(msg, result), nil
 }
 
-func (t *Task) buildServiceInfo(ctx context.Context, svc *corev1.Service) ServiceInfo {
+func (t *Task) buildServiceInfo(svc *corev1.Service, podIndex map[string][]corev1.Pod) ServiceInfo {
 	info := ServiceInfo{
 		Name:      svc.Name,
 		Namespace: svc.Namespace,
@@ -152,31 +163,44 @@ func (t *Task) buildServiceInfo(ctx context.Context, svc *corev1.Service) Servic
 		}
 	}
 
-	// Count matching pods
-	info.PodCount = t.countMatchingPods(ctx, svc)
+	// Count matching pods using pre-built index (if available)
+	if podIndex != nil {
+		info.PodCount = t.countMatchingPodsFromIndex(svc, podIndex)
+	}
 
 	return info
 }
 
-func (t *Task) countMatchingPods(ctx context.Context, svc *corev1.Service) int {
-	// If service has no selector, return 0
+// buildPodIndex fetches all pods and indexes them by namespace for efficient matching.
+func (t *Task) buildPodIndex(ctx context.Context, namespace string) (map[string][]corev1.Pod, error) {
+	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	index := make(map[string][]corev1.Pod)
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		index[pod.Namespace] = append(index[pod.Namespace], *pod)
+	}
+	return index, nil
+}
+
+// countMatchingPodsFromIndex counts pods matching the service selector using the pre-built index.
+func (t *Task) countMatchingPodsFromIndex(svc *corev1.Service, podIndex map[string][]corev1.Pod) int {
 	if len(svc.Spec.Selector) == 0 {
 		return 0
 	}
 
-	// Convert selector map to label selector
 	selector := labels.SelectorFromSet(svc.Spec.Selector)
+	count := 0
 
-	// List pods in the same namespace with matching labels
-	pods, err := t.clientset.CoreV1().Pods(svc.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector.String(),
-	})
-	if err != nil {
-		// If we can't list pods, return 0 instead of failing the whole request
-		return 0
+	for _, pod := range podIndex[svc.Namespace] {
+		if selector.Matches(labels.Set(pod.Labels)) {
+			count++
+		}
 	}
-
-	return len(pods.Items)
+	return count
 }
 
 func formatAge(t time.Time) string {
