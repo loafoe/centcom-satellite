@@ -46,6 +46,18 @@ type FeaturesConfig struct {
 	// GetResourceEnabled enables the get_resource task for fetching arbitrary resources.
 	// Disabled by default as it requires expanded RBAC permissions.
 	GetResourceEnabled bool
+
+	// WorkloadRestartEnabled enables the workload_restart task for restarting workloads.
+	// Disabled by default as it requires write permissions and can cause service disruption.
+	WorkloadRestartEnabled bool
+
+	// WorkloadScaleEnabled enables the workload_scale task for scaling workloads.
+	// Disabled by default as it requires write permissions and can impact cluster resources.
+	WorkloadScaleEnabled bool
+
+	// PodEvictEnabled enables the pod_evict task for evicting pods.
+	// Disabled by default as it requires write permissions and can cause service disruption.
+	PodEvictEnabled bool
 }
 
 // Load reads configuration from environment variables.
@@ -70,7 +82,10 @@ func Load() (*Config, error) {
 			},
 		},
 		Features: FeaturesConfig{
-			GetResourceEnabled: getEnvBool("GET_RESOURCE_ENABLED", false),
+			GetResourceEnabled:     getEnvBool("GET_RESOURCE_ENABLED", false),
+			WorkloadRestartEnabled: getEnvBool("WORKLOAD_RESTART_ENABLED", false),
+			WorkloadScaleEnabled:   getEnvBool("WORKLOAD_SCALE_ENABLED", false),
+			PodEvictEnabled:        getEnvBool("POD_EVICT_ENABLED", false),
 		},
 	}
 
