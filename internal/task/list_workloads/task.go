@@ -20,8 +20,9 @@ const TaskName = "list_workloads"
 
 // Payload for list_workloads task.
 type Payload struct {
-	Namespace string `json:"namespace"`      // required
-	Kind      string `json:"kind,omitempty"` // deployment/statefulset/daemonset/all (default: all)
+	Namespace       string `json:"namespace"`               // required
+	Kind            string `json:"kind,omitempty"`          // deployment/statefulset/daemonset/all (default: all)
+	IncludeMetadata bool   `json:"include_metadata"`        // include labels and annotations
 }
 
 // WorkloadList contains the workload listing.
@@ -38,6 +39,7 @@ type WorkloadInfo struct {
 	Replicas     ReplicaStatus     `json:"replicas"`
 	Images       []string          `json:"images"`
 	Labels       map[string]string `json:"labels,omitempty"`
+	Annotations  map[string]string `json:"annotations,omitempty"`
 	CreationTime string            `json:"creation_time"`
 	Age          string            `json:"age"`
 }
@@ -92,7 +94,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list deployments: %w", err)
 		}
 		for i := range deployments.Items {
-			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i]))
+			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i], payload.IncludeMetadata))
 		}
 	}
 
@@ -103,7 +105,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 		}
 		for i := range statefulsets.Items {
-			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i]))
+			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i], payload.IncludeMetadata))
 		}
 	}
 
@@ -114,7 +116,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list daemonsets: %w", err)
 		}
 		for i := range daemonsets.Items {
-			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i]))
+			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i], payload.IncludeMetadata))
 		}
 	}
 
@@ -137,14 +139,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	), nil
 }
 
-func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment) WorkloadInfo {
+func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadata bool) WorkloadInfo {
 	images := extractImages(deployment.Spec.Template.Spec.Containers)
 	var desired int32 = 1
 	if deployment.Spec.Replicas != nil {
 		desired = *deployment.Spec.Replicas
 	}
 
-	return WorkloadInfo{
+	info := WorkloadInfo{
 		Name:      deployment.Name,
 		Namespace: deployment.Namespace,
 		Kind:      "Deployment",
@@ -153,20 +155,26 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment) WorkloadInfo {
 			Ready:   deployment.Status.ReadyReplicas,
 		},
 		Images:       images,
-		Labels:       deployment.Labels,
 		CreationTime: deployment.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(deployment.CreationTimestamp.Time),
 	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(deployment.Labels)
+		info.Annotations = filterAnnotations(deployment.Annotations)
+	}
+
+	return info
 }
 
-func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet) WorkloadInfo {
+func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMetadata bool) WorkloadInfo {
 	images := extractImages(statefulset.Spec.Template.Spec.Containers)
 	var desired int32 = 1
 	if statefulset.Spec.Replicas != nil {
 		desired = *statefulset.Spec.Replicas
 	}
 
-	return WorkloadInfo{
+	info := WorkloadInfo{
 		Name:      statefulset.Name,
 		Namespace: statefulset.Namespace,
 		Kind:      "StatefulSet",
@@ -175,16 +183,22 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet) WorkloadInf
 			Ready:   statefulset.Status.ReadyReplicas,
 		},
 		Images:       images,
-		Labels:       statefulset.Labels,
 		CreationTime: statefulset.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(statefulset.CreationTimestamp.Time),
 	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(statefulset.Labels)
+		info.Annotations = filterAnnotations(statefulset.Annotations)
+	}
+
+	return info
 }
 
-func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet) WorkloadInfo {
+func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata bool) WorkloadInfo {
 	images := extractImages(daemonset.Spec.Template.Spec.Containers)
 
-	return WorkloadInfo{
+	info := WorkloadInfo{
 		Name:      daemonset.Name,
 		Namespace: daemonset.Namespace,
 		Kind:      "DaemonSet",
@@ -193,10 +207,16 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet) WorkloadInfo {
 			Ready:   daemonset.Status.NumberReady,
 		},
 		Images:       images,
-		Labels:       daemonset.Labels,
 		CreationTime: daemonset.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(daemonset.CreationTimestamp.Time),
 	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(daemonset.Labels)
+		info.Annotations = filterAnnotations(daemonset.Annotations)
+	}
+
+	return info
 }
 
 func extractImages(containers []corev1.Container) []string {
@@ -217,4 +237,41 @@ func formatAge(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// copyLabels returns a copy of the labels map, or empty map if nil.
+func copyLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(labels))
+	for k, v := range labels {
+		result[k] = v
+	}
+	return result
+}
+
+// filterAnnotations returns annotations with noisy keys filtered out.
+func filterAnnotations(annotations map[string]string) map[string]string {
+	if annotations == nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string)
+	for k, v := range annotations {
+		if shouldExcludeAnnotation(k) {
+			continue
+		}
+		result[k] = v
+	}
+	return result
+}
+
+// shouldExcludeAnnotation returns true for annotations that bloat responses.
+func shouldExcludeAnnotation(key string) bool {
+	switch key {
+	case "kubectl.kubernetes.io/last-applied-configuration",
+		"deployment.kubernetes.io/revision":
+		return true
+	}
+	return false
 }

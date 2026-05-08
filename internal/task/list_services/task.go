@@ -23,6 +23,7 @@ type Payload struct {
 	Namespace       string `json:"namespace,omitempty"`
 	LabelSelector   string `json:"label_selector,omitempty"`
 	IncludePodCount bool   `json:"include_pod_count,omitempty"`
+	IncludeMetadata bool   `json:"include_metadata"`
 }
 
 // ServiceList contains the service listing.
@@ -41,6 +42,8 @@ type ServiceInfo struct {
 	ExternalName string            `json:"external_name,omitempty"`
 	Ports        []PortInfo        `json:"ports"`
 	Selector     map[string]string `json:"selector,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Annotations  map[string]string `json:"annotations,omitempty"`
 	PodCount     int               `json:"pod_count"`
 	Age          string            `json:"age"`
 }
@@ -111,7 +114,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	for i := range services.Items {
 		svc := &services.Items[i]
-		svcInfo := t.buildServiceInfo(svc, podIndex)
+		svcInfo := t.buildServiceInfo(svc, podIndex, payload.IncludeMetadata)
 		result.Services = append(result.Services, svcInfo)
 	}
 
@@ -130,7 +133,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	return task.NewSuccessResultWithDetails(msg, result), nil
 }
 
-func (t *Task) buildServiceInfo(svc *corev1.Service, podIndex map[string][]corev1.Pod) ServiceInfo {
+func (t *Task) buildServiceInfo(svc *corev1.Service, podIndex map[string][]corev1.Pod, includeMetadata bool) ServiceInfo {
 	info := ServiceInfo{
 		Name:      svc.Name,
 		Namespace: svc.Namespace,
@@ -139,6 +142,11 @@ func (t *Task) buildServiceInfo(svc *corev1.Service, podIndex map[string][]corev
 		Selector:  svc.Spec.Selector,
 		Age:       formatAge(svc.CreationTimestamp.Time),
 		Ports:     make([]PortInfo, 0, len(svc.Spec.Ports)),
+	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(svc.Labels)
+		info.Annotations = filterAnnotations(svc.Annotations)
 	}
 
 	// Build port info
@@ -219,4 +227,31 @@ func formatAge(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// copyLabels returns a copy of the labels map, or empty map if nil.
+func copyLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(labels))
+	for k, v := range labels {
+		result[k] = v
+	}
+	return result
+}
+
+// filterAnnotations returns annotations with noisy keys filtered out.
+func filterAnnotations(annotations map[string]string) map[string]string {
+	if annotations == nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string)
+	for k, v := range annotations {
+		if k == "kubectl.kubernetes.io/last-applied-configuration" {
+			continue
+		}
+		result[k] = v
+	}
+	return result
 }
