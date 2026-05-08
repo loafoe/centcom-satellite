@@ -19,11 +19,20 @@ const TaskName = "cluster_info"
 
 // ClusterInfo contains the cluster details.
 type ClusterInfo struct {
-	Version    VersionInfo `json:"version"`
-	Nodes      NodesInfo   `json:"nodes"`
-	Capacity   Capacity    `json:"capacity"`
-	Namespaces int         `json:"namespaces"`
-	Region     string      `json:"region,omitempty"`
+	Version      VersionInfo  `json:"version"`
+	Nodes        NodesInfo    `json:"nodes"`
+	Capacity     Capacity     `json:"capacity"`
+	Namespaces   int          `json:"namespaces"`
+	Region       string       `json:"region,omitempty"`
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+// Capabilities advertises which optional features are enabled on this agent.
+type Capabilities struct {
+	WorkloadRestart bool `json:"workload_restart"`
+	WorkloadScale   bool `json:"workload_scale"`
+	PodEvict        bool `json:"pod_evict"`
+	GetResource     bool `json:"get_resource"`
 }
 
 // VersionInfo contains Kubernetes version details.
@@ -67,6 +76,7 @@ type Capacity struct {
 type Task struct {
 	clientset       kubernetes.Interface
 	discoveryClient discovery.DiscoveryInterface
+	capabilities    Capabilities
 }
 
 // New creates a new cluster info task.
@@ -75,6 +85,12 @@ func New(clientset kubernetes.Interface) *Task {
 		clientset:       clientset,
 		discoveryClient: clientset.Discovery(),
 	}
+}
+
+// WithCapabilities sets the capabilities to advertise.
+func (t *Task) WithCapabilities(caps Capabilities) *Task {
+	t.capabilities = caps
+	return t
 }
 
 // Name returns the task type identifier.
@@ -121,6 +137,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 		return nil, fmt.Errorf("failed to list namespaces: %w", err)
 	}
 	info.Namespaces = len(namespaces.Items)
+	info.Capabilities = t.capabilities
 
 	return task.NewSuccessResultWithDetails(
 		fmt.Sprintf("Cluster running Kubernetes %s with %d nodes (%d ready)",
