@@ -32,6 +32,7 @@ type Capabilities struct {
 	WorkloadRestart bool `json:"workload_restart"`
 	WorkloadScale   bool `json:"workload_scale"`
 	PodEvict        bool `json:"pod_evict"`
+	PodResize       bool `json:"pod_resize"`
 	GetResource     bool `json:"get_resource"`
 }
 
