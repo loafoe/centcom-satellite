@@ -58,6 +58,21 @@ type FeaturesConfig struct {
 	// PodEvictEnabled enables the pod_evict task for evicting pods.
 	// Disabled by default as it requires write permissions and can cause service disruption.
 	PodEvictEnabled bool
+
+	// PodResizeEnabled enables the pod_resize task for in-place memory resize.
+	// Disabled by default as it requires write permissions and K8s 1.27+.
+	PodResizeEnabled bool
+
+	// PodResizeConfig holds configuration for the pod_resize task.
+	PodResizeConfig PodResizeConfig
+}
+
+// PodResizeConfig holds pod_resize task configuration.
+type PodResizeConfig struct {
+	// PercentageCap is the maximum percentage increase allowed (default 50).
+	PercentageCap int
+	// AbsoluteCap is the maximum memory value allowed (default "4Gi").
+	AbsoluteCap string
 }
 
 // Load reads configuration from environment variables.
@@ -86,6 +101,11 @@ func Load() (*Config, error) {
 			WorkloadRestartEnabled: getEnvBool("WORKLOAD_RESTART_ENABLED", false),
 			WorkloadScaleEnabled:   getEnvBool("WORKLOAD_SCALE_ENABLED", false),
 			PodEvictEnabled:        getEnvBool("POD_EVICT_ENABLED", false),
+			PodResizeEnabled:       getEnvBool("POD_RESIZE_ENABLED", false),
+			PodResizeConfig: PodResizeConfig{
+				PercentageCap: getEnvInt("POD_RESIZE_PERCENTAGE_CAP", 50),
+				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "4Gi"),
+			},
 		},
 	}
 
