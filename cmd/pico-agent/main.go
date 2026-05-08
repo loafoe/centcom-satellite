@@ -90,7 +90,12 @@ func main() {
 	registry := task.NewRegistry()
 	registry.Register(pv_resize.New(k8sClient.Clientset))
 	registry.Register(pv_resize_status.New(k8sClient.Clientset))
-	registry.Register(cluster_info.New(k8sClient.Clientset))
+	registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
+		WorkloadRestart: cfg.Features.WorkloadRestartEnabled,
+		WorkloadScale:   cfg.Features.WorkloadScaleEnabled,
+		PodEvict:        cfg.Features.PodEvictEnabled,
+		GetResource:     cfg.Features.GetResourceEnabled,
+	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
 	registry.Register(storage_status.New(k8sClient.Clientset))
