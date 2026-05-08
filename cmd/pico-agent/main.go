@@ -37,6 +37,9 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/dns_check"
 	"github.com/loafoe/pico-agent/internal/task/list_endpoints"
 	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
+	"github.com/loafoe/pico-agent/internal/task/pod_evict"
+	"github.com/loafoe/pico-agent/internal/task/workload_restart"
+	"github.com/loafoe/pico-agent/internal/task/workload_scale"
 	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
@@ -111,6 +114,24 @@ func main() {
 	if cfg.Features.GetResourceEnabled {
 		registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
 		slog.Info("get_resource task enabled")
+	}
+
+	// Optional: workload_restart task (write operation)
+	if cfg.Features.WorkloadRestartEnabled {
+		registry.Register(workload_restart.New(k8sClient.Clientset))
+		slog.Info("workload_restart task enabled")
+	}
+
+	// Optional: workload_scale task (write operation)
+	if cfg.Features.WorkloadScaleEnabled {
+		registry.Register(workload_scale.New(k8sClient.Clientset))
+		slog.Info("workload_scale task enabled")
+	}
+
+	// Optional: pod_evict task (write operation)
+	if cfg.Features.PodEvictEnabled {
+		registry.Register(pod_evict.New(k8sClient.Clientset))
+		slog.Info("pod_evict task enabled")
 	}
 
 	// Setup webhook verifier (may be nil if SPIRE-only auth)
