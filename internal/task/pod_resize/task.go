@@ -37,12 +37,31 @@ type Result struct {
 	PreviousLimit   string `json:"previous_limit,omitempty"`
 	NewLimit        string `json:"new_limit,omitempty"`
 	LimitUpdated    bool   `json:"limit_updated,omitempty"`
+	LimitReduced    bool   `json:"limit_reduced,omitempty"`
+	CurrentUsage    string `json:"current_usage,omitempty"`
 	NodeCapacity    struct {
 		Allocatable string `json:"allocatable"`
 		Available   string `json:"available"`
 	} `json:"node_capacity"`
 	Warning string `json:"warning,omitempty"`
 	DryRun  bool   `json:"dry_run"`
+}
+
+// metricsContainer holds container metrics from metrics-server
+type metricsContainer struct {
+	Name  string `json:"name"`
+	Usage struct {
+		Memory string `json:"memory"`
+	} `json:"usage"`
+}
+
+// metricsPod holds pod metrics from metrics-server
+type metricsPod struct {
+	Metadata struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Containers []metricsContainer `json:"containers"`
 }
 
 type Task struct {
@@ -111,8 +130,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Determine memory limit to set
 	currentLimit := container.Resources.Limits.Memory()
 	var newLimit *resource.Quantity
-	var limitUpdated bool
-	var previousLimitStr, newLimitStr string
+	var limitUpdated, limitReduced bool
+	var previousLimitStr, newLimitStr, currentUsageStr string
 
 	if currentLimit != nil && !currentLimit.IsZero() {
 		previousLimitStr = currentLimit.String()
@@ -129,6 +148,18 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return task.NewErrorResult(fmt.Sprintf("memory_limit (%s) must be >= memory request (%s)",
 				parsedLimit.String(), requestedMemory.String())), nil
 		}
+
+		// Check if this is a reduction
+		if currentLimit != nil && !currentLimit.IsZero() && parsedLimit.Cmp(*currentLimit) < 0 {
+			// Validate reduction against actual usage
+			usage, err := t.validateLimitReduction(ctx, payload.Namespace, payload.Pod, container.Name, currentLimit, &parsedLimit)
+			if err != nil {
+				return task.NewErrorResult(err.Error()), nil
+			}
+			currentUsageStr = usage.String()
+			limitReduced = true
+		}
+
 		newLimit = &parsedLimit
 		limitUpdated = true
 		newLimitStr = parsedLimit.String()
@@ -141,7 +172,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// Build warning message
 	warning := "resize is ephemeral until pod restart"
-	if limitUpdated {
+	if limitReduced {
+		warning = "resize is ephemeral until pod restart; memory limit was REDUCED - monitor for OOM"
+	} else if limitUpdated {
 		warning = "resize is ephemeral until pod restart; memory limit was also updated"
 	}
 
@@ -155,6 +188,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		PreviousLimit:  previousLimitStr,
 		NewLimit:       newLimitStr,
 		LimitUpdated:   limitUpdated,
+		LimitReduced:   limitReduced,
+		CurrentUsage:   currentUsageStr,
 		NodeCapacity:   nodeCapacity,
 		Warning:        warning,
 		DryRun:         payload.DryRun,
@@ -348,4 +383,57 @@ func (t *Task) resizePod(ctx context.Context, namespace, podName string, contain
 	// Use the resize subresource (KEP-1287)
 	_, err = t.clientset.CoreV1().Pods(namespace).Patch(ctx, podName, types.StrategicMergePatchType, []byte(patchData), metav1.PatchOptions{}, "resize")
 	return err
+}
+
+// getContainerMemoryUsage fetches current memory usage for a container from metrics-server
+func (t *Task) getContainerMemoryUsage(ctx context.Context, namespace, podName, containerName string) (*resource.Quantity, error) {
+	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods/%s", namespace, podName)
+
+	data, err := t.clientset.CoreV1().RESTClient().Get().
+		AbsPath(path).
+		DoRaw(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("metrics API request failed (is metrics-server installed?): %w", err)
+	}
+
+	var metrics metricsPod
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		return nil, fmt.Errorf("failed to parse metrics response: %w", err)
+	}
+
+	for _, c := range metrics.Containers {
+		if c.Name == containerName {
+			usage, err := resource.ParseQuantity(c.Usage.Memory)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse memory usage: %w", err)
+			}
+			return &usage, nil
+		}
+	}
+
+	return nil, fmt.Errorf("container %q not found in metrics", containerName)
+}
+
+// validateLimitReduction checks if reducing the limit is safe based on actual usage
+func (t *Task) validateLimitReduction(ctx context.Context, namespace, podName, containerName string, currentLimit, newLimit *resource.Quantity) (*resource.Quantity, error) {
+	// Fetch current usage from metrics
+	usage, err := t.getContainerMemoryUsage(ctx, namespace, podName, containerName)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reduce limit without metrics: %w", err)
+	}
+
+	// Calculate minimum safe limit: usage + 20% buffer
+	buffer := t.config.ShrinkBuffer
+	if buffer == 0 {
+		buffer = 20 // default 20%
+	}
+	minSafeLimit := usage.DeepCopy()
+	minSafeLimit.Add(*resource.NewQuantity(usage.Value()*int64(buffer)/100, resource.BinarySI))
+
+	if newLimit.Cmp(minSafeLimit) < 0 {
+		return usage, fmt.Errorf("new limit %s is below safe minimum %s (current usage %s + %d%% buffer)",
+			newLimit.String(), minSafeLimit.String(), usage.String(), buffer)
+	}
+
+	return usage, nil
 }

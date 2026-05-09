@@ -73,6 +73,8 @@ type PodResizeConfig struct {
 	PercentageCap int
 	// AbsoluteCap is the maximum memory value allowed (default "8Gi").
 	AbsoluteCap string
+	// ShrinkBuffer is the safety buffer percentage above current usage when reducing limits (default 20).
+	ShrinkBuffer int
 }
 
 // Load reads configuration from environment variables.
@@ -105,6 +107,7 @@ func Load() (*Config, error) {
 			PodResizeConfig: PodResizeConfig{
 				PercentageCap: getEnvInt("POD_RESIZE_PERCENTAGE_CAP", 50),
 				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "8Gi"),
+				ShrinkBuffer:  getEnvInt("POD_RESIZE_SHRINK_BUFFER", 20),
 			},
 		},
 	}
