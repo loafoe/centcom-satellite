@@ -71,7 +71,7 @@ type FeaturesConfig struct {
 type PodResizeConfig struct {
 	// PercentageCap is the maximum percentage increase allowed (default 50).
 	PercentageCap int
-	// AbsoluteCap is the maximum memory value allowed (default "4Gi").
+	// AbsoluteCap is the maximum memory value allowed (default "8Gi").
 	AbsoluteCap string
 }
 
@@ -104,7 +104,7 @@ func Load() (*Config, error) {
 			PodResizeEnabled:       getEnvBool("POD_RESIZE_ENABLED", false),
 			PodResizeConfig: PodResizeConfig{
 				PercentageCap: getEnvInt("POD_RESIZE_PERCENTAGE_CAP", 50),
-				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "4Gi"),
+				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "8Gi"),
 			},
 		},
 	}
