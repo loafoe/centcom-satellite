@@ -265,9 +265,23 @@ func (t *Task) checkNodeCapacity(ctx context.Context, pod *corev1.Pod, current, 
 }
 
 func (t *Task) resizePod(ctx context.Context, namespace, podName string, containerIdx int, memory *resource.Quantity) error {
-	patch := fmt.Sprintf(`[{"op": "replace", "path": "/spec/containers/%d/resources/requests/memory", "value": "%s"}]`,
-		containerIdx, memory.String())
+	// Get the pod first to get the actual container name
+	pod, err := t.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get pod for resize: %w", err)
+	}
 
-	_, err := t.clientset.CoreV1().Pods(namespace).Patch(ctx, podName, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
+	if containerIdx < 0 || containerIdx >= len(pod.Spec.Containers) {
+		return fmt.Errorf("container index %d out of range", containerIdx)
+	}
+
+	containerName := pod.Spec.Containers[containerIdx].Name
+
+	// Build the patch with the actual container name using Strategic Merge Patch
+	patchData := fmt.Sprintf(`{"spec":{"containers":[{"name":"%s","resources":{"requests":{"memory":"%s"}}}]}}`,
+		containerName, memory.String())
+
+	// Use the resize subresource (KEP-1287)
+	_, err = t.clientset.CoreV1().Pods(namespace).Patch(ctx, podName, types.StrategicMergePatchType, []byte(patchData), metav1.PatchOptions{}, "resize")
 	return err
 }
