@@ -208,16 +208,21 @@ func (t *Task) findContainer(pod *corev1.Pod, name string) (int, *corev1.Contain
 func (t *Task) validateSafetyRails(pod *corev1.Pod, container *corev1.Container, current, requested *resource.Quantity) error {
 	currentLimit := container.Resources.Limits.Memory()
 
-	// Percentage cap only applies when going ABOVE the current limit.
-	// If a limit exists and request is within it, the pod was already approved for that usage.
-	// The cap prevents runaway increases beyond what's already sanctioned.
-	if currentLimit == nil || currentLimit.IsZero() || requested.Cmp(*currentLimit) > 0 {
-		maxAllowed := current.DeepCopy()
-		maxAllowed.Add(*resource.NewQuantity(current.Value()*int64(t.config.PercentageCap)/100, resource.BinarySI))
-		if requested.Cmp(maxAllowed) > 0 {
-			return fmt.Errorf("exceeds percentage cap (%d%%): max %s, requested %s",
-				t.config.PercentageCap, maxAllowed.String(), requested.String())
-		}
+	// Percentage cap calculation:
+	// - If a limit exists, use limit as base (limit represents approved usage ceiling)
+	// - If no limit, fall back to request as base
+	// This prevents runaway increases while respecting existing approval levels.
+	var base *resource.Quantity
+	if currentLimit != nil && !currentLimit.IsZero() {
+		base = currentLimit
+	} else {
+		base = current
+	}
+	maxAllowed := base.DeepCopy()
+	maxAllowed.Add(*resource.NewQuantity(base.Value()*int64(t.config.PercentageCap)/100, resource.BinarySI))
+	if requested.Cmp(maxAllowed) > 0 {
+		return fmt.Errorf("exceeds percentage cap (%d%% of %s): max %s, requested %s",
+			t.config.PercentageCap, base.String(), maxAllowed.String(), requested.String())
 	}
 
 	// Check absolute cap (always applies)
