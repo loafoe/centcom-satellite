@@ -22,18 +22,22 @@ type Payload struct {
 	Pod       string `json:"pod"`
 	Container string `json:"container,omitempty"`
 	Resources struct {
-		Memory string `json:"memory,omitempty"`
+		Memory      string `json:"memory,omitempty"`
+		MemoryLimit string `json:"memory_limit,omitempty"`
 	} `json:"resources"`
 	DryRun bool `json:"dry_run,omitempty"`
 }
 
 type Result struct {
-	Success        bool   `json:"success"`
-	Pod            string `json:"pod"`
-	Container      string `json:"container"`
-	PreviousMemory string `json:"previous_memory"`
-	NewMemory      string `json:"new_memory"`
-	NodeCapacity   struct {
+	Success         bool   `json:"success"`
+	Pod             string `json:"pod"`
+	Container       string `json:"container"`
+	PreviousMemory  string `json:"previous_memory"`
+	NewMemory       string `json:"new_memory"`
+	PreviousLimit   string `json:"previous_limit,omitempty"`
+	NewLimit        string `json:"new_limit,omitempty"`
+	LimitUpdated    bool   `json:"limit_updated,omitempty"`
+	NodeCapacity    struct {
 		Allocatable string `json:"allocatable"`
 		Available   string `json:"available"`
 	} `json:"node_capacity"`
@@ -104,6 +108,43 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return task.NewErrorResult(err.Error()), nil
 	}
 
+	// Determine memory limit to set
+	currentLimit := container.Resources.Limits.Memory()
+	var newLimit *resource.Quantity
+	var limitUpdated bool
+	var previousLimitStr, newLimitStr string
+
+	if currentLimit != nil && !currentLimit.IsZero() {
+		previousLimitStr = currentLimit.String()
+	}
+
+	if payload.Resources.MemoryLimit != "" {
+		// Explicit limit requested
+		parsedLimit, err := resource.ParseQuantity(payload.Resources.MemoryLimit)
+		if err != nil {
+			return task.NewErrorResult(fmt.Sprintf("invalid memory_limit value: %v", err)), nil
+		}
+		// Validate limit >= request
+		if parsedLimit.Cmp(requestedMemory) < 0 {
+			return task.NewErrorResult(fmt.Sprintf("memory_limit (%s) must be >= memory request (%s)",
+				parsedLimit.String(), requestedMemory.String())), nil
+		}
+		newLimit = &parsedLimit
+		limitUpdated = true
+		newLimitStr = parsedLimit.String()
+	} else if currentLimit != nil && !currentLimit.IsZero() && requestedMemory.Cmp(*currentLimit) > 0 {
+		// Auto-update limit when request exceeds it
+		newLimit = &requestedMemory
+		limitUpdated = true
+		newLimitStr = requestedMemory.String()
+	}
+
+	// Build warning message
+	warning := "resize is ephemeral until pod restart"
+	if limitUpdated {
+		warning = "resize is ephemeral until pod restart; memory limit was also updated"
+	}
+
 	// Build result
 	result := Result{
 		Success:        true,
@@ -111,29 +152,34 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		Container:      container.Name,
 		PreviousMemory: currentMemory.String(),
 		NewMemory:      requestedMemory.String(),
+		PreviousLimit:  previousLimitStr,
+		NewLimit:       newLimitStr,
+		LimitUpdated:   limitUpdated,
 		NodeCapacity:   nodeCapacity,
-		Warning:        "resize is ephemeral until pod restart",
+		Warning:        warning,
 		DryRun:         payload.DryRun,
 	}
 
 	if payload.DryRun {
-		return task.NewSuccessResultWithDetails(
-			fmt.Sprintf("Dry-run: would resize %s/%s container %s from %s to %s",
-				payload.Namespace, payload.Pod, container.Name, currentMemory.String(), requestedMemory.String()),
-			result,
-		), nil
+		msg := fmt.Sprintf("Dry-run: would resize %s/%s container %s from %s to %s",
+			payload.Namespace, payload.Pod, container.Name, currentMemory.String(), requestedMemory.String())
+		if limitUpdated {
+			msg += fmt.Sprintf(" (limit: %s -> %s)", previousLimitStr, newLimitStr)
+		}
+		return task.NewSuccessResultWithDetails(msg, result), nil
 	}
 
 	// Perform the resize
-	if err := t.resizePod(ctx, payload.Namespace, payload.Pod, containerIdx, &requestedMemory); err != nil {
+	if err := t.resizePod(ctx, payload.Namespace, payload.Pod, containerIdx, &requestedMemory, newLimit); err != nil {
 		return nil, fmt.Errorf("failed to resize pod: %w", err)
 	}
 
-	return task.NewSuccessResultWithDetails(
-		fmt.Sprintf("Resized %s/%s container %s from %s to %s (ephemeral until pod restart)",
-			payload.Namespace, payload.Pod, container.Name, currentMemory.String(), requestedMemory.String()),
-		result,
-	), nil
+	msg := fmt.Sprintf("Resized %s/%s container %s from %s to %s (ephemeral until pod restart)",
+		payload.Namespace, payload.Pod, container.Name, currentMemory.String(), requestedMemory.String())
+	if limitUpdated {
+		msg += fmt.Sprintf(" - limit: %s -> %s", previousLimitStr, newLimitStr)
+	}
+	return task.NewSuccessResultWithDetails(msg, result), nil
 }
 
 func (t *Task) validatePayload(payload *Payload) error {
@@ -264,7 +310,7 @@ func (t *Task) checkNodeCapacity(ctx context.Context, pod *corev1.Pod, current, 
 	return result, nil
 }
 
-func (t *Task) resizePod(ctx context.Context, namespace, podName string, containerIdx int, memory *resource.Quantity) error {
+func (t *Task) resizePod(ctx context.Context, namespace, podName string, containerIdx int, memory, memoryLimit *resource.Quantity) error {
 	// Get the pod first to get the actual container name
 	pod, err := t.clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
@@ -277,9 +323,16 @@ func (t *Task) resizePod(ctx context.Context, namespace, podName string, contain
 
 	containerName := pod.Spec.Containers[containerIdx].Name
 
-	// Build the patch with the actual container name using Strategic Merge Patch
-	patchData := fmt.Sprintf(`{"spec":{"containers":[{"name":"%s","resources":{"requests":{"memory":"%s"}}}]}}`,
-		containerName, memory.String())
+	var patchData string
+	if memoryLimit != nil {
+		// Update both request and limit
+		patchData = fmt.Sprintf(`{"spec":{"containers":[{"name":"%s","resources":{"requests":{"memory":"%s"},"limits":{"memory":"%s"}}}]}}`,
+			containerName, memory.String(), memoryLimit.String())
+	} else {
+		// Only update request
+		patchData = fmt.Sprintf(`{"spec":{"containers":[{"name":"%s","resources":{"requests":{"memory":"%s"}}}]}}`,
+			containerName, memory.String())
+	}
 
 	// Use the resize subresource (KEP-1287)
 	_, err = t.clientset.CoreV1().Pods(namespace).Patch(ctx, podName, types.StrategicMergePatchType, []byte(patchData), metav1.PatchOptions{}, "resize")
