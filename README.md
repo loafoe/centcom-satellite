@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations.
+A lightweight Kubernetes helper service that receives task requests and executes cluster operations. Designed for AI agent integration with secure SPIFFE/SPIRE authentication.
 
 ## Features
 
@@ -18,16 +18,30 @@ A lightweight Kubernetes helper service that receives webhook-style task request
 |------|-------------|
 | `cluster_health` | Get cluster health status |
 | `cluster_info` | Get cluster information (version, nodes) |
-| `get_events` | Get Kubernetes events with filtering by type, object, and time range |
-| `get_logs` | Retrieve pod container logs with tail/since filtering |
+| `connectivity_test` | Test TCP/HTTP connectivity to endpoints |
+| `dns_check` | Test DNS resolution for hostnames |
+| `get_events` | Get Kubernetes events with filtering |
+| `get_logs` | Retrieve pod container logs |
+| `get_resource` | Get a specific Kubernetes resource |
+| `list_endpoints` | List service endpoints |
+| `list_gateways` | List Gateway API gateways |
+| `list_ingresses` | List ingress resources |
 | `list_namespaces` | List namespaces in the cluster |
-| `list_pods` | List pods with status, containers, and resource details |
-| `list_workloads` | List deployments, statefulsets, and daemonsets |
+| `list_network_policies` | List network policies |
+| `list_pods` | List pods with status and resource details |
+| `list_routes` | List OpenShift routes |
+| `list_services` | List services in namespace |
+| `list_workloads` | List deployments, statefulsets, daemonsets |
+| `pod_evict` | Evict a pod from a node |
+| `pod_resize` | Resize pod resource requests/limits |
+| `pod_resource_usage` | Get pod resource usage metrics |
 | `pv_resize` | Resize PersistentVolumeClaims |
 | `pv_resize_status` | Check PVC resize operation status |
 | `pv_usage` | Get PersistentVolume usage statistics |
 | `resource_pressure` | Check node resource pressure conditions |
 | `storage_status` | Get storage class and PV/PVC status |
+| `workload_restart` | Restart a deployment/statefulset/daemonset |
+| `workload_scale` | Scale workload replicas |
 
 ## Container Image
 
@@ -98,23 +112,23 @@ kubectl apply -k deploy/
 
 ### SPIFFE/SPIRE Configuration
 
+SPIRE authentication is enabled by default. For local development without SPIRE, set `ALLOW_UNAUTHENTICATED=true`.
+
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `SPIRE_ENABLED` | false | Enable SPIFFE/SPIRE workload identity |
-| `SPIRE_AGENT_SOCKET` | (required if enabled) | Path to SPIRE agent socket |
-| `SPIRE_TRUST_DOMAINS` | (required if enabled) | Comma-separated list of trusted SPIFFE trust domains |
+| `SPIRE_AGENT_SOCKET` | unix:///run/spire/agent/sockets/spire-agent.sock | Path to SPIRE agent socket |
+| `SPIRE_TRUST_DOMAINS` | (required) | Comma-separated list of trusted SPIFFE trust domains |
 | `SPIRE_ALLOWED_SPIFFE_IDS` | (all from trust domains) | Comma-separated list of allowed SPIFFE IDs |
-| `SPIRE_MTLS_ENABLED` | true | Enable X.509 mTLS for transport security |
 | `SPIRE_JWT_ENABLED` | false | Enable JWT-SVID authentication |
 | `SPIRE_JWT_AUDIENCES` | (required if JWT enabled) | Comma-separated list of expected JWT audiences |
 
 ## SPIFFE/SPIRE Authentication
 
-pico-agent supports [SPIFFE](https://spiffe.io/) workload identity via SPIRE for secure, certificate-based authentication between services.
+pico-agent uses [SPIFFE](https://spiffe.io/) workload identity via SPIRE for secure, certificate-based authentication between services.
 
 ### Authentication Modes
 
-**X.509 mTLS** (default when SPIRE enabled):
+**X.509 mTLS** (default):
 - Server presents its SVID as the TLS certificate
 - Clients must present valid SVIDs from configured trust domains
 - Mutual TLS ensures both parties are authenticated
@@ -134,12 +148,24 @@ SPIRE_TRUST_DOMAINS: "cluster-a.example.org,cluster-b.example.org"
 SPIRE_ALLOWED_SPIFFE_IDS: "spiffe://cluster-a.example.org/ns/default/sa/pico-mcp"
 ```
 
-### Kubernetes Deployment with SPIRE
+## Helm Chart
+
+The recommended way to deploy pico-agent is via the Helm chart:
+
+```bash
+helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+  --namespace pico-agent --create-namespace \
+  --set 'spire.trustDomains[0]=example.org' \
+  --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
+```
+
+### Example values.yaml
 
 ```yaml
-# Example values for Helm chart
+image:
+  tag: v0.32.0
+
 spire:
-  enabled: true
   csi:
     enabled: true
   className: spire-system-spire
@@ -152,6 +178,8 @@ spire:
     audiences:
       - pico-agent
 ```
+
+See [ONBOARD.md](ONBOARD.md) for detailed deployment instructions.
 
 ## API
 
