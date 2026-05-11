@@ -14,7 +14,6 @@ import (
 
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/task"
-	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
 // mockTask implements task.Task for testing.
@@ -32,7 +31,7 @@ func (m *mockTask) Execute(_ context.Context, _ json.RawMessage) (*task.Result, 
 	return m.result, m.err
 }
 
-func setupTestHandlers(t *testing.T) (*Handlers, *webhook.Verifier) {
+func setupTestHandlers(t *testing.T, allowUnauthenticated bool) *Handlers {
 	t.Helper()
 	registry := task.NewRegistry()
 	registry.Register(&mockTask{
@@ -40,21 +39,18 @@ func setupTestHandlers(t *testing.T) (*Handlers, *webhook.Verifier) {
 		result: task.NewSuccessResult("done"),
 	})
 
-	verifier := webhook.NewVerifier("test-secret")
 	// Use a fresh registry for each test to avoid duplicate registration
 	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
 
-	return NewHandlers(registry, verifier, nil, metrics), verifier
+	return NewHandlers(registry, nil, metrics, "test-version", allowUnauthenticated)
 }
 
 func TestHandleTask_Success(t *testing.T) {
-	handlers, verifier := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	payload := []byte(`{"type":"test_task","payload":{}}`)
-	signature := verifier.Sign(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/task", bytes.NewReader(payload))
-	req.Header.Set(webhook.SignatureHeader, signature)
 
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
@@ -74,7 +70,7 @@ func TestHandleTask_Success(t *testing.T) {
 }
 
 func TestHandleTask_MethodNotAllowed(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/task", nil)
 	rec := httptest.NewRecorder()
@@ -85,13 +81,12 @@ func TestHandleTask_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleTask_InvalidSignature(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+func TestHandleTask_Unauthenticated(t *testing.T) {
+	handlers := setupTestHandlers(t, false)
 
 	payload := []byte(`{"type":"test_task","payload":{}}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/task", bytes.NewReader(payload))
-	req.Header.Set(webhook.SignatureHeader, "sha256=invalid")
 
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
@@ -101,30 +96,27 @@ func TestHandleTask_InvalidSignature(t *testing.T) {
 	}
 }
 
-func TestHandleTask_MissingSignature(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+func TestHandleTask_AllowUnauthenticated(t *testing.T) {
+	handlers := setupTestHandlers(t, true)
 
 	payload := []byte(`{"type":"test_task","payload":{}}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/task", bytes.NewReader(payload))
-	// No signature header
 
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 }
 
 func TestHandleTask_InvalidJSON(t *testing.T) {
-	handlers, verifier := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	payload := []byte(`{invalid json}`)
-	signature := verifier.Sign(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/task", bytes.NewReader(payload))
-	req.Header.Set(webhook.SignatureHeader, signature)
 
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
@@ -135,13 +127,11 @@ func TestHandleTask_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleTask_UnknownTaskType(t *testing.T) {
-	handlers, verifier := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	payload := []byte(`{"type":"unknown_task","payload":{}}`)
-	signature := verifier.Sign(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/task", bytes.NewReader(payload))
-	req.Header.Set(webhook.SignatureHeader, signature)
 
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
@@ -152,7 +142,7 @@ func TestHandleTask_UnknownTaskType(t *testing.T) {
 }
 
 func TestHandleHealthz(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -168,7 +158,7 @@ func TestHandleHealthz(t *testing.T) {
 }
 
 func TestHandleReadyz(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -180,7 +170,7 @@ func TestHandleReadyz(t *testing.T) {
 }
 
 func TestHandleListTasks_Unauthenticated(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
 	rec := httptest.NewRecorder()
@@ -192,7 +182,7 @@ func TestHandleListTasks_Unauthenticated(t *testing.T) {
 }
 
 func TestHandleListTasks_WithMTLS(t *testing.T) {
-	handlers, _ := setupTestHandlers(t)
+	handlers := setupTestHandlers(t, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
 	// Simulate mTLS by setting TLS with peer certificates
