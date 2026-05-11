@@ -23,12 +23,12 @@ func TestTask_Execute_TCPSuccess(t *testing.T) {
 	// Start a test TCP server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	go func() {
 		conn, _ := listener.Accept()
 		if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 
