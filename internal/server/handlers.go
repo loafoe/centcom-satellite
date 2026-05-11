@@ -12,26 +12,25 @@ import (
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
-	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
 // Handlers holds HTTP handler dependencies.
 type Handlers struct {
-	registry    *task.Registry
-	verifier    *webhook.Verifier
-	spireClient *spire.Client
-	metrics     *observability.Metrics
-	version     string
+	registry             *task.Registry
+	spireClient          *spire.Client
+	metrics              *observability.Metrics
+	version              string
+	allowUnauthenticated bool
 }
 
 // NewHandlers creates a new handlers instance.
-func NewHandlers(registry *task.Registry, verifier *webhook.Verifier, spireClient *spire.Client, metrics *observability.Metrics, version string) *Handlers {
+func NewHandlers(registry *task.Registry, spireClient *spire.Client, metrics *observability.Metrics, version string, allowUnauthenticated bool) *Handlers {
 	return &Handlers{
-		registry:    registry,
-		verifier:    verifier,
-		spireClient: spireClient,
-		metrics:     metrics,
-		version:     version,
+		registry:             registry,
+		spireClient:          spireClient,
+		metrics:              metrics,
+		version:              version,
+		allowUnauthenticated: allowUnauthenticated,
 	}
 }
 
@@ -41,13 +40,12 @@ type authResult struct {
 	rejected      bool // true if auth was attempted but failed (response already written)
 }
 
-// authenticate checks authentication using mTLS, JWT-SVID, or webhook signature.
-// If body is provided, webhook signature verification is attempted.
+// authenticate checks authentication using mTLS, JWT-SVID, or dev mode.
 // Returns authResult indicating whether the request is authenticated or was rejected.
 func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []byte) authResult {
 	ctx := r.Context()
 
-	// 1. Check for mTLS (SPIRE X.509 SVID) - already validated at TLS layer
+	// 1. Check for mTLS (SPIRE X.509 SVID)
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		slog.Debug("authenticated via mTLS", "remote_addr", r.RemoteAddr)
 		return authResult{authenticated: true}
@@ -68,18 +66,10 @@ func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []b
 		}
 	}
 
-	// 3. Check for webhook signature (only if body is provided)
-	if body != nil && h.verifier != nil {
-		signature := r.Header.Get(webhook.SignatureHeader)
-		if signature != "" {
-			if err := h.verifier.Verify(signature, body); err != nil {
-				slog.Warn("signature verification failed", "error", err, "remote_addr", r.RemoteAddr)
-				h.writeError(w, http.StatusUnauthorized, "invalid signature")
-				return authResult{rejected: true}
-			}
-			slog.Debug("authenticated via webhook signature", "remote_addr", r.RemoteAddr)
-			return authResult{authenticated: true}
-		}
+	// 3. Dev mode - allow unauthenticated if configured
+	if h.allowUnauthenticated {
+		slog.Debug("allowing unauthenticated request (dev mode)", "remote_addr", r.RemoteAddr)
+		return authResult{authenticated: true}
 	}
 
 	return authResult{}
