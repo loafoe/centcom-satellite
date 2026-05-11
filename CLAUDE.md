@@ -18,7 +18,6 @@ internal/
     server.go                   # HTTP server (plain or SPIRE mTLS)
     handlers.go                 # /task, /tasks, /healthz, /readyz
     middleware.go               # Logging, metrics, tracing, recovery
-  webhook/signature.go          # HMAC-SHA256 verification (Grafana Alertmanager compatible)
   task/
     registry.go                 # Task registration and dispatch
     types.go                    # TaskRequest, TaskResult, Task interface
@@ -33,15 +32,14 @@ internal/
     logging.go                  # slog JSON/text logging
 ```
 
-## Authentication Modes
+## Authentication
 
-The agent supports multiple authentication modes (can be combined):
+The agent uses SPIFFE/SPIRE for workload identity authentication:
 
-1. **Webhook Signature** (default): HMAC-SHA256 signature in `X-Grafana-Alertmanager-Signature` header
-2. **SPIRE X.509 mTLS**: X.509 SVID-based mutual TLS authentication
-3. **SPIRE JWT-SVID**: JWT token in `Authorization: Bearer <token>` header
+1. **SPIRE X.509 mTLS**: X.509 SVID-based mutual TLS authentication
+2. **SPIRE JWT-SVID**: JWT token in `Authorization: Bearer <token>` header
 
-Authentication is checked in order: mTLS → JWT-SVID → Webhook signature. The first successful method authenticates the request.
+Authentication is checked in order: mTLS → JWT-SVID. For local development, set `ALLOW_UNAUTHENTICATED=true`.
 
 ## Current Tasks
 
@@ -84,7 +82,7 @@ Resizes PersistentVolumeClaims in Kubernetes clusters.
 Environment variables:
 - `PORT` (default: 8080) - Main HTTP server port
 - `METRICS_PORT` (default: 9090) - Prometheus metrics port
-- `WEBHOOK_SECRET` - HMAC secret for signature verification (required unless SPIRE enabled)
+- `ALLOW_UNAUTHENTICATED` (default: false) - Allow unauthenticated requests (dev mode only)
 - `LOG_LEVEL` (default: info) - debug, info, warn, error
 - `LOG_FORMAT` (default: json) - json, text
 - `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint
@@ -128,10 +126,9 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --namespace pico-agent --create-namespace
 ```
 
-The chart auto-generates webhook secrets if not provided. For SPIRE mTLS with federated trust domains:
+The chart uses SPIRE for authentication by default. For mTLS with federated trust domains:
 ```bash
 helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --set spire.enabled=true \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.trustDomains[1]=partner.com' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent' \
@@ -141,7 +138,6 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
 For JWT-SVID authentication (useful when mTLS is not feasible):
 ```bash
 helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --set spire.enabled=true \
   --set 'spire.trustDomains[0]=example.org' \
   --set spire.jwt.enabled=true \
   --set 'spire.jwt.audiences[0]=pico-agent'
@@ -154,14 +150,13 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
 make test
 
 # Run locally (requires kubeconfig)
-export WEBHOOK_SECRET=test-secret
+export ALLOW_UNAUTHENTICATED=true
 go run ./cmd/pico-agent
 
-# Send test request
+# Send test request (no signature needed in dev mode)
 curl -X POST http://localhost:8080/task \
   -H "Content-Type: application/json" \
-  -H "X-Grafana-Alertmanager-Signature: sha256=$(echo -n '{"type":"pv_resize","payload":{"namespace":"default","pvc_name":"test","new_size":"10Gi"}}' | openssl dgst -sha256 -hmac 'test-secret' | cut -d' ' -f2)" \
-  -d '{"type":"pv_resize","payload":{"namespace":"default","pvc_name":"test","new_size":"10Gi"}}'
+  -d '{"type":"cluster_info","payload":{}}'
 ```
 
 ## Adding New Tasks
@@ -183,8 +178,8 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.8.0
-- **Helm chart**: 0.8.0
+- **pico-agent**: v0.9.0
+- **Helm chart**: 0.9.0
 
 ## Key Dependencies
 
