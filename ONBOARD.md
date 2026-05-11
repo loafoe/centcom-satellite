@@ -60,7 +60,7 @@ Create `values-<cluster-name>.yaml`:
 
 ```yaml
 image:
-  tag: <latest-version>  # Check releases for latest
+  tag: v0.32.0  # pico-agent version
 
 spire:
   # SPIRE is enabled by default

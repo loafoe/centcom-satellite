@@ -178,8 +178,8 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.9.0
-- **Helm chart**: 0.9.0
+- **pico-agent**: v0.32.0
+- **Helm chart**: 0.21.0
 
 ## Key Dependencies
 

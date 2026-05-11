@@ -6,11 +6,10 @@ A lightweight Kubernetes helper service that receives webhook-style task request
 
 ## Features
 
-- **Webhook Authentication**: Grafana Alertmanager-compatible HMAC-SHA256 signature verification
+- **SPIFFE/SPIRE Authentication**: Workload identity with X.509 mTLS and JWT-SVID authentication
 - **Modular Task System**: Easy to extend with new task types
 - **Full Observability**: Prometheus metrics, OpenTelemetry tracing, structured JSON logging
 - **Security First**: Non-root container, read-only filesystem, RBAC-scoped permissions
-- **SPIFFE/SPIRE Integration**: Workload identity with X.509 mTLS and JWT-SVID authentication
 - **Supply Chain Security**: Images signed with [cosign](https://github.com/sigstore/cosign) keyless signing
 
 ## Available Tasks
@@ -36,7 +35,7 @@ Images are published to GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/loafoe/pico-agent:latest
-docker pull ghcr.io/loafoe/pico-agent:v0.1.0  # specific version
+docker pull ghcr.io/loafoe/pico-agent:v0.32.0  # specific version
 ```
 
 ### Verifying Image Signatures
@@ -75,13 +74,13 @@ make ko-push        # Build and push to registry
 ### Deploy to Kubernetes
 
 ```bash
-# Create the webhook secret first
-kubectl create namespace pico-agent
-kubectl create secret generic pico-agent-webhook \
-  --namespace pico-agent \
-  --from-literal=secret=your-secure-secret-here
+# Using Helm (recommended)
+helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+  --namespace pico-agent --create-namespace \
+  --set 'spire.trustDomains[0]=example.org' \
+  --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
 
-# Deploy
+# Or using kustomize
 kubectl apply -k deploy/
 ```
 
@@ -89,11 +88,11 @@ kubectl apply -k deploy/
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `WEBHOOK_SECRET` | (required) | HMAC secret for signature verification |
 | `PORT` | 8080 | HTTP server port |
 | `METRICS_PORT` | 9090 | Prometheus metrics port |
 | `LOG_LEVEL` | info | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | json | Log format (json, text) |
+| `ALLOW_UNAUTHENTICATED` | false | Allow unauthenticated requests (dev mode only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | pico-agent | Service name for tracing |
 
@@ -158,10 +157,7 @@ spire:
 
 ### POST /task
 
-Execute a task. Requires signature verification.
-
-**Headers:**
-- `X-Grafana-Alertmanager-Signature: sha256=<hex-encoded-hmac>`
+Execute a task. Requires SPIFFE/SPIRE authentication (mTLS or JWT-SVID).
 
 **Request Body:**
 ```json
@@ -227,15 +223,6 @@ Prometheus metrics endpoint.
    ```go
    registry.Register(my_task.New())
    ```
-
-## Generating Signatures
-
-```bash
-# Generate signature for testing
-SECRET="your-secret"
-PAYLOAD='{"type":"pv_resize","payload":{"namespace":"default","pvc_name":"test","new_size":"20Gi"}}'
-echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print "sha256="$2}'
-```
 
 ## License
 
