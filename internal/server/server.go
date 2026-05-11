@@ -13,7 +13,6 @@ import (
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
-	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
 // Config holds server configuration.
@@ -34,8 +33,8 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, registry *task.Registry, verifier *webhook.Verifier, metrics *observability.Metrics, spireClient *spire.Client, version string) *Server {
-	handlers := NewHandlers(registry, verifier, spireClient, metrics, version)
+func New(cfg Config, registry *task.Registry, metrics *observability.Metrics, spireClient *spire.Client, version string, allowUnauthenticated bool) *Server {
+	handlers := NewHandlers(registry, spireClient, metrics, version, allowUnauthenticated)
 
 	return &Server{
 		config:      cfg,
