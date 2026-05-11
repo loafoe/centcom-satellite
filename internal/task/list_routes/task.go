@@ -438,9 +438,3 @@ func isNotFoundOrNoKind(err error) bool {
 		strings.Contains(errStr, "no matches for kind")
 }
 
-func toTitle(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}

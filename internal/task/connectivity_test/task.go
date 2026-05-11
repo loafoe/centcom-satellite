@@ -132,7 +132,7 @@ func (t *Task) testTCP(ctx context.Context, target string, timeout time.Duration
 		result.Error = err.Error()
 		return result
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	result.Success = true
 	return result
@@ -172,7 +172,7 @@ func (t *Task) testHTTP(ctx context.Context, target string, timeout time.Duratio
 		result.Error = err.Error()
 		return result
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	result.Success = true
 	result.StatusCode = resp.StatusCode
