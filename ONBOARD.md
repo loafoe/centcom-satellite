@@ -63,7 +63,7 @@ image:
   tag: <latest-version>  # Check releases for latest
 
 spire:
-  enabled: true
+  # SPIRE is enabled by default
   csi:
     enabled: true
 
