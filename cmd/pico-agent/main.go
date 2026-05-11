@@ -41,7 +41,6 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/pod_resize"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
 	"github.com/loafoe/pico-agent/internal/task/workload_scale"
-	"github.com/loafoe/pico-agent/internal/webhook"
 )
 
 // Version is set at build time.
@@ -58,6 +57,10 @@ func main() {
 	// Setup logging
 	observability.SetupLogging(cfg.LogLevel, cfg.LogFormat)
 	slog.Info("starting pico-agent", "version", Version)
+
+	if cfg.AllowUnauthenticated {
+		slog.Warn("running without authentication - development mode only")
+	}
 
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -147,12 +150,6 @@ func main() {
 		slog.Info("pod_resize task enabled")
 	}
 
-	// Setup webhook verifier (may be nil if SPIRE-only auth)
-	var verifier *webhook.Verifier
-	if cfg.WebhookSecret != "" {
-		verifier = webhook.NewVerifier(cfg.WebhookSecret)
-	}
-
 	// Setup SPIRE client if enabled
 	var spireClient *spire.Client
 	if cfg.SPIRE.Enabled {
@@ -175,10 +172,10 @@ func main() {
 			MetricsPort: cfg.MetricsPort,
 		},
 		registry,
-		verifier,
 		metrics,
 		spireClient,
 		Version,
+		cfg.AllowUnauthenticated,
 	)
 
 	// Start server in goroutine
