@@ -12,16 +12,26 @@ func TestLoad(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid configuration",
+			name: "valid with SPIRE enabled",
 			envVars: map[string]string{
-				"WEBHOOK_SECRET": "test-secret",
-				"PORT":           "8080",
-				"METRICS_PORT":   "9090",
+				"SPIRE_ENABLED":      "true",
+				"SPIRE_TRUST_DOMAINS": "example.org",
+				"PORT":               "8080",
+				"METRICS_PORT":       "9090",
 			},
 			wantErr: false,
 		},
 		{
-			name: "missing webhook secret",
+			name: "valid with allow unauthenticated",
+			envVars: map[string]string{
+				"ALLOW_UNAUTHENTICATED": "true",
+				"PORT":                  "8080",
+				"METRICS_PORT":          "9090",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid - no auth configured",
 			envVars: map[string]string{
 				"PORT":         "8080",
 				"METRICS_PORT": "9090",
@@ -31,25 +41,25 @@ func TestLoad(t *testing.T) {
 		{
 			name: "same port and metrics port",
 			envVars: map[string]string{
-				"WEBHOOK_SECRET": "test-secret",
-				"PORT":           "8080",
-				"METRICS_PORT":   "8080",
+				"ALLOW_UNAUTHENTICATED": "true",
+				"PORT":                  "8080",
+				"METRICS_PORT":          "8080",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid log level",
 			envVars: map[string]string{
-				"WEBHOOK_SECRET": "test-secret",
-				"LOG_LEVEL":      "invalid",
+				"ALLOW_UNAUTHENTICATED": "true",
+				"LOG_LEVEL":             "invalid",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid log format",
 			envVars: map[string]string{
-				"WEBHOOK_SECRET": "test-secret",
-				"LOG_FORMAT":     "invalid",
+				"ALLOW_UNAUTHENTICATED": "true",
+				"LOG_FORMAT":            "invalid",
 			},
 			wantErr: true,
 		},
@@ -87,7 +97,7 @@ func TestLoad(t *testing.T) {
 
 func TestConfigDefaults(t *testing.T) {
 	os.Clearenv()
-	_ = os.Setenv("WEBHOOK_SECRET", "test-secret")
+	_ = os.Setenv("ALLOW_UNAUTHENTICATED", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -112,6 +122,10 @@ func TestConfigDefaults(t *testing.T) {
 
 	if cfg.OTelServiceName != "pico-agent" {
 		t.Errorf("expected default OTelServiceName 'pico-agent', got %s", cfg.OTelServiceName)
+	}
+
+	if cfg.AllowUnauthenticated != true {
+		t.Errorf("expected AllowUnauthenticated true, got %v", cfg.AllowUnauthenticated)
 	}
 }
 
