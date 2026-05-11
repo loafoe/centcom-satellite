@@ -18,9 +18,9 @@ type Config struct {
 	// MetricsPort is the port for Prometheus metrics endpoint.
 	MetricsPort int
 
-	// WebhookSecret is the shared secret for HMAC signature verification.
-	// When SPIRE is enabled, this becomes optional as mTLS provides authentication.
-	WebhookSecret string
+	// AllowUnauthenticated allows requests without authentication.
+	// Only for local development - do not enable in production.
+	AllowUnauthenticated bool
 
 	// LogLevel controls logging verbosity (debug, info, warn, error).
 	LogLevel string
@@ -80,13 +80,13 @@ type PodResizeConfig struct {
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:            getEnvInt("PORT", 8080),
-		MetricsPort:     getEnvInt("METRICS_PORT", 9090),
-		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
-		LogLevel:        getEnvString("LOG_LEVEL", "info"),
-		LogFormat:       getEnvString("LOG_FORMAT", "json"),
-		OTelEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		OTelServiceName: getEnvString("OTEL_SERVICE_NAME", "pico-agent"),
+		Port:                 getEnvInt("PORT", 8080),
+		MetricsPort:          getEnvInt("METRICS_PORT", 9090),
+		AllowUnauthenticated: getEnvBool("ALLOW_UNAUTHENTICATED", false),
+		LogLevel:             getEnvString("LOG_LEVEL", "info"),
+		LogFormat:            getEnvString("LOG_FORMAT", "json"),
+		OTelEndpoint:         os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTelServiceName:      getEnvString("OTEL_SERVICE_NAME", "pico-agent"),
 		SPIRE: spire.Config{
 			Enabled:          getEnvBool("SPIRE_ENABLED", false),
 			AgentSocket:      getEnvString("SPIRE_AGENT_SOCKET", "unix:///run/spire/agent/sockets/spire-agent.sock"),
@@ -123,9 +123,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	var errs []string
 
-	// WebhookSecret is required unless SPIRE is enabled (mTLS provides auth)
-	if c.WebhookSecret == "" && !c.SPIRE.Enabled {
-		errs = append(errs, "WEBHOOK_SECRET is required (or enable SPIRE for mTLS auth)")
+	// Either SPIRE must be enabled or AllowUnauthenticated must be true
+	if !c.SPIRE.Enabled && !c.AllowUnauthenticated {
+		errs = append(errs, "SPIRE must be enabled or ALLOW_UNAUTHENTICATED must be set to true")
 	}
 
 	if c.Port < 1 || c.Port > 65535 {
