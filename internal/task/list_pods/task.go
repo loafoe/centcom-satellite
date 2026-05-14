@@ -32,13 +32,22 @@ type PodList struct {
 
 // PodInfo contains pod details.
 type PodInfo struct {
-	Name       string          `json:"name"`
-	Namespace  string          `json:"namespace"`
-	Status     string          `json:"status"`
-	Node       string          `json:"node"`
-	Restarts   int32           `json:"restarts"`
-	Age        string          `json:"age"`
-	Containers []ContainerInfo `json:"containers"`
+	Name        string           `json:"name"`
+	Namespace   string           `json:"namespace"`
+	Status      string           `json:"status"`
+	Node        string           `json:"node"`
+	Restarts    int32            `json:"restarts"`
+	Age         string           `json:"age"`
+	Containers  []ContainerInfo  `json:"containers"`
+	Tolerations []TolerationInfo `json:"tolerations,omitempty"`
+}
+
+// TolerationInfo contains pod toleration details.
+type TolerationInfo struct {
+	Key      string `json:"key,omitempty"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
 }
 
 // ContainerInfo contains container details.
@@ -172,7 +181,33 @@ func (t *Task) buildPodInfo(pod *corev1.Pod) PodInfo {
 		info.Containers = append(info.Containers, containerInfo)
 	}
 
+	// Add tolerations (skip default tolerations that K8s adds automatically)
+	info.Tolerations = getPodTolerations(pod)
+
 	return info
+}
+
+func getPodTolerations(pod *corev1.Pod) []TolerationInfo {
+	if len(pod.Spec.Tolerations) == 0 {
+		return nil
+	}
+	tolerations := make([]TolerationInfo, 0, len(pod.Spec.Tolerations))
+	for _, t := range pod.Spec.Tolerations {
+		// Skip default tolerations that K8s adds automatically
+		if t.Key == "node.kubernetes.io/not-ready" || t.Key == "node.kubernetes.io/unreachable" {
+			continue
+		}
+		tolerations = append(tolerations, TolerationInfo{
+			Key:      t.Key,
+			Operator: string(t.Operator),
+			Value:    t.Value,
+			Effect:   string(t.Effect),
+		})
+	}
+	if len(tolerations) == 0 {
+		return nil
+	}
+	return tolerations
 }
 
 func getPodStatus(pod *corev1.Pod) string {
