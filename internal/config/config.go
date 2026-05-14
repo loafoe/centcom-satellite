@@ -65,6 +65,10 @@ type FeaturesConfig struct {
 
 	// PodResizeConfig holds configuration for the pod_resize task.
 	PodResizeConfig PodResizeConfig
+
+	// NodeclaimDeleteEnabled enables the nodeclaim_delete task for Karpenter node management.
+	// Disabled by default as it requires Karpenter and can cause node termination.
+	NodeclaimDeleteEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -109,6 +113,7 @@ func Load() (*Config, error) {
 				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "8Gi"),
 				ShrinkBuffer:  getEnvInt("POD_RESIZE_SHRINK_BUFFER", 20),
 			},
+			NodeclaimDeleteEnabled: getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 		},
 	}
 
