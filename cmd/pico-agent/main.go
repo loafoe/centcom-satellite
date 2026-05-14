@@ -39,6 +39,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
 	"github.com/loafoe/pico-agent/internal/task/pod_evict"
 	"github.com/loafoe/pico-agent/internal/task/pod_resize"
+	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
 	"github.com/loafoe/pico-agent/internal/task/workload_scale"
 )
@@ -148,6 +149,12 @@ func main() {
 	if cfg.Features.PodResizeEnabled {
 		registry.Register(pod_resize.New(k8sClient.Clientset, cfg.Features.PodResizeConfig))
 		slog.Info("pod_resize task enabled")
+	}
+
+	// Optional: nodeclaim_delete task (Karpenter node management)
+	if cfg.Features.NodeclaimDeleteEnabled {
+		registry.Register(nodeclaim_delete.New(k8sClient.DynamicClient))
+		slog.Info("nodeclaim_delete task enabled")
 	}
 
 	// Setup SPIRE client if enabled
