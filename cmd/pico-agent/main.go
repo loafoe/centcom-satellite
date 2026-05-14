@@ -39,6 +39,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
 	"github.com/loafoe/pico-agent/internal/task/pod_evict"
 	"github.com/loafoe/pico-agent/internal/task/pod_resize"
+	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
 	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
 	"github.com/loafoe/pico-agent/internal/task/workload_scale"
@@ -121,6 +122,7 @@ func main() {
 	registry.Register(list_network_policies.New(k8sClient.Clientset))
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())
+	registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
 
 	// Optional: get_resource task (requires expanded RBAC)
 	if cfg.Features.GetResourceEnabled {
