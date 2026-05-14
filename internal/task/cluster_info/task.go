@@ -53,18 +53,26 @@ type NodesInfo struct {
 
 // NodeInfo contains individual node details.
 type NodeInfo struct {
-	Name             string   `json:"name"`
-	Roles            []string `json:"roles"`
-	KubeletVersion   string   `json:"kubelet_version"`
-	OS               string   `json:"os"`
-	Architecture     string   `json:"architecture"`
-	ContainerRuntime string   `json:"container_runtime"`
-	Ready            bool     `json:"ready"`
-	CPUCapacity      string   `json:"cpu_capacity"`
-	MemoryCapacity   string   `json:"memory_capacity"`
-	CPUPercent       float64  `json:"cpu_percent"`
-	MemoryPercent    float64  `json:"memory_percent"`
-	Age              string   `json:"age"`
+	Name             string      `json:"name"`
+	Roles            []string    `json:"roles"`
+	KubeletVersion   string      `json:"kubelet_version"`
+	OS               string      `json:"os"`
+	Architecture     string      `json:"architecture"`
+	ContainerRuntime string      `json:"container_runtime"`
+	Ready            bool        `json:"ready"`
+	CPUCapacity      string      `json:"cpu_capacity"`
+	MemoryCapacity   string      `json:"memory_capacity"`
+	CPUPercent       float64     `json:"cpu_percent"`
+	MemoryPercent    float64     `json:"memory_percent"`
+	Age              string      `json:"age"`
+	Taints           []TaintInfo `json:"taints,omitempty"`
+}
+
+// TaintInfo contains node taint details.
+type TaintInfo struct {
+	Key    string `json:"key"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect"`
 }
 
 // Capacity contains total cluster capacity.
@@ -211,6 +219,7 @@ func (t *Task) processNodes(nodes *corev1.NodeList, nodeResources map[string]nod
 			CPUPercent:       cpuPercent,
 			MemoryPercent:    memPercent,
 			Age:              formatAge(node.CreationTimestamp.Time),
+			Taints:           getNodeTaints(&node),
 		})
 	}
 
@@ -253,6 +262,21 @@ func getNodeRoles(node *corev1.Node) []string {
 		roles = append(roles, "worker")
 	}
 	return roles
+}
+
+func getNodeTaints(node *corev1.Node) []TaintInfo {
+	if len(node.Spec.Taints) == 0 {
+		return nil
+	}
+	taints := make([]TaintInfo, 0, len(node.Spec.Taints))
+	for _, t := range node.Spec.Taints {
+		taints = append(taints, TaintInfo{
+			Key:    t.Key,
+			Value:  t.Value,
+			Effect: string(t.Effect),
+		})
+	}
+	return taints
 }
 
 func formatBytes(bytes int64) string {
