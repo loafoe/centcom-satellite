@@ -38,19 +38,6 @@ var nodeClaimGVR = schema.GroupVersionResource{
 	Resource: "nodeclaims",
 }
 
-// Unused imports are required by Execute method (Task 4)
-var (
-	_ = context.Background
-	_ = json.Marshal
-	_ = fmt.Errorf
-	_ = slog.Info
-	_ = strings.TrimSpace
-	_ apierrors.StatusError
-	_ = metav1.Now
-	_ = unstructured.Unstructured{}
-	_ = task.Result{}
-)
-
 // Payload represents the input for a nodeclaim delete operation.
 type Payload struct {
 	Name   string `json:"name"`
@@ -81,4 +68,127 @@ func New(dynamicClient dynamic.Interface) *Task {
 // Name returns the task type identifier.
 func (t *Task) Name() string {
 	return TaskName
+}
+
+// Execute performs the nodeclaim delete operation.
+func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.Result, error) {
+	payload, err := t.parsePayload(rawPayload)
+	if err != nil {
+		return task.NewErrorResult(err.Error()), nil
+	}
+
+	if err := t.validatePayload(payload); err != nil {
+		return task.NewErrorResult(err.Error()), nil
+	}
+
+	// Get the NodeClaim
+	nodeClaim, err := t.dynamicClient.Resource(nodeClaimGVR).Get(ctx, payload.Name, metav1.GetOptions{})
+	if err != nil {
+		if isNotFoundOrNoCRD(err) {
+			if isCRDNotInstalled(err) {
+				return task.NewErrorResult(ErrCRDNotInstalled.Error()), nil
+			}
+			return task.NewErrorResult(fmt.Sprintf("%s: %s", ErrNodeClaimNotFound, payload.Name)), nil
+		}
+		return nil, fmt.Errorf("failed to get nodeclaim: %w", err)
+	}
+
+	// Extract details from the NodeClaim
+	details := t.extractDetails(nodeClaim, payload)
+
+	// Check do-not-disrupt annotation
+	if !payload.Force {
+		annotations := nodeClaim.GetAnnotations()
+		if annotations[DoNotDisruptAnnotation] == "true" {
+			return task.NewErrorResult(fmt.Sprintf("nodeclaim %s %s", payload.Name, ErrDoNotDisrupt)), nil
+		}
+	}
+
+	// If dry run, return success without deleting
+	if payload.DryRun {
+		return task.NewSuccessResultWithDetails(
+			fmt.Sprintf("[DRY-RUN] Would delete NodeClaim %s", payload.Name),
+			details,
+		), nil
+	}
+
+	// Delete the NodeClaim
+	err = t.dynamicClient.Resource(nodeClaimGVR).Delete(ctx, payload.Name, metav1.DeleteOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete nodeclaim: %w", err)
+	}
+
+	slog.Info("nodeclaim deletion initiated",
+		"name", payload.Name,
+		"node_name", details.NodeName,
+		"instance_type", details.InstanceType,
+		"nodepool", details.NodePool,
+		"force", payload.Force,
+	)
+
+	return task.NewSuccessResultWithDetails(
+		fmt.Sprintf("NodeClaim %s deletion initiated", payload.Name),
+		details,
+	), nil
+}
+
+func (t *Task) parsePayload(rawPayload json.RawMessage) (*Payload, error) {
+	if len(rawPayload) == 0 {
+		return nil, ErrInvalidPayload
+	}
+
+	var payload Payload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
+	}
+
+	return &payload, nil
+}
+
+func (t *Task) validatePayload(p *Payload) error {
+	if p.Name == "" {
+		return ErrMissingName
+	}
+	return nil
+}
+
+func (t *Task) extractDetails(nodeClaim *unstructured.Unstructured, payload *Payload) *DeleteDetails {
+	details := &DeleteDetails{
+		Name:   payload.Name,
+		DryRun: payload.DryRun,
+		Force:  payload.Force,
+	}
+
+	// Extract node name from status.nodeName
+	if nodeName, found, err := unstructured.NestedString(nodeClaim.Object, "status", "nodeName"); err == nil && found {
+		details.NodeName = nodeName
+	}
+
+	// Extract instance type from status.instanceType
+	if instanceType, found, err := unstructured.NestedString(nodeClaim.Object, "status", "instanceType"); err == nil && found {
+		details.InstanceType = instanceType
+	}
+
+	// Extract nodepool from labels
+	labels := nodeClaim.GetLabels()
+	if nodePool, ok := labels[NodePoolLabel]; ok {
+		details.NodePool = nodePool
+	}
+
+	return details
+}
+
+func isNotFoundOrNoCRD(err error) bool {
+	if apierrors.IsNotFound(err) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "the server could not find the requested resource") ||
+		strings.Contains(errStr, "no matches for kind")
+}
+
+func isCRDNotInstalled(err error) bool {
+	errStr := err.Error()
+	return strings.Contains(errStr, "the server could not find the requested resource") ||
+		strings.Contains(errStr, "no matches for kind")
 }
