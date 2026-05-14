@@ -77,6 +77,40 @@ Resizes PersistentVolumeClaims in Kubernetes clusters.
 }
 ```
 
+### Implemented: `nodeclaim_delete`
+
+Deletes Karpenter NodeClaims for safe node recycling.
+
+**Request**:
+```json
+{
+  "type": "nodeclaim_delete",
+  "payload": {
+    "name": "default-abc123",
+    "dry_run": false,
+    "force": false
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "NodeClaim default-abc123 deletion initiated",
+  "details": {
+    "name": "default-abc123",
+    "node_name": "ip-10-0-1-42.ec2.internal",
+    "instance_type": "m5.large",
+    "nodepool": "default",
+    "dry_run": false,
+    "force": false
+  }
+}
+```
+
+**Safety**: Blocks deletion if `karpenter.sh/do-not-disrupt=true` annotation present (use `force=true` to override).
+
 ## Configuration
 
 Environment variables:
@@ -87,6 +121,7 @@ Environment variables:
 - `LOG_FORMAT` (default: json) - json, text
 - `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint
 - `OTEL_SERVICE_NAME` (default: pico-agent) - Service name for tracing
+- `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication
@@ -141,6 +176,12 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
   --set 'spire.trustDomains[0]=example.org' \
   --set spire.jwt.enabled=true \
   --set 'spire.jwt.audiences[0]=pico-agent'
+```
+
+For NodeClaim deletion (Karpenter node management):
+```bash
+helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+  --set features.nodeclaimDelete=true
 ```
 
 ## Development
