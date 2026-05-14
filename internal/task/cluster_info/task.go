@@ -34,6 +34,7 @@ type Capabilities struct {
 	PodEvict        bool `json:"pod_evict"`
 	PodResize       bool `json:"pod_resize"`
 	GetResource     bool `json:"get_resource"`
+	NodeclaimDelete bool `json:"nodeclaim_delete"`
 }
 
 // VersionInfo contains Kubernetes version details.

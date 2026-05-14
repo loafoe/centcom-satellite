@@ -101,6 +101,7 @@ func main() {
 		PodEvict:        cfg.Features.PodEvictEnabled,
 		PodResize:       cfg.Features.PodResizeEnabled,
 		GetResource:     cfg.Features.GetResourceEnabled,
+		NodeclaimDelete: cfg.Features.NodeclaimDeleteEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
