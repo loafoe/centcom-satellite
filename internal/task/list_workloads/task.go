@@ -40,8 +40,17 @@ type WorkloadInfo struct {
 	Images       []string          `json:"images"`
 	Labels       map[string]string `json:"labels,omitempty"`
 	Annotations  map[string]string `json:"annotations,omitempty"`
+	Tolerations  []TolerationInfo  `json:"tolerations,omitempty"`
 	CreationTime string            `json:"creation_time"`
 	Age          string            `json:"age"`
+}
+
+// TolerationInfo contains toleration details.
+type TolerationInfo struct {
+	Key      string `json:"key,omitempty"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
 }
 
 // ReplicaStatus contains replica information.
@@ -155,6 +164,7 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 			Ready:   deployment.Status.ReadyReplicas,
 		},
 		Images:       images,
+		Tolerations:  extractTolerations(deployment.Spec.Template.Spec.Tolerations),
 		CreationTime: deployment.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(deployment.CreationTimestamp.Time),
 	}
@@ -183,6 +193,7 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 			Ready:   statefulset.Status.ReadyReplicas,
 		},
 		Images:       images,
+		Tolerations:  extractTolerations(statefulset.Spec.Template.Spec.Tolerations),
 		CreationTime: statefulset.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(statefulset.CreationTimestamp.Time),
 	}
@@ -207,6 +218,7 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 			Ready:   daemonset.Status.NumberReady,
 		},
 		Images:       images,
+		Tolerations:  extractTolerations(daemonset.Spec.Template.Spec.Tolerations),
 		CreationTime: daemonset.CreationTimestamp.Format(time.RFC3339),
 		Age:          formatAge(daemonset.CreationTimestamp.Time),
 	}
@@ -225,6 +237,29 @@ func extractImages(containers []corev1.Container) []string {
 		images = append(images, c.Image)
 	}
 	return images
+}
+
+func extractTolerations(tolerations []corev1.Toleration) []TolerationInfo {
+	if len(tolerations) == 0 {
+		return nil
+	}
+	result := make([]TolerationInfo, 0, len(tolerations))
+	for _, t := range tolerations {
+		// Skip default tolerations that K8s adds automatically
+		if t.Key == "node.kubernetes.io/not-ready" || t.Key == "node.kubernetes.io/unreachable" {
+			continue
+		}
+		result = append(result, TolerationInfo{
+			Key:      t.Key,
+			Operator: string(t.Operator),
+			Value:    t.Value,
+			Effect:   string(t.Effect),
+		})
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func formatAge(t time.Time) string {
