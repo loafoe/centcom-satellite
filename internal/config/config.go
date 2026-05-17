@@ -69,6 +69,10 @@ type FeaturesConfig struct {
 	// NodeclaimDeleteEnabled enables the nodeclaim_delete task for Karpenter node management.
 	// Disabled by default as it requires Karpenter and can cause node termination.
 	NodeclaimDeleteEnabled bool
+
+	// ArgocdEnabled enables the list_argocd_applications task for Argo CD introspection.
+	// Disabled by default as it requires Argo CD CRDs and RBAC for argoproj.io.
+	ArgocdEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -114,6 +118,7 @@ func Load() (*Config, error) {
 				ShrinkBuffer:  getEnvInt("POD_RESIZE_SHRINK_BUFFER", 20),
 			},
 			NodeclaimDeleteEnabled: getEnvBool("NODECLAIM_DELETE_ENABLED", false),
+			ArgocdEnabled:          getEnvBool("FEATURES_ARGOCD", false),
 		},
 	}
 
