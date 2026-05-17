@@ -35,6 +35,7 @@ type Capabilities struct {
 	PodResize       bool `json:"pod_resize"`
 	GetResource     bool `json:"get_resource"`
 	NodeclaimDelete bool `json:"nodeclaim_delete"`
+	Argocd          bool `json:"argocd"`
 }
 
 // VersionInfo contains Kubernetes version details.

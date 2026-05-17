@@ -39,6 +39,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
 	"github.com/loafoe/pico-agent/internal/task/pod_evict"
 	"github.com/loafoe/pico-agent/internal/task/pod_resize"
+	"github.com/loafoe/pico-agent/internal/task/list_argocd_applications"
 	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
 	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
@@ -103,6 +104,7 @@ func main() {
 		PodResize:       cfg.Features.PodResizeEnabled,
 		GetResource:     cfg.Features.GetResourceEnabled,
 		NodeclaimDelete: cfg.Features.NodeclaimDeleteEnabled,
+		Argocd:          cfg.Features.ArgocdEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -158,6 +160,12 @@ func main() {
 	if cfg.Features.NodeclaimDeleteEnabled {
 		registry.Register(nodeclaim_delete.New(k8sClient.DynamicClient))
 		slog.Info("nodeclaim_delete task enabled")
+	}
+
+	// Optional: list_argocd_applications task (Argo CD introspection)
+	if cfg.Features.ArgocdEnabled {
+		registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
+		slog.Info("list_argocd_applications task enabled")
 	}
 
 	// Setup SPIRE client if enabled
