@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -32,14 +33,18 @@ type PodList struct {
 
 // PodInfo contains pod details.
 type PodInfo struct {
-	Name        string           `json:"name"`
-	Namespace   string           `json:"namespace"`
-	Status      string           `json:"status"`
-	Node        string           `json:"node"`
-	Restarts    int32            `json:"restarts"`
-	Age         string           `json:"age"`
-	Containers  []ContainerInfo  `json:"containers"`
-	Tolerations []TolerationInfo `json:"tolerations,omitempty"`
+	Name           string           `json:"name"`
+	Namespace      string           `json:"namespace"`
+	Status         string           `json:"status"`
+	Node           string           `json:"node"`
+	Restarts       int32            `json:"restarts"`
+	Age            string           `json:"age"`
+	MemoryUsage    string           `json:"memory_usage,omitempty"`
+	MemoryRequest  string           `json:"memory_request,omitempty"`
+	MemoryLimit    string           `json:"memory_limit,omitempty"`
+	MemoryPercent  float64          `json:"memory_percent,omitempty"`
+	Containers     []ContainerInfo  `json:"containers"`
+	Tolerations    []TolerationInfo `json:"tolerations,omitempty"`
 }
 
 // TolerationInfo contains pod toleration details.
@@ -109,9 +114,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		Pods:  make([]PodInfo, 0, len(pods.Items)),
 	}
 
+	// Fetch metrics (best-effort, don't fail if metrics-server unavailable)
+	metricsMap := t.getPodMetricsMap(ctx, namespace)
+
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		podInfo := t.buildPodInfo(pod)
+		t.enrichWithMemory(pod, &podInfo, metricsMap)
 		result.Pods = append(result.Pods, podInfo)
 	}
 
@@ -259,4 +268,109 @@ func getContainerState(state corev1.ContainerState) string {
 		return "Terminated"
 	}
 	return "Unknown"
+}
+
+type metricsPodList struct {
+	Items []metricsPod `json:"items"`
+}
+
+type metricsPod struct {
+	Metadata struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Containers []struct {
+		Name  string `json:"name"`
+		Usage struct {
+			Memory string `json:"memory"`
+		} `json:"usage"`
+	} `json:"containers"`
+}
+
+func (t *Task) getPodMetricsMap(ctx context.Context, namespace string) map[string]int64 {
+	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods", namespace)
+	if namespace == metav1.NamespaceAll {
+		path = "/apis/metrics.k8s.io/v1beta1/pods"
+	}
+
+	data, err := t.clientset.CoreV1().RESTClient().Get().
+		AbsPath(path).
+		DoRaw(ctx)
+	if err != nil {
+		return nil
+	}
+
+	var metrics metricsPodList
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		return nil
+	}
+
+	result := make(map[string]int64)
+	for _, mp := range metrics.Items {
+		key := mp.Metadata.Namespace + "/" + mp.Metadata.Name
+		var total int64
+		for _, c := range mp.Containers {
+			if c.Usage.Memory != "" {
+				q := resource.MustParse(c.Usage.Memory)
+				total += q.Value()
+			}
+		}
+		result[key] = total
+	}
+	return result
+}
+
+func (t *Task) enrichWithMemory(pod *corev1.Pod, info *PodInfo, metricsMap map[string]int64) {
+	// Calculate total memory request and limit from spec
+	var totalRequest, totalLimit int64
+	var hasRequest, hasLimit bool
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		if req, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+			totalRequest += req.Value()
+			hasRequest = true
+		}
+		if lim, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			totalLimit += lim.Value()
+			hasLimit = true
+		}
+	}
+
+	if hasRequest {
+		info.MemoryRequest = formatBytes(totalRequest)
+	}
+	if hasLimit {
+		info.MemoryLimit = formatBytes(totalLimit)
+	}
+
+	// Add actual usage from metrics
+	if metricsMap == nil {
+		return
+	}
+	key := pod.Namespace + "/" + pod.Name
+	usage, ok := metricsMap[key]
+	if !ok {
+		return
+	}
+	info.MemoryUsage = formatBytes(usage)
+	if hasLimit && totalLimit > 0 {
+		info.MemoryPercent = float64(usage) / float64(totalLimit) * 100
+	} else if hasRequest && totalRequest > 0 {
+		info.MemoryPercent = float64(usage) / float64(totalRequest) * 100
+	}
+}
+
+func formatBytes(b int64) string {
+	const (
+		gi = 1024 * 1024 * 1024
+		mi = 1024 * 1024
+	)
+	switch {
+	case b >= gi:
+		return fmt.Sprintf("%.1fGi", float64(b)/float64(gi))
+	case b >= mi:
+		return fmt.Sprintf("%.0fMi", float64(b)/float64(mi))
+	default:
+		return fmt.Sprintf("%dKi", b/1024)
+	}
 }
