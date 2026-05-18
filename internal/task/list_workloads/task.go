@@ -29,8 +29,9 @@ type Payload struct {
 
 // WorkloadList contains the workload listing.
 type WorkloadList struct {
-	Total     int            `json:"total"`
-	Workloads []WorkloadInfo `json:"workloads"`
+	Total          int            `json:"total"`
+	Workloads      []WorkloadInfo `json:"workloads"`
+	UnmatchedPDBs  []PDBInfo      `json:"unmatched_pdbs,omitempty"`
 }
 
 // WorkloadInfo contains workload details.
@@ -51,6 +52,7 @@ type WorkloadInfo struct {
 // PDBInfo contains PodDisruptionBudget details.
 type PDBInfo struct {
 	Name               string `json:"name"`
+	Namespace          string `json:"namespace,omitempty"`
 	MinAvailable       string `json:"min_available,omitempty"`
 	MaxUnavailable     string `json:"max_unavailable,omitempty"`
 	CurrentHealthy     int32  `json:"current_healthy"`
@@ -147,9 +149,10 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	// Fetch PDBs and match to workloads by pod template labels
+	var unmatchedPDBs []PDBInfo
 	pdbList, err := t.clientset.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
 	if err == nil && len(pdbList.Items) > 0 {
-		t.matchPDBsToWorkloads(workloads, podTemplateLabels, pdbList.Items)
+		unmatchedPDBs = t.matchPDBsToWorkloads(workloads, podTemplateLabels, pdbList.Items)
 	}
 
 	// Sort by Kind then Name
@@ -161,8 +164,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	})
 
 	result := &WorkloadList{
-		Total:     len(workloads),
-		Workloads: workloads,
+		Total:         len(workloads),
+		Workloads:     workloads,
+		UnmatchedPDBs: unmatchedPDBs,
 	}
 
 	return task.NewSuccessResultWithDetails(
@@ -254,7 +258,8 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 	return info
 }
 
-func (t *Task) matchPDBsToWorkloads(workloads []WorkloadInfo, podTemplateLabels []map[string]string, pdbs []policyv1.PodDisruptionBudget) {
+func (t *Task) matchPDBsToWorkloads(workloads []WorkloadInfo, podTemplateLabels []map[string]string, pdbs []policyv1.PodDisruptionBudget) []PDBInfo {
+	matched := make(map[string]bool)
 	for i := range workloads {
 		w := &workloads[i]
 		ptLabels := podTemplateLabels[i]
@@ -273,8 +278,11 @@ func (t *Task) matchPDBsToWorkloads(workloads []WorkloadInfo, podTemplateLabels 
 				continue
 			}
 			if selector.Matches(labels.Set(ptLabels)) {
+				key := pdb.Namespace + "/" + pdb.Name
+				matched[key] = true
 				info := PDBInfo{
 					Name:               pdb.Name,
+					Namespace:          pdb.Namespace,
 					CurrentHealthy:     pdb.Status.CurrentHealthy,
 					DesiredHealthy:     pdb.Status.DesiredHealthy,
 					DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
@@ -289,6 +297,29 @@ func (t *Task) matchPDBsToWorkloads(workloads []WorkloadInfo, podTemplateLabels 
 			}
 		}
 	}
+
+	var unmatched []PDBInfo
+	for _, pdb := range pdbs {
+		key := pdb.Namespace + "/" + pdb.Name
+		if matched[key] {
+			continue
+		}
+		info := PDBInfo{
+			Name:               pdb.Name,
+			Namespace:          pdb.Namespace,
+			CurrentHealthy:     pdb.Status.CurrentHealthy,
+			DesiredHealthy:     pdb.Status.DesiredHealthy,
+			DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
+		}
+		if pdb.Spec.MinAvailable != nil {
+			info.MinAvailable = pdb.Spec.MinAvailable.String()
+		}
+		if pdb.Spec.MaxUnavailable != nil {
+			info.MaxUnavailable = pdb.Spec.MaxUnavailable.String()
+		}
+		unmatched = append(unmatched, info)
+	}
+	return unmatched
 }
 
 func extractImages(containers []corev1.Container) []string {
