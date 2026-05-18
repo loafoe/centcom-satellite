@@ -10,7 +10,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/loafoe/pico-agent/internal/task"
@@ -41,8 +43,19 @@ type WorkloadInfo struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 	Annotations  map[string]string `json:"annotations,omitempty"`
 	Tolerations  []TolerationInfo  `json:"tolerations,omitempty"`
+	PDBs         []PDBInfo         `json:"pdbs,omitempty"`
 	CreationTime string            `json:"creation_time"`
 	Age          string            `json:"age"`
+}
+
+// PDBInfo contains PodDisruptionBudget details.
+type PDBInfo struct {
+	Name               string `json:"name"`
+	MinAvailable       string `json:"min_available,omitempty"`
+	MaxUnavailable     string `json:"max_unavailable,omitempty"`
+	CurrentHealthy     int32  `json:"current_healthy"`
+	DesiredHealthy     int32  `json:"desired_healthy"`
+	DisruptionsAllowed int32  `json:"disruptions_allowed"`
 }
 
 // TolerationInfo contains toleration details.
@@ -95,6 +108,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	var workloads []WorkloadInfo
+	var podTemplateLabels []map[string]string
 
 	// List Deployments
 	if payload.Kind == "deployment" || payload.Kind == "all" {
@@ -104,6 +118,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 		for i := range deployments.Items {
 			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i], payload.IncludeMetadata))
+			podTemplateLabels = append(podTemplateLabels, deployments.Items[i].Spec.Template.Labels)
 		}
 	}
 
@@ -115,6 +130,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 		for i := range statefulsets.Items {
 			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i], payload.IncludeMetadata))
+			podTemplateLabels = append(podTemplateLabels, statefulsets.Items[i].Spec.Template.Labels)
 		}
 	}
 
@@ -126,7 +142,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 		for i := range daemonsets.Items {
 			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i], payload.IncludeMetadata))
+			podTemplateLabels = append(podTemplateLabels, daemonsets.Items[i].Spec.Template.Labels)
 		}
+	}
+
+	// Fetch PDBs and match to workloads by pod template labels
+	pdbList, err := t.clientset.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
+	if err == nil && len(pdbList.Items) > 0 {
+		t.matchPDBsToWorkloads(workloads, podTemplateLabels, pdbList.Items)
 	}
 
 	// Sort by Kind then Name
@@ -229,6 +252,43 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 	}
 
 	return info
+}
+
+func (t *Task) matchPDBsToWorkloads(workloads []WorkloadInfo, podTemplateLabels []map[string]string, pdbs []policyv1.PodDisruptionBudget) {
+	for i := range workloads {
+		w := &workloads[i]
+		ptLabels := podTemplateLabels[i]
+		if ptLabels == nil {
+			continue
+		}
+		for _, pdb := range pdbs {
+			if pdb.Namespace != w.Namespace {
+				continue
+			}
+			if pdb.Spec.Selector == nil {
+				continue
+			}
+			selector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
+			if err != nil {
+				continue
+			}
+			if selector.Matches(labels.Set(ptLabels)) {
+				info := PDBInfo{
+					Name:               pdb.Name,
+					CurrentHealthy:     pdb.Status.CurrentHealthy,
+					DesiredHealthy:     pdb.Status.DesiredHealthy,
+					DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
+				}
+				if pdb.Spec.MinAvailable != nil {
+					info.MinAvailable = pdb.Spec.MinAvailable.String()
+				}
+				if pdb.Spec.MaxUnavailable != nil {
+					info.MaxUnavailable = pdb.Spec.MaxUnavailable.String()
+				}
+				w.PDBs = append(w.PDBs, info)
+			}
+		}
+	}
 }
 
 func extractImages(containers []corev1.Container) []string {
