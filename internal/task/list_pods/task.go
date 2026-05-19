@@ -33,18 +33,77 @@ type PodList struct {
 
 // PodInfo contains pod details.
 type PodInfo struct {
-	Name           string           `json:"name"`
-	Namespace      string           `json:"namespace"`
-	Status         string           `json:"status"`
-	Node           string           `json:"node"`
-	Restarts       int32            `json:"restarts"`
-	Age            string           `json:"age"`
-	MemoryUsage    string           `json:"memory_usage,omitempty"`
-	MemoryRequest  string           `json:"memory_request,omitempty"`
-	MemoryLimit    string           `json:"memory_limit,omitempty"`
-	MemoryPercent  float64          `json:"memory_percent,omitempty"`
-	Containers     []ContainerInfo  `json:"containers"`
-	Tolerations    []TolerationInfo `json:"tolerations,omitempty"`
+	Name           string            `json:"name"`
+	Namespace      string            `json:"namespace"`
+	Status         string            `json:"status"`
+	Node           string            `json:"node"`
+	Restarts       int32             `json:"restarts"`
+	Age            string            `json:"age"`
+	MemoryUsage    string            `json:"memory_usage,omitempty"`
+	MemoryRequest  string            `json:"memory_request,omitempty"`
+	MemoryLimit    string            `json:"memory_limit,omitempty"`
+	MemoryPercent  float64           `json:"memory_percent,omitempty"`
+	Containers     []ContainerInfo   `json:"containers"`
+	NodeSelector   map[string]string `json:"node_selector,omitempty"`
+	Affinity       *AffinityInfo     `json:"affinity,omitempty"`
+	Tolerations    []TolerationInfo  `json:"tolerations,omitempty"`
+}
+
+// AffinityInfo contains affinity scheduling constraints.
+type AffinityInfo struct {
+	NodeAffinity    *NodeAffinityInfo    `json:"node_affinity,omitempty"`
+	PodAffinity     *PodAffinityInfo     `json:"pod_affinity,omitempty"`
+	PodAntiAffinity *PodAntiAffinityInfo `json:"pod_anti_affinity,omitempty"`
+}
+
+// NodeAffinityInfo contains node affinity details.
+type NodeAffinityInfo struct {
+	RequiredDuringScheduling  []NodeSelectorTerm `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredTerm    `json:"preferred,omitempty"`
+}
+
+// PodAffinityInfo contains pod affinity details.
+type PodAffinityInfo struct {
+	RequiredDuringScheduling  []PodAffinityTerm          `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredPodAffinityTerm `json:"preferred,omitempty"`
+}
+
+// PodAntiAffinityInfo contains pod anti-affinity details.
+type PodAntiAffinityInfo struct {
+	RequiredDuringScheduling  []PodAffinityTerm          `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredPodAffinityTerm `json:"preferred,omitempty"`
+}
+
+// NodeSelectorTerm contains node selector requirements.
+type NodeSelectorTerm struct {
+	MatchExpressions []SelectorRequirement `json:"match_expressions,omitempty"`
+	MatchFields      []SelectorRequirement `json:"match_fields,omitempty"`
+}
+
+// PreferredTerm contains weighted node selector term.
+type PreferredTerm struct {
+	Weight     int32            `json:"weight"`
+	Preference NodeSelectorTerm `json:"preference"`
+}
+
+// PodAffinityTerm contains pod affinity term.
+type PodAffinityTerm struct {
+	TopologyKey   string                `json:"topology_key"`
+	LabelSelector []SelectorRequirement `json:"label_selector,omitempty"`
+	Namespaces    []string              `json:"namespaces,omitempty"`
+}
+
+// PreferredPodAffinityTerm contains weighted pod affinity term.
+type PreferredPodAffinityTerm struct {
+	Weight int32           `json:"weight"`
+	Term   PodAffinityTerm `json:"term"`
+}
+
+// SelectorRequirement contains a label selector requirement.
+type SelectorRequirement struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
 }
 
 // TolerationInfo contains pod toleration details.
@@ -190,7 +249,9 @@ func (t *Task) buildPodInfo(pod *corev1.Pod) PodInfo {
 		info.Containers = append(info.Containers, containerInfo)
 	}
 
-	// Add tolerations (skip default tolerations that K8s adds automatically)
+	// Add scheduling constraints
+	info.NodeSelector = extractNodeSelector(pod.Spec.NodeSelector)
+	info.Affinity = extractAffinity(pod.Spec.Affinity)
 	info.Tolerations = getPodTolerations(pod)
 
 	return info
@@ -373,4 +434,127 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%dKi", b/1024)
 	}
+}
+
+func extractNodeSelector(nodeSelector map[string]string) map[string]string {
+	if len(nodeSelector) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(nodeSelector))
+	for k, v := range nodeSelector {
+		result[k] = v
+	}
+	return result
+}
+
+func extractAffinity(affinity *corev1.Affinity) *AffinityInfo {
+	if affinity == nil {
+		return nil
+	}
+	info := &AffinityInfo{}
+	hasContent := false
+
+	if affinity.NodeAffinity != nil {
+		na := affinity.NodeAffinity
+		nodeInfo := &NodeAffinityInfo{}
+		if na.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+			for _, term := range na.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+				nodeInfo.RequiredDuringScheduling = append(nodeInfo.RequiredDuringScheduling, convertNodeSelectorTerm(term))
+			}
+		}
+		for _, pref := range na.PreferredDuringSchedulingIgnoredDuringExecution {
+			nodeInfo.PreferredDuringScheduling = append(nodeInfo.PreferredDuringScheduling, PreferredTerm{
+				Weight:     pref.Weight,
+				Preference: convertNodeSelectorTerm(pref.Preference),
+			})
+		}
+		if len(nodeInfo.RequiredDuringScheduling) > 0 || len(nodeInfo.PreferredDuringScheduling) > 0 {
+			info.NodeAffinity = nodeInfo
+			hasContent = true
+		}
+	}
+
+	if affinity.PodAffinity != nil {
+		pa := affinity.PodAffinity
+		podInfo := &PodAffinityInfo{}
+		for _, term := range pa.RequiredDuringSchedulingIgnoredDuringExecution {
+			podInfo.RequiredDuringScheduling = append(podInfo.RequiredDuringScheduling, convertPodAffinityTerm(term))
+		}
+		for _, pref := range pa.PreferredDuringSchedulingIgnoredDuringExecution {
+			podInfo.PreferredDuringScheduling = append(podInfo.PreferredDuringScheduling, PreferredPodAffinityTerm{
+				Weight: pref.Weight,
+				Term:   convertPodAffinityTerm(pref.PodAffinityTerm),
+			})
+		}
+		if len(podInfo.RequiredDuringScheduling) > 0 || len(podInfo.PreferredDuringScheduling) > 0 {
+			info.PodAffinity = podInfo
+			hasContent = true
+		}
+	}
+
+	if affinity.PodAntiAffinity != nil {
+		paa := affinity.PodAntiAffinity
+		antiInfo := &PodAntiAffinityInfo{}
+		for _, term := range paa.RequiredDuringSchedulingIgnoredDuringExecution {
+			antiInfo.RequiredDuringScheduling = append(antiInfo.RequiredDuringScheduling, convertPodAffinityTerm(term))
+		}
+		for _, pref := range paa.PreferredDuringSchedulingIgnoredDuringExecution {
+			antiInfo.PreferredDuringScheduling = append(antiInfo.PreferredDuringScheduling, PreferredPodAffinityTerm{
+				Weight: pref.Weight,
+				Term:   convertPodAffinityTerm(pref.PodAffinityTerm),
+			})
+		}
+		if len(antiInfo.RequiredDuringScheduling) > 0 || len(antiInfo.PreferredDuringScheduling) > 0 {
+			info.PodAntiAffinity = antiInfo
+			hasContent = true
+		}
+	}
+
+	if !hasContent {
+		return nil
+	}
+	return info
+}
+
+func convertNodeSelectorTerm(term corev1.NodeSelectorTerm) NodeSelectorTerm {
+	result := NodeSelectorTerm{}
+	for _, expr := range term.MatchExpressions {
+		result.MatchExpressions = append(result.MatchExpressions, SelectorRequirement{
+			Key:      expr.Key,
+			Operator: string(expr.Operator),
+			Values:   expr.Values,
+		})
+	}
+	for _, field := range term.MatchFields {
+		result.MatchFields = append(result.MatchFields, SelectorRequirement{
+			Key:      field.Key,
+			Operator: string(field.Operator),
+			Values:   field.Values,
+		})
+	}
+	return result
+}
+
+func convertPodAffinityTerm(term corev1.PodAffinityTerm) PodAffinityTerm {
+	result := PodAffinityTerm{
+		TopologyKey: term.TopologyKey,
+		Namespaces:  term.Namespaces,
+	}
+	if term.LabelSelector != nil {
+		for _, expr := range term.LabelSelector.MatchExpressions {
+			result.LabelSelector = append(result.LabelSelector, SelectorRequirement{
+				Key:      expr.Key,
+				Operator: string(expr.Operator),
+				Values:   expr.Values,
+			})
+		}
+		for k, v := range term.LabelSelector.MatchLabels {
+			result.LabelSelector = append(result.LabelSelector, SelectorRequirement{
+				Key:      k,
+				Operator: "In",
+				Values:   []string{v},
+			})
+		}
+	}
+	return result
 }
