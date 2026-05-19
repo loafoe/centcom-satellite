@@ -38,18 +38,86 @@ type WorkloadList struct {
 
 // WorkloadInfo contains workload details.
 type WorkloadInfo struct {
-	Name         string            `json:"name"`
-	Namespace    string            `json:"namespace"`
-	Kind         string            `json:"kind"`
-	Replicas     ReplicaStatus     `json:"replicas"`
-	Images       []string          `json:"images"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Annotations  map[string]string `json:"annotations,omitempty"`
-	Tolerations  []TolerationInfo  `json:"tolerations,omitempty"`
-	PDBs         []PDBInfo         `json:"pdbs,omitempty"`
-	HPA          *HPAInfo          `json:"hpa,omitempty"`
-	CreationTime string            `json:"creation_time"`
-	Age          string            `json:"age"`
+	Name                       string                       `json:"name"`
+	Namespace                  string                       `json:"namespace"`
+	Kind                       string                       `json:"kind"`
+	Replicas                   ReplicaStatus                `json:"replicas"`
+	Images                     []string                     `json:"images"`
+	Labels                     map[string]string            `json:"labels,omitempty"`
+	Annotations                map[string]string            `json:"annotations,omitempty"`
+	NodeSelector               map[string]string            `json:"node_selector,omitempty"`
+	Affinity                   *AffinityInfo                `json:"affinity,omitempty"`
+	TopologySpreadConstraints  []TopologySpreadConstraint   `json:"topology_spread_constraints,omitempty"`
+	Tolerations                []TolerationInfo             `json:"tolerations,omitempty"`
+	PDBs                       []PDBInfo                    `json:"pdbs,omitempty"`
+	HPA                        *HPAInfo                     `json:"hpa,omitempty"`
+	CreationTime               string                       `json:"creation_time"`
+	Age                        string                       `json:"age"`
+}
+
+// AffinityInfo contains affinity scheduling constraints.
+type AffinityInfo struct {
+	NodeAffinity    *NodeAffinityInfo    `json:"node_affinity,omitempty"`
+	PodAffinity     *PodAffinityInfo     `json:"pod_affinity,omitempty"`
+	PodAntiAffinity *PodAntiAffinityInfo `json:"pod_anti_affinity,omitempty"`
+}
+
+// NodeAffinityInfo contains node affinity details.
+type NodeAffinityInfo struct {
+	RequiredDuringScheduling  []NodeSelectorTerm `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredTerm    `json:"preferred,omitempty"`
+}
+
+// PodAffinityInfo contains pod affinity details.
+type PodAffinityInfo struct {
+	RequiredDuringScheduling  []PodAffinityTerm         `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredPodAffinityTerm `json:"preferred,omitempty"`
+}
+
+// PodAntiAffinityInfo contains pod anti-affinity details.
+type PodAntiAffinityInfo struct {
+	RequiredDuringScheduling  []PodAffinityTerm         `json:"required,omitempty"`
+	PreferredDuringScheduling []PreferredPodAffinityTerm `json:"preferred,omitempty"`
+}
+
+// NodeSelectorTerm contains node selector requirements.
+type NodeSelectorTerm struct {
+	MatchExpressions []SelectorRequirement `json:"match_expressions,omitempty"`
+	MatchFields      []SelectorRequirement `json:"match_fields,omitempty"`
+}
+
+// PreferredTerm contains weighted node selector term.
+type PreferredTerm struct {
+	Weight     int32            `json:"weight"`
+	Preference NodeSelectorTerm `json:"preference"`
+}
+
+// PodAffinityTerm contains pod affinity term.
+type PodAffinityTerm struct {
+	TopologyKey   string                `json:"topology_key"`
+	LabelSelector []SelectorRequirement `json:"label_selector,omitempty"`
+	Namespaces    []string              `json:"namespaces,omitempty"`
+}
+
+// PreferredPodAffinityTerm contains weighted pod affinity term.
+type PreferredPodAffinityTerm struct {
+	Weight int32           `json:"weight"`
+	Term   PodAffinityTerm `json:"term"`
+}
+
+// SelectorRequirement contains a label selector requirement.
+type SelectorRequirement struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
+}
+
+// TopologySpreadConstraint contains topology spread constraint details.
+type TopologySpreadConstraint struct {
+	MaxSkew           int32                 `json:"max_skew"`
+	TopologyKey       string                `json:"topology_key"`
+	WhenUnsatisfiable string                `json:"when_unsatisfiable"`
+	LabelSelector     []SelectorRequirement `json:"label_selector,omitempty"`
 }
 
 // HPAInfo contains HorizontalPodAutoscaler details.
@@ -219,10 +287,13 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 			Desired: desired,
 			Ready:   deployment.Status.ReadyReplicas,
 		},
-		Images:       images,
-		Tolerations:  extractTolerations(deployment.Spec.Template.Spec.Tolerations),
-		CreationTime: deployment.CreationTimestamp.Format(time.RFC3339),
-		Age:          formatAge(deployment.CreationTimestamp.Time),
+		Images:                    images,
+		NodeSelector:              extractNodeSelector(deployment.Spec.Template.Spec.NodeSelector),
+		Affinity:                  extractAffinity(deployment.Spec.Template.Spec.Affinity),
+		TopologySpreadConstraints: extractTopologySpreadConstraints(deployment.Spec.Template.Spec.TopologySpreadConstraints),
+		Tolerations:               extractTolerations(deployment.Spec.Template.Spec.Tolerations),
+		CreationTime:              deployment.CreationTimestamp.Format(time.RFC3339),
+		Age:                       formatAge(deployment.CreationTimestamp.Time),
 	}
 
 	if includeMetadata {
@@ -248,10 +319,13 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 			Desired: desired,
 			Ready:   statefulset.Status.ReadyReplicas,
 		},
-		Images:       images,
-		Tolerations:  extractTolerations(statefulset.Spec.Template.Spec.Tolerations),
-		CreationTime: statefulset.CreationTimestamp.Format(time.RFC3339),
-		Age:          formatAge(statefulset.CreationTimestamp.Time),
+		Images:                    images,
+		NodeSelector:              extractNodeSelector(statefulset.Spec.Template.Spec.NodeSelector),
+		Affinity:                  extractAffinity(statefulset.Spec.Template.Spec.Affinity),
+		TopologySpreadConstraints: extractTopologySpreadConstraints(statefulset.Spec.Template.Spec.TopologySpreadConstraints),
+		Tolerations:               extractTolerations(statefulset.Spec.Template.Spec.Tolerations),
+		CreationTime:              statefulset.CreationTimestamp.Format(time.RFC3339),
+		Age:                       formatAge(statefulset.CreationTimestamp.Time),
 	}
 
 	if includeMetadata {
@@ -273,10 +347,13 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 			Desired: daemonset.Status.DesiredNumberScheduled,
 			Ready:   daemonset.Status.NumberReady,
 		},
-		Images:       images,
-		Tolerations:  extractTolerations(daemonset.Spec.Template.Spec.Tolerations),
-		CreationTime: daemonset.CreationTimestamp.Format(time.RFC3339),
-		Age:          formatAge(daemonset.CreationTimestamp.Time),
+		Images:                    images,
+		NodeSelector:              extractNodeSelector(daemonset.Spec.Template.Spec.NodeSelector),
+		Affinity:                  extractAffinity(daemonset.Spec.Template.Spec.Affinity),
+		TopologySpreadConstraints: extractTopologySpreadConstraints(daemonset.Spec.Template.Spec.TopologySpreadConstraints),
+		Tolerations:               extractTolerations(daemonset.Spec.Template.Spec.Tolerations),
+		CreationTime:              daemonset.CreationTimestamp.Format(time.RFC3339),
+		Age:                       formatAge(daemonset.CreationTimestamp.Time),
 	}
 
 	if includeMetadata {
@@ -507,4 +584,159 @@ func (t *Task) matchHPAsToWorkloads(workloads []WorkloadInfo, hpas []autoscaling
 			break
 		}
 	}
+}
+
+func extractNodeSelector(nodeSelector map[string]string) map[string]string {
+	if len(nodeSelector) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(nodeSelector))
+	for k, v := range nodeSelector {
+		result[k] = v
+	}
+	return result
+}
+
+func extractAffinity(affinity *corev1.Affinity) *AffinityInfo {
+	if affinity == nil {
+		return nil
+	}
+	info := &AffinityInfo{}
+	hasContent := false
+
+	if affinity.NodeAffinity != nil {
+		na := affinity.NodeAffinity
+		nodeInfo := &NodeAffinityInfo{}
+		if na.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+			for _, term := range na.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+				nodeInfo.RequiredDuringScheduling = append(nodeInfo.RequiredDuringScheduling, convertNodeSelectorTerm(term))
+			}
+		}
+		for _, pref := range na.PreferredDuringSchedulingIgnoredDuringExecution {
+			nodeInfo.PreferredDuringScheduling = append(nodeInfo.PreferredDuringScheduling, PreferredTerm{
+				Weight:     pref.Weight,
+				Preference: convertNodeSelectorTerm(pref.Preference),
+			})
+		}
+		if len(nodeInfo.RequiredDuringScheduling) > 0 || len(nodeInfo.PreferredDuringScheduling) > 0 {
+			info.NodeAffinity = nodeInfo
+			hasContent = true
+		}
+	}
+
+	if affinity.PodAffinity != nil {
+		pa := affinity.PodAffinity
+		podInfo := &PodAffinityInfo{}
+		for _, term := range pa.RequiredDuringSchedulingIgnoredDuringExecution {
+			podInfo.RequiredDuringScheduling = append(podInfo.RequiredDuringScheduling, convertPodAffinityTerm(term))
+		}
+		for _, pref := range pa.PreferredDuringSchedulingIgnoredDuringExecution {
+			podInfo.PreferredDuringScheduling = append(podInfo.PreferredDuringScheduling, PreferredPodAffinityTerm{
+				Weight: pref.Weight,
+				Term:   convertPodAffinityTerm(pref.PodAffinityTerm),
+			})
+		}
+		if len(podInfo.RequiredDuringScheduling) > 0 || len(podInfo.PreferredDuringScheduling) > 0 {
+			info.PodAffinity = podInfo
+			hasContent = true
+		}
+	}
+
+	if affinity.PodAntiAffinity != nil {
+		paa := affinity.PodAntiAffinity
+		antiInfo := &PodAntiAffinityInfo{}
+		for _, term := range paa.RequiredDuringSchedulingIgnoredDuringExecution {
+			antiInfo.RequiredDuringScheduling = append(antiInfo.RequiredDuringScheduling, convertPodAffinityTerm(term))
+		}
+		for _, pref := range paa.PreferredDuringSchedulingIgnoredDuringExecution {
+			antiInfo.PreferredDuringScheduling = append(antiInfo.PreferredDuringScheduling, PreferredPodAffinityTerm{
+				Weight: pref.Weight,
+				Term:   convertPodAffinityTerm(pref.PodAffinityTerm),
+			})
+		}
+		if len(antiInfo.RequiredDuringScheduling) > 0 || len(antiInfo.PreferredDuringScheduling) > 0 {
+			info.PodAntiAffinity = antiInfo
+			hasContent = true
+		}
+	}
+
+	if !hasContent {
+		return nil
+	}
+	return info
+}
+
+func convertNodeSelectorTerm(term corev1.NodeSelectorTerm) NodeSelectorTerm {
+	result := NodeSelectorTerm{}
+	for _, expr := range term.MatchExpressions {
+		result.MatchExpressions = append(result.MatchExpressions, SelectorRequirement{
+			Key:      expr.Key,
+			Operator: string(expr.Operator),
+			Values:   expr.Values,
+		})
+	}
+	for _, field := range term.MatchFields {
+		result.MatchFields = append(result.MatchFields, SelectorRequirement{
+			Key:      field.Key,
+			Operator: string(field.Operator),
+			Values:   field.Values,
+		})
+	}
+	return result
+}
+
+func convertPodAffinityTerm(term corev1.PodAffinityTerm) PodAffinityTerm {
+	result := PodAffinityTerm{
+		TopologyKey: term.TopologyKey,
+		Namespaces:  term.Namespaces,
+	}
+	if term.LabelSelector != nil {
+		for _, expr := range term.LabelSelector.MatchExpressions {
+			result.LabelSelector = append(result.LabelSelector, SelectorRequirement{
+				Key:      expr.Key,
+				Operator: string(expr.Operator),
+				Values:   expr.Values,
+			})
+		}
+		for k, v := range term.LabelSelector.MatchLabels {
+			result.LabelSelector = append(result.LabelSelector, SelectorRequirement{
+				Key:      k,
+				Operator: "In",
+				Values:   []string{v},
+			})
+		}
+	}
+	return result
+}
+
+func extractTopologySpreadConstraints(constraints []corev1.TopologySpreadConstraint) []TopologySpreadConstraint {
+	if len(constraints) == 0 {
+		return nil
+	}
+	result := make([]TopologySpreadConstraint, 0, len(constraints))
+	for _, c := range constraints {
+		tsc := TopologySpreadConstraint{
+			MaxSkew:           c.MaxSkew,
+			TopologyKey:       c.TopologyKey,
+			WhenUnsatisfiable: string(c.WhenUnsatisfiable),
+		}
+		if c.LabelSelector != nil {
+			for _, expr := range c.LabelSelector.MatchExpressions {
+				tsc.LabelSelector = append(tsc.LabelSelector, SelectorRequirement{
+					Key:      expr.Key,
+					Operator: string(expr.Operator),
+					Values:   expr.Values,
+				})
+			}
+			for k, v := range c.LabelSelector.MatchLabels {
+				tsc.LabelSelector = append(tsc.LabelSelector, SelectorRequirement{
+					Key:      k,
+					Operator: "In",
+					Values:   []string{v},
+				})
+			}
+		}
+		result = append(result, tsc)
+	}
+	return result
 }

@@ -44,6 +44,7 @@ type NodeClaimInfo struct {
 	Name         string `json:"name"`
 	NodeName     string `json:"node_name,omitempty"`
 	InstanceType string `json:"instance_type,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
 	NodePool     string `json:"nodepool,omitempty"`
 	Zone         string `json:"zone,omitempty"`
 	Capacity     string `json:"capacity,omitempty"`
@@ -147,10 +148,13 @@ func (t *Task) buildNodeClaimInfo(nc *unstructured.Unstructured) NodeClaimInfo {
 		}
 	}
 
-	// Extract nodepool from labels
+	// Extract nodepool and architecture from labels
 	labels := nc.GetLabels()
 	if nodePool, ok := labels[NodePoolLabel]; ok {
 		info.NodePool = nodePool
+	}
+	if arch, ok := labels["kubernetes.io/arch"]; ok {
+		info.Architecture = arch
 	}
 
 	// Check do-not-disrupt annotation
