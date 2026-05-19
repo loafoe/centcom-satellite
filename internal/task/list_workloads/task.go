@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,7 @@ type Payload struct {
 	Namespace       string `json:"namespace"`               // required
 	Kind            string `json:"kind,omitempty"`          // deployment/statefulset/daemonset/all (default: all)
 	IncludeMetadata bool   `json:"include_metadata"`        // include labels and annotations
+	IncludeHPAs     bool   `json:"include_hpas,omitempty"`  // include HorizontalPodAutoscaler info
 }
 
 // WorkloadList contains the workload listing.
@@ -45,8 +47,27 @@ type WorkloadInfo struct {
 	Annotations  map[string]string `json:"annotations,omitempty"`
 	Tolerations  []TolerationInfo  `json:"tolerations,omitempty"`
 	PDBs         []PDBInfo         `json:"pdbs,omitempty"`
+	HPA          *HPAInfo          `json:"hpa,omitempty"`
 	CreationTime string            `json:"creation_time"`
 	Age          string            `json:"age"`
+}
+
+// HPAInfo contains HorizontalPodAutoscaler details.
+type HPAInfo struct {
+	Name            string       `json:"name"`
+	MinReplicas     int32        `json:"min_replicas"`
+	MaxReplicas     int32        `json:"max_replicas"`
+	CurrentReplicas int32        `json:"current_replicas"`
+	DesiredReplicas int32        `json:"desired_replicas"`
+	Metrics         []HPAMetric  `json:"metrics,omitempty"`
+}
+
+// HPAMetric contains HPA metric details.
+type HPAMetric struct {
+	Type    string `json:"type"`
+	Name    string `json:"name,omitempty"`
+	Current string `json:"current,omitempty"`
+	Target  string `json:"target,omitempty"`
 }
 
 // PDBInfo contains PodDisruptionBudget details.
@@ -153,6 +174,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	pdbList, err := t.clientset.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
 	if err == nil && len(pdbList.Items) > 0 {
 		unmatchedPDBs = t.matchPDBsToWorkloads(workloads, podTemplateLabels, pdbList.Items)
+	}
+
+	// Fetch HPAs and match to workloads by scaleTargetRef
+	if payload.IncludeHPAs {
+		hpaList, err := t.clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+		if err == nil && len(hpaList.Items) > 0 {
+			t.matchHPAsToWorkloads(workloads, hpaList.Items)
+		}
 	}
 
 	// Sort by Kind then Name
@@ -400,4 +429,82 @@ func shouldExcludeAnnotation(key string) bool {
 		return true
 	}
 	return false
+}
+
+func (t *Task) matchHPAsToWorkloads(workloads []WorkloadInfo, hpas []autoscalingv2.HorizontalPodAutoscaler) {
+	for i := range workloads {
+		w := &workloads[i]
+		for _, hpa := range hpas {
+			if hpa.Namespace != w.Namespace {
+				continue
+			}
+			ref := hpa.Spec.ScaleTargetRef
+			if ref.Name != w.Name {
+				continue
+			}
+			if ref.Kind != w.Kind {
+				continue
+			}
+			info := &HPAInfo{
+				Name:            hpa.Name,
+				MaxReplicas:     hpa.Spec.MaxReplicas,
+				CurrentReplicas: hpa.Status.CurrentReplicas,
+				DesiredReplicas: hpa.Status.DesiredReplicas,
+			}
+			if hpa.Spec.MinReplicas != nil {
+				info.MinReplicas = *hpa.Spec.MinReplicas
+			} else {
+				info.MinReplicas = 1
+			}
+			// Extract metrics
+			for _, metric := range hpa.Spec.Metrics {
+				m := HPAMetric{Type: string(metric.Type)}
+				switch metric.Type {
+				case autoscalingv2.ResourceMetricSourceType:
+					if metric.Resource != nil {
+						m.Name = string(metric.Resource.Name)
+						if metric.Resource.Target.AverageUtilization != nil {
+							m.Target = fmt.Sprintf("%d%%", *metric.Resource.Target.AverageUtilization)
+						} else if metric.Resource.Target.AverageValue != nil {
+							m.Target = metric.Resource.Target.AverageValue.String()
+						}
+					}
+				case autoscalingv2.PodsMetricSourceType:
+					if metric.Pods != nil {
+						m.Name = metric.Pods.Metric.Name
+						m.Target = metric.Pods.Target.AverageValue.String()
+					}
+				case autoscalingv2.ObjectMetricSourceType:
+					if metric.Object != nil {
+						m.Name = metric.Object.Metric.Name
+					}
+				case autoscalingv2.ExternalMetricSourceType:
+					if metric.External != nil {
+						m.Name = metric.External.Metric.Name
+					}
+				}
+				info.Metrics = append(info.Metrics, m)
+			}
+			// Add current metric values from status
+			for j, status := range hpa.Status.CurrentMetrics {
+				if j >= len(info.Metrics) {
+					break
+				}
+				switch status.Type {
+				case autoscalingv2.ResourceMetricSourceType:
+					if status.Resource != nil && status.Resource.Current.AverageUtilization != nil {
+						info.Metrics[j].Current = fmt.Sprintf("%d%%", *status.Resource.Current.AverageUtilization)
+					} else if status.Resource != nil && status.Resource.Current.AverageValue != nil {
+						info.Metrics[j].Current = status.Resource.Current.AverageValue.String()
+					}
+				case autoscalingv2.PodsMetricSourceType:
+					if status.Pods != nil {
+						info.Metrics[j].Current = status.Pods.Current.AverageValue.String()
+					}
+				}
+			}
+			w.HPA = info
+			break
+		}
+	}
 }
