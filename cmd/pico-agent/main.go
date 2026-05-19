@@ -41,6 +41,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/pod_resize"
 	"github.com/loafoe/pico-agent/internal/task/list_argocd_applications"
 	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
+	"github.com/loafoe/pico-agent/internal/task/list_nodepools"
 	"github.com/loafoe/pico-agent/internal/task/list_vpas"
 	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
@@ -126,6 +127,7 @@ func main() {
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())
 	registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
+	registry.Register(list_nodepools.New(k8sClient.DynamicClient))
 	registry.Register(list_vpas.New(k8sClient.Clientset, k8sClient.DynamicClient))
 
 	// Optional: get_resource task (requires expanded RBAC)
