@@ -32,8 +32,9 @@ type Payload struct {
 
 // VPAList contains the VPA listing.
 type VPAList struct {
-	Total int       `json:"total"`
-	VPAs  []VPAInfo `json:"vpas"`
+	Total        int       `json:"total"`
+	VPAs         []VPAInfo `json:"vpas"`
+	VPAInstalled bool      `json:"vpa_installed"`
 }
 
 // VPAInfo contains VerticalPodAutoscaler details.
@@ -112,7 +113,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		list, err = t.dynamicClient.Resource(vpaGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
-		return task.NewErrorResult(fmt.Sprintf("failed to list VPAs (VPA CRD may not be installed): %v", err)), nil
+		// Gracefully handle missing CRD - return empty list with vpa_installed=false
+		result := &VPAList{
+			Total:        0,
+			VPAs:         []VPAInfo{},
+			VPAInstalled: false,
+		}
+		return task.NewSuccessResultWithDetails("VPA CRD not installed", result), nil
 	}
 
 	vpas := make([]VPAInfo, 0, len(list.Items))
@@ -129,8 +136,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	})
 
 	result := &VPAList{
-		Total: len(vpas),
-		VPAs:  vpas,
+		Total:        len(vpas),
+		VPAs:         vpas,
+		VPAInstalled: true,
 	}
 
 	return task.NewSuccessResultWithDetails(
