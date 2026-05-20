@@ -73,6 +73,10 @@ type FeaturesConfig struct {
 	// ArgocdEnabled enables the list_argocd_applications task for Argo CD introspection.
 	// Disabled by default as it requires Argo CD CRDs and RBAC for argoproj.io.
 	ArgocdEnabled bool
+
+	// HTTPRequestEnabled enables the http_request task for making HTTP requests to cluster-internal services.
+	// Disabled by default as it allows arbitrary HTTP requests within the cluster.
+	HTTPRequestEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -119,6 +123,7 @@ func Load() (*Config, error) {
 			},
 			NodeclaimDeleteEnabled: getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:          getEnvBool("FEATURES_ARGOCD", false),
+			HTTPRequestEnabled:     getEnvBool("HTTP_REQUEST_ENABLED", false),
 		},
 	}
 
