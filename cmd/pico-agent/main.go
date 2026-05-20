@@ -46,6 +46,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
 	"github.com/loafoe/pico-agent/internal/task/workload_scale"
+	"github.com/loafoe/pico-agent/internal/task/http_request"
 )
 
 // Version is set at build time.
@@ -170,6 +171,12 @@ func main() {
 	if cfg.Features.ArgocdEnabled {
 		registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
 		slog.Info("list_argocd_applications task enabled")
+	}
+
+	// Optional: http_request task (cluster-internal HTTP requests)
+	if cfg.Features.HTTPRequestEnabled {
+		registry.Register(http_request.New())
+		slog.Info("http_request task enabled")
 	}
 
 	// Setup SPIRE client if enabled
