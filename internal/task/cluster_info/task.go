@@ -38,6 +38,7 @@ type Capabilities struct {
 	Argocd          bool `json:"argocd"`
 	PvResize        bool `json:"pv_resize"`
 	AutoRemediate   bool `json:"auto_remediate"`
+	HttpRequest     bool `json:"http_request"`
 }
 
 // VersionInfo contains Kubernetes version details.

@@ -109,6 +109,7 @@ func main() {
 		Argocd:          cfg.Features.ArgocdEnabled,
 		PvResize:        cfg.Features.PvResizeEnabled,
 		AutoRemediate:   cfg.Features.AutoRemediateEnabled,
+		HttpRequest:     cfg.Features.HTTPRequestEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
