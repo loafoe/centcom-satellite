@@ -99,8 +99,6 @@ func main() {
 
 	// Setup task registry
 	registry := task.NewRegistry()
-	registry.Register(pv_resize.New(k8sClient.Clientset))
-	registry.Register(pv_resize_status.New(k8sClient.Clientset))
 	registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
 		WorkloadRestart: cfg.Features.WorkloadRestartEnabled,
 		WorkloadScale:   cfg.Features.WorkloadScaleEnabled,
@@ -109,6 +107,7 @@ func main() {
 		GetResource:     cfg.Features.GetResourceEnabled,
 		NodeclaimDelete: cfg.Features.NodeclaimDeleteEnabled,
 		Argocd:          cfg.Features.ArgocdEnabled,
+		PvResize:        cfg.Features.PvResizeEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -179,6 +178,13 @@ func main() {
 	if cfg.Features.HTTPRequestEnabled {
 		registry.Register(http_request.New())
 		slog.Info("http_request task enabled")
+	}
+
+	// Optional: pv_resize task (storage write operation)
+	if cfg.Features.PvResizeEnabled {
+		registry.Register(pv_resize.New(k8sClient.Clientset))
+		registry.Register(pv_resize_status.New(k8sClient.Clientset))
+		slog.Info("pv_resize task enabled")
 	}
 
 	// Setup SPIRE client if enabled

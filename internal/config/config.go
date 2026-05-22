@@ -77,6 +77,10 @@ type FeaturesConfig struct {
 	// HTTPRequestEnabled enables the http_request task for making HTTP requests to cluster-internal services.
 	// Disabled by default as it allows arbitrary HTTP requests within the cluster.
 	HTTPRequestEnabled bool
+
+	// PvResizeEnabled enables the pv_resize task for resizing persistent volumes.
+	// Disabled by default as it requires write permissions and can impact storage.
+	PvResizeEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -124,6 +128,7 @@ func Load() (*Config, error) {
 			NodeclaimDeleteEnabled: getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:          getEnvBool("FEATURES_ARGOCD", false),
 			HTTPRequestEnabled:     getEnvBool("HTTP_REQUEST_ENABLED", false),
+			PvResizeEnabled:        getEnvBool("PV_RESIZE_ENABLED", false),
 		},
 	}
 
