@@ -108,6 +108,7 @@ func main() {
 		NodeclaimDelete: cfg.Features.NodeclaimDeleteEnabled,
 		Argocd:          cfg.Features.ArgocdEnabled,
 		PvResize:        cfg.Features.PvResizeEnabled,
+		AutoRemediate:   cfg.Features.AutoRemediateEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
