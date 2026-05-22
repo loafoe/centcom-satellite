@@ -24,6 +24,7 @@ import (
 	"github.com/loafoe/pico-agent/internal/task/list_ingresses"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
 	"github.com/loafoe/pico-agent/internal/task/list_pods"
+	"github.com/loafoe/pico-agent/internal/task/list_pvcs"
 	"github.com/loafoe/pico-agent/internal/task/list_routes"
 	"github.com/loafoe/pico-agent/internal/task/list_services"
 	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
@@ -115,6 +116,7 @@ func main() {
 	registry.Register(list_namespaces.New(k8sClient.Clientset))
 	registry.Register(pv_usage.New(k8sClient.Clientset))
 	registry.Register(list_pods.New(k8sClient.Clientset))
+	registry.Register(list_pvcs.New(k8sClient.Clientset))
 	registry.Register(get_logs.New(k8sClient.Clientset))
 	registry.Register(list_workloads.New(k8sClient.Clientset))
 	registry.Register(get_events.New(k8sClient.Clientset))
