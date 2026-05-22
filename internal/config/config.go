@@ -81,6 +81,12 @@ type FeaturesConfig struct {
 	// PvResizeEnabled enables the pv_resize task for resizing persistent volumes.
 	// Disabled by default as it requires write permissions and can impact storage.
 	PvResizeEnabled bool
+
+	// AutoRemediateEnabled enables auto-remediation workflows.
+	// When enabled, the agent participates in automated monitoring and remediation
+	// orchestrated by pico-mcp (e.g., PV usage alerting and automatic resize).
+	// Disabled by default.
+	AutoRemediateEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -129,6 +135,7 @@ func Load() (*Config, error) {
 			ArgocdEnabled:          getEnvBool("FEATURES_ARGOCD", false),
 			HTTPRequestEnabled:     getEnvBool("HTTP_REQUEST_ENABLED", false),
 			PvResizeEnabled:        getEnvBool("PV_RESIZE_ENABLED", false),
+			AutoRemediateEnabled:   getEnvBool("AUTO_REMEDIATE_ENABLED", false),
 		},
 	}
 
