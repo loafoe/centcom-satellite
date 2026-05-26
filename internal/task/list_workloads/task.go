@@ -27,6 +27,7 @@ type Payload struct {
 	Kind            string `json:"kind,omitempty"`          // deployment/statefulset/daemonset/all (default: all)
 	IncludeMetadata bool   `json:"include_metadata"`        // include labels and annotations
 	IncludeHPAs     bool   `json:"include_hpas,omitempty"`  // include HorizontalPodAutoscaler info
+	IncludeProbes   bool   `json:"include_probes,omitempty"` // include container probe configuration
 }
 
 // WorkloadList contains the workload listing.
@@ -43,6 +44,7 @@ type WorkloadInfo struct {
 	Kind                       string                       `json:"kind"`
 	Replicas                   ReplicaStatus                `json:"replicas"`
 	Images                     []string                     `json:"images"`
+	Containers                 []ContainerInfo              `json:"containers,omitempty"`
 	Selector                   map[string]string            `json:"selector,omitempty"`
 	Labels                     map[string]string            `json:"labels,omitempty"`
 	Annotations                map[string]string            `json:"annotations,omitempty"`
@@ -54,6 +56,57 @@ type WorkloadInfo struct {
 	HPA                        *HPAInfo                     `json:"hpa,omitempty"`
 	CreationTime               string                       `json:"creation_time"`
 	Age                        string                       `json:"age"`
+}
+
+// ContainerInfo contains container details including probes and resources.
+type ContainerInfo struct {
+	Name      string          `json:"name"`
+	Image     string          `json:"image"`
+	Ports     []ContainerPort `json:"ports,omitempty"`
+	Resources *ResourceInfo   `json:"resources,omitempty"`
+	Probes    *ProbesInfo     `json:"probes,omitempty"`
+}
+
+// ContainerPort contains port information.
+type ContainerPort struct {
+	Name          string `json:"name,omitempty"`
+	ContainerPort int32  `json:"container_port"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
+// ResourceInfo contains resource requests and limits.
+type ResourceInfo struct {
+	Requests *ResourceValues `json:"requests,omitempty"`
+	Limits   *ResourceValues `json:"limits,omitempty"`
+}
+
+// ResourceValues contains CPU and memory values.
+type ResourceValues struct {
+	CPU    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
+}
+
+// ProbesInfo contains all probe configurations.
+type ProbesInfo struct {
+	Liveness  *ProbeInfo `json:"liveness,omitempty"`
+	Readiness *ProbeInfo `json:"readiness,omitempty"`
+	Startup   *ProbeInfo `json:"startup,omitempty"`
+}
+
+// ProbeInfo contains probe configuration details.
+type ProbeInfo struct {
+	Type                string   `json:"type"` // httpGet, tcpSocket, exec, grpc
+	Path                string   `json:"path,omitempty"`
+	Port                int32    `json:"port,omitempty"`
+	Host                string   `json:"host,omitempty"`
+	Scheme              string   `json:"scheme,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	Service             string   `json:"service,omitempty"` // for grpc
+	InitialDelaySeconds int32    `json:"initial_delay_seconds,omitempty"`
+	PeriodSeconds       int32    `json:"period_seconds,omitempty"`
+	TimeoutSeconds      int32    `json:"timeout_seconds,omitempty"`
+	SuccessThreshold    int32    `json:"success_threshold,omitempty"`
+	FailureThreshold    int32    `json:"failure_threshold,omitempty"`
 }
 
 // AffinityInfo contains affinity scheduling constraints.
@@ -209,7 +262,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list deployments: %w", err)
 		}
 		for i := range deployments.Items {
-			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i], payload.IncludeMetadata))
+			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
 			podTemplateLabels = append(podTemplateLabels, deployments.Items[i].Spec.Template.Labels)
 		}
 	}
@@ -221,7 +274,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 		}
 		for i := range statefulsets.Items {
-			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i], payload.IncludeMetadata))
+			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
 			podTemplateLabels = append(podTemplateLabels, statefulsets.Items[i].Spec.Template.Labels)
 		}
 	}
@@ -233,7 +286,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return nil, fmt.Errorf("failed to list daemonsets: %w", err)
 		}
 		for i := range daemonsets.Items {
-			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i], payload.IncludeMetadata))
+			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
 			podTemplateLabels = append(podTemplateLabels, daemonsets.Items[i].Spec.Template.Labels)
 		}
 	}
@@ -273,7 +326,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	), nil
 }
 
-func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadata bool) WorkloadInfo {
+func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadata, includeProbes bool) WorkloadInfo {
 	images := extractImages(deployment.Spec.Template.Spec.Containers)
 	var desired int32 = 1
 	if deployment.Spec.Replicas != nil {
@@ -303,10 +356,14 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 		info.Annotations = filterAnnotations(deployment.Annotations)
 	}
 
+	if includeProbes {
+		info.Containers = extractContainerInfo(deployment.Spec.Template.Spec.Containers)
+	}
+
 	return info
 }
 
-func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMetadata bool) WorkloadInfo {
+func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMetadata, includeProbes bool) WorkloadInfo {
 	images := extractImages(statefulset.Spec.Template.Spec.Containers)
 	var desired int32 = 1
 	if statefulset.Spec.Replicas != nil {
@@ -336,10 +393,14 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 		info.Annotations = filterAnnotations(statefulset.Annotations)
 	}
 
+	if includeProbes {
+		info.Containers = extractContainerInfo(statefulset.Spec.Template.Spec.Containers)
+	}
+
 	return info
 }
 
-func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata bool) WorkloadInfo {
+func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata, includeProbes bool) WorkloadInfo {
 	images := extractImages(daemonset.Spec.Template.Spec.Containers)
 
 	info := WorkloadInfo{
@@ -363,6 +424,10 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 	if includeMetadata {
 		info.Labels = copyLabels(daemonset.Labels)
 		info.Annotations = filterAnnotations(daemonset.Annotations)
+	}
+
+	if includeProbes {
+		info.Containers = extractContainerInfo(daemonset.Spec.Template.Spec.Containers)
 	}
 
 	return info
@@ -438,6 +503,117 @@ func extractImages(containers []corev1.Container) []string {
 		images = append(images, c.Image)
 	}
 	return images
+}
+
+func extractContainerInfo(containers []corev1.Container) []ContainerInfo {
+	if len(containers) == 0 {
+		return nil
+	}
+	result := make([]ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		info := ContainerInfo{
+			Name:  c.Name,
+			Image: c.Image,
+		}
+
+		// Extract ports
+		if len(c.Ports) > 0 {
+			for _, p := range c.Ports {
+				info.Ports = append(info.Ports, ContainerPort{
+					Name:          p.Name,
+					ContainerPort: p.ContainerPort,
+					Protocol:      string(p.Protocol),
+				})
+			}
+		}
+
+		// Extract resources
+		if c.Resources.Requests != nil || c.Resources.Limits != nil {
+			info.Resources = &ResourceInfo{}
+			if c.Resources.Requests != nil {
+				info.Resources.Requests = &ResourceValues{}
+				if cpu := c.Resources.Requests.Cpu(); cpu != nil && !cpu.IsZero() {
+					info.Resources.Requests.CPU = cpu.String()
+				}
+				if mem := c.Resources.Requests.Memory(); mem != nil && !mem.IsZero() {
+					info.Resources.Requests.Memory = mem.String()
+				}
+			}
+			if c.Resources.Limits != nil {
+				info.Resources.Limits = &ResourceValues{}
+				if cpu := c.Resources.Limits.Cpu(); cpu != nil && !cpu.IsZero() {
+					info.Resources.Limits.CPU = cpu.String()
+				}
+				if mem := c.Resources.Limits.Memory(); mem != nil && !mem.IsZero() {
+					info.Resources.Limits.Memory = mem.String()
+				}
+			}
+		}
+
+		// Extract probes
+		probes := &ProbesInfo{}
+		hasProbes := false
+		if c.LivenessProbe != nil {
+			probes.Liveness = extractProbe(c.LivenessProbe)
+			hasProbes = true
+		}
+		if c.ReadinessProbe != nil {
+			probes.Readiness = extractProbe(c.ReadinessProbe)
+			hasProbes = true
+		}
+		if c.StartupProbe != nil {
+			probes.Startup = extractProbe(c.StartupProbe)
+			hasProbes = true
+		}
+		if hasProbes {
+			info.Probes = probes
+		}
+
+		result = append(result, info)
+	}
+	return result
+}
+
+func extractProbe(probe *corev1.Probe) *ProbeInfo {
+	if probe == nil {
+		return nil
+	}
+
+	info := &ProbeInfo{
+		InitialDelaySeconds: probe.InitialDelaySeconds,
+		PeriodSeconds:       probe.PeriodSeconds,
+		TimeoutSeconds:      probe.TimeoutSeconds,
+		SuccessThreshold:    probe.SuccessThreshold,
+		FailureThreshold:    probe.FailureThreshold,
+	}
+
+	if probe.HTTPGet != nil {
+		info.Type = "httpGet"
+		info.Path = probe.HTTPGet.Path
+		info.Port = probe.HTTPGet.Port.IntVal
+		if probe.HTTPGet.Port.StrVal != "" {
+			// Named port - store as string in path for visibility
+			info.Port = 0
+			info.Path = probe.HTTPGet.Path + " (port: " + probe.HTTPGet.Port.StrVal + ")"
+		}
+		info.Host = probe.HTTPGet.Host
+		info.Scheme = string(probe.HTTPGet.Scheme)
+	} else if probe.TCPSocket != nil {
+		info.Type = "tcpSocket"
+		info.Port = probe.TCPSocket.Port.IntVal
+		info.Host = probe.TCPSocket.Host
+	} else if probe.Exec != nil {
+		info.Type = "exec"
+		info.Command = probe.Exec.Command
+	} else if probe.GRPC != nil {
+		info.Type = "grpc"
+		info.Port = probe.GRPC.Port
+		if probe.GRPC.Service != nil {
+			info.Service = *probe.GRPC.Service
+		}
+	}
+
+	return info
 }
 
 func extractTolerations(tolerations []corev1.Toleration) []TolerationInfo {
