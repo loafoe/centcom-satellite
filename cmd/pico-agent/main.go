@@ -215,6 +215,7 @@ func main() {
 		spireClient,
 		Version,
 		cfg.AllowUnauthenticated,
+		k8sClient.Clientset,
 	)
 
 	// Start server in goroutine

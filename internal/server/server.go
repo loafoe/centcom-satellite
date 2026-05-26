@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/spire"
@@ -23,25 +24,28 @@ type Config struct {
 
 // Server is the main HTTP server.
 type Server struct {
-	config      Config
-	handlers    *Handlers
-	metrics     *observability.Metrics
-	spireClient *spire.Client
-	version     string
-	main        *http.Server
-	mux         *http.Server
+	config         Config
+	handlers       *Handlers
+	streamHandlers *StreamHandlers
+	metrics        *observability.Metrics
+	spireClient    *spire.Client
+	version        string
+	main           *http.Server
+	mux            *http.Server
 }
 
 // New creates a new server instance.
-func New(cfg Config, registry *task.Registry, metrics *observability.Metrics, spireClient *spire.Client, version string, allowUnauthenticated bool) *Server {
+func New(cfg Config, registry *task.Registry, metrics *observability.Metrics, spireClient *spire.Client, version string, allowUnauthenticated bool, k8sClientset kubernetes.Interface) *Server {
 	handlers := NewHandlers(registry, spireClient, metrics, version, allowUnauthenticated)
+	streamHandlers := NewStreamHandlers(k8sClientset, spireClient, allowUnauthenticated)
 
 	return &Server{
-		config:      cfg,
-		handlers:    handlers,
-		metrics:     metrics,
-		spireClient: spireClient,
-		version:     version,
+		config:         cfg,
+		handlers:       handlers,
+		streamHandlers: streamHandlers,
+		metrics:        metrics,
+		spireClient:    spireClient,
+		version:        version,
 	}
 }
 
@@ -54,6 +58,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mainMux.HandleFunc("/healthz", s.handlers.HandleHealthz)
 	mainMux.HandleFunc("/readyz", s.handlers.HandleReadyz)
 	mainMux.HandleFunc("/version", s.handlers.HandleVersion)
+	mainMux.HandleFunc("/logs/stream", s.streamHandlers.HandleLogStream)
 
 	// Apply middleware
 	mainHandler := Chain(
