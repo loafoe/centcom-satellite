@@ -43,6 +43,7 @@ type WorkloadInfo struct {
 	Kind                       string                       `json:"kind"`
 	Replicas                   ReplicaStatus                `json:"replicas"`
 	Images                     []string                     `json:"images"`
+	Selector                   map[string]string            `json:"selector,omitempty"`
 	Labels                     map[string]string            `json:"labels,omitempty"`
 	Annotations                map[string]string            `json:"annotations,omitempty"`
 	NodeSelector               map[string]string            `json:"node_selector,omitempty"`
@@ -288,6 +289,7 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 			Ready:   deployment.Status.ReadyReplicas,
 		},
 		Images:                    images,
+		Selector:                  extractSelector(deployment.Spec.Selector),
 		NodeSelector:              extractNodeSelector(deployment.Spec.Template.Spec.NodeSelector),
 		Affinity:                  extractAffinity(deployment.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(deployment.Spec.Template.Spec.TopologySpreadConstraints),
@@ -320,6 +322,7 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 			Ready:   statefulset.Status.ReadyReplicas,
 		},
 		Images:                    images,
+		Selector:                  extractSelector(statefulset.Spec.Selector),
 		NodeSelector:              extractNodeSelector(statefulset.Spec.Template.Spec.NodeSelector),
 		Affinity:                  extractAffinity(statefulset.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(statefulset.Spec.Template.Spec.TopologySpreadConstraints),
@@ -348,6 +351,7 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata b
 			Ready:   daemonset.Status.NumberReady,
 		},
 		Images:                    images,
+		Selector:                  extractSelector(daemonset.Spec.Selector),
 		NodeSelector:              extractNodeSelector(daemonset.Spec.Template.Spec.NodeSelector),
 		Affinity:                  extractAffinity(daemonset.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(daemonset.Spec.Template.Spec.TopologySpreadConstraints),
@@ -584,6 +588,17 @@ func (t *Task) matchHPAsToWorkloads(workloads []WorkloadInfo, hpas []autoscaling
 			break
 		}
 	}
+}
+
+func extractSelector(selector *metav1.LabelSelector) map[string]string {
+	if selector == nil || len(selector.MatchLabels) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(selector.MatchLabels))
+	for k, v := range selector.MatchLabels {
+		result[k] = v
+	}
+	return result
 }
 
 func extractNodeSelector(nodeSelector map[string]string) map[string]string {
