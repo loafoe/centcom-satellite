@@ -74,6 +74,11 @@ type FeaturesConfig struct {
 	// Disabled by default as it requires Argo CD CRDs and RBAC for argoproj.io.
 	ArgocdEnabled bool
 
+	// ConfigmapReadEnabled enables the list_configmaps and get_configmap tasks.
+	// Disabled by default as ConfigMaps frequently contain sensitive data; get_configmap
+	// redacts secret-looking values, but the capability is still opt-in.
+	ConfigmapReadEnabled bool
+
 	// HTTPRequestEnabled enables the http_request task for making HTTP requests to cluster-internal services.
 	// Disabled by default as it allows arbitrary HTTP requests within the cluster.
 	HTTPRequestEnabled bool
@@ -133,6 +138,7 @@ func Load() (*Config, error) {
 			},
 			NodeclaimDeleteEnabled: getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:          getEnvBool("FEATURES_ARGOCD", false),
+			ConfigmapReadEnabled:   getEnvBool("FEATURES_CONFIGMAP_READ", false),
 			HTTPRequestEnabled:     getEnvBool("HTTP_REQUEST_ENABLED", false),
 			PvResizeEnabled:        getEnvBool("PV_RESIZE_ENABLED", false),
 			AutoRemediateEnabled:   getEnvBool("AUTO_REMEDIATE_ENABLED", false),
