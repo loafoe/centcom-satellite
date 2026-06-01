@@ -47,6 +47,18 @@ func TestRedact_Matrix(t *testing.T) {
 	}
 }
 
+func TestRedact_EntropyLengthBoundary(t *testing.T) {
+	// A high-entropy string of exactly minEntropyLen (20) chars is evaluated;
+	// one char shorter is exempt from the entropy heuristic.
+	high20 := "aB3xY9zQw7Lp2Km5Nv8R" // 20 chars, high entropy
+	assert.Equal(t, reasonHighEntropy, redact("data", high20))
+	assert.Len(t, high20, minEntropyLen)
+
+	high19 := "aB3xY9zQw7Lp2Km5Nv8" // 19 chars
+	assert.Equal(t, redactionReason(""), redact("data", high19),
+		"values shorter than minEntropyLen are exempt from the entropy heuristic")
+}
+
 func TestShannonEntropy(t *testing.T) {
 	assert.InDelta(t, 0.0, shannonEntropy(""), 0.001)
 	assert.InDelta(t, 0.0, shannonEntropy("aaaa"), 0.001)

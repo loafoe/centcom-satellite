@@ -24,6 +24,13 @@ const minEntropyLen = 20
 
 // entropyThreshold is the Shannon entropy (bits/char) above which a long string is
 // treated as a likely secret (raw token, base64 blob, random key).
+//
+// Known v1 limitation: a short, low-entropy credential (e.g. a ~20-char AWS access
+// key id at ~3.7 bits/char) stored under a benign-looking key name — i.e. one that
+// does not match secretKeyNameRe — can slip through this net and be returned in
+// cleartext. The key-name, PEM, and inline-secret heuristics catch the common cases;
+// tightening the entropy band (and adding name allow/deny lists) is deferred to v2.
+// See docs/superpowers/specs/2026-06-01-configmap-introspection-design.md in pico-mcp.
 const entropyThreshold = 4.0
 
 var (
