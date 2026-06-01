@@ -17,37 +17,39 @@ import (
 	"github.com/loafoe/pico-agent/internal/task"
 	"github.com/loafoe/pico-agent/internal/task/cluster_health"
 	"github.com/loafoe/pico-agent/internal/task/cluster_info"
+	"github.com/loafoe/pico-agent/internal/task/connectivity_test"
+	"github.com/loafoe/pico-agent/internal/task/dns_check"
+	"github.com/loafoe/pico-agent/internal/task/get_configmap"
 	"github.com/loafoe/pico-agent/internal/task/get_events"
 	"github.com/loafoe/pico-agent/internal/task/get_logs"
 	"github.com/loafoe/pico-agent/internal/task/get_resource"
+	"github.com/loafoe/pico-agent/internal/task/http_request"
+	"github.com/loafoe/pico-agent/internal/task/list_argocd_applications"
+	"github.com/loafoe/pico-agent/internal/task/list_configmaps"
+	"github.com/loafoe/pico-agent/internal/task/list_endpoints"
 	"github.com/loafoe/pico-agent/internal/task/list_gateways"
 	"github.com/loafoe/pico-agent/internal/task/list_ingresses"
 	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
+	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
+	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
+	"github.com/loafoe/pico-agent/internal/task/list_nodepools"
 	"github.com/loafoe/pico-agent/internal/task/list_pods"
 	"github.com/loafoe/pico-agent/internal/task/list_pvcs"
 	"github.com/loafoe/pico-agent/internal/task/list_routes"
 	"github.com/loafoe/pico-agent/internal/task/list_services"
-	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
+	"github.com/loafoe/pico-agent/internal/task/list_vpas"
 	"github.com/loafoe/pico-agent/internal/task/list_workloads"
+	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
+	"github.com/loafoe/pico-agent/internal/task/pod_evict"
+	"github.com/loafoe/pico-agent/internal/task/pod_resize"
+	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize"
 	"github.com/loafoe/pico-agent/internal/task/pv_resize_status"
 	"github.com/loafoe/pico-agent/internal/task/pv_usage"
 	"github.com/loafoe/pico-agent/internal/task/resource_pressure"
 	"github.com/loafoe/pico-agent/internal/task/storage_status"
-	"github.com/loafoe/pico-agent/internal/task/connectivity_test"
-	"github.com/loafoe/pico-agent/internal/task/dns_check"
-	"github.com/loafoe/pico-agent/internal/task/list_endpoints"
-	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
-	"github.com/loafoe/pico-agent/internal/task/pod_evict"
-	"github.com/loafoe/pico-agent/internal/task/pod_resize"
-	"github.com/loafoe/pico-agent/internal/task/list_argocd_applications"
-	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
-	"github.com/loafoe/pico-agent/internal/task/list_nodepools"
-	"github.com/loafoe/pico-agent/internal/task/list_vpas"
-	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
 	"github.com/loafoe/pico-agent/internal/task/workload_restart"
 	"github.com/loafoe/pico-agent/internal/task/workload_scale"
-	"github.com/loafoe/pico-agent/internal/task/http_request"
 )
 
 // Version is set at build time.
@@ -110,6 +112,7 @@ func main() {
 		PvResize:        cfg.Features.PvResizeEnabled,
 		AutoRemediate:   cfg.Features.AutoRemediateEnabled,
 		HttpRequest:     cfg.Features.HTTPRequestEnabled,
+		ConfigmapRead:   cfg.Features.ConfigmapReadEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -174,6 +177,13 @@ func main() {
 	if cfg.Features.ArgocdEnabled {
 		registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
 		slog.Info("list_argocd_applications task enabled")
+	}
+
+	// Optional: ConfigMap introspection tasks (list metadata + read redacted values)
+	if cfg.Features.ConfigmapReadEnabled {
+		registry.Register(list_configmaps.New(k8sClient.Clientset))
+		registry.Register(get_configmap.New(k8sClient.Clientset))
+		slog.Info("list_configmaps and get_configmap tasks enabled")
 	}
 
 	// Optional: http_request task (cluster-internal HTTP requests)
