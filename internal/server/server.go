@@ -37,7 +37,7 @@ type Server struct {
 // New creates a new server instance.
 func New(cfg Config, registry *task.Registry, metrics *observability.Metrics, spireClient *spire.Client, version string, allowUnauthenticated bool, k8sClientset kubernetes.Interface) *Server {
 	handlers := NewHandlers(registry, spireClient, metrics, version, allowUnauthenticated)
-	streamHandlers := NewStreamHandlers(k8sClientset, spireClient, allowUnauthenticated)
+	streamHandlers := NewStreamHandlers(k8sClientset, spireClient, metrics, allowUnauthenticated)
 
 	return &Server{
 		config:         cfg,

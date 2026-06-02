@@ -91,9 +91,10 @@ func main() {
 
 	// Setup metrics
 	metrics := observability.NewMetrics()
+	metrics.SetBuildInfo(Version)
 
-	// Setup Kubernetes client
-	k8sClient, err := k8s.NewClient()
+	// Setup Kubernetes client (instrumented with Prometheus metrics)
+	k8sClient, err := k8s.NewClient(metrics)
 	if err != nil {
 		slog.Error("failed to create kubernetes client", "error", err)
 		os.Exit(1)

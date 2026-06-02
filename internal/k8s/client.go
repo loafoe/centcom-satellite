@@ -25,10 +25,17 @@ type Client struct {
 
 // NewClient creates a new Kubernetes client.
 // It first attempts to use in-cluster config, then falls back to kubeconfig.
-func NewClient() (*Client, error) {
+//
+// If recorder is non-nil, all API requests issued through any of the returned
+// clients are instrumented with Prometheus metrics via a wrapped transport.
+func NewClient(recorder K8sMetricsRecorder) (*Client, error) {
 	config, err := getConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubernetes config: %w", err)
+	}
+
+	if recorder != nil {
+		config.WrapTransport = wrapTransport(recorder)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
