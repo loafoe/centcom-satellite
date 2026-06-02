@@ -45,6 +45,26 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// knownRoutes is the fixed set of registered routes. Paths outside this set are
+// bucketed to "other" to bound metric label cardinality (e.g. against 404-probing).
+var knownRoutes = map[string]struct{}{
+	"/task":        {},
+	"/tasks":       {},
+	"/healthz":     {},
+	"/readyz":      {},
+	"/version":     {},
+	"/logs/stream": {},
+	"/metrics":     {},
+}
+
+// normalizeRoute maps a request path to a bounded label value.
+func normalizeRoute(path string) string {
+	if _, ok := knownRoutes[path]; ok {
+		return path
+	}
+	return "other"
+}
+
 // MetricsMiddleware records HTTP metrics.
 func MetricsMiddleware(metrics *observability.Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -52,10 +72,14 @@ func MetricsMiddleware(metrics *observability.Metrics) func(http.Handler) http.H
 			start := time.Now()
 			wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
+			metrics.HTTPRequestsInFlight.Inc()
+			defer metrics.HTTPRequestsInFlight.Dec()
+
 			next.ServeHTTP(wrapped, r)
 
 			duration := time.Since(start).Seconds()
-			metrics.RecordHTTPRequest(r.Method, r.URL.Path, http.StatusText(wrapped.status), duration)
+			route := normalizeRoute(r.URL.Path)
+			metrics.RecordHTTPRequest(r.Method, route, http.StatusText(wrapped.status), duration)
 		})
 	}
 }

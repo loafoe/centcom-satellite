@@ -132,6 +132,31 @@ SPIRE configuration:
 - `SPIRE_JWT_ENABLED` (default: false) - Enable JWT-SVID authentication
 - `SPIRE_JWT_AUDIENCES` - Comma-separated list of expected JWT audiences (required when JWT enabled)
 
+## Metrics
+
+Prometheus metrics are exposed on `METRICS_PORT` (default 9090) at `/metrics`, alongside the
+standard Go runtime and process collectors. Application metrics (all prefixed `pico_agent_`):
+
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `http_requests_total` | counter | `method`, `path`, `status` | `path` is the matched route; unknown paths bucket to `other` |
+| `http_request_duration_seconds` | histogram | `method`, `path` | |
+| `http_requests_in_flight` | gauge | — | concurrent requests being served |
+| `tasks_total` | counter | `type`, `status` | `status`: `success` / `failure` / `error` |
+| `task_duration_seconds` | histogram | `type` | |
+| `auth_attempts_total` | counter | `method`, `result` | `method`: `mtls`/`jwt`/`dev`/`none`; `result`: `success`/`rejected`/`unauthenticated` |
+| `k8s_requests_total` | counter | `verb`, `resource`, `status_class` | recorded via a client-go transport wrapper; covers all tasks |
+| `k8s_request_duration_seconds` | histogram | `verb`, `resource`, `status_class` | `resource` bucketed to a known allow-list, else `other` |
+| `log_streams_active` | gauge | — | active `/logs/stream` SSE connections |
+| `log_stream_duration_seconds` | histogram | — | wide buckets (1s–30m) for long-lived streams |
+| `log_stream_lines_total` | counter | — | lines streamed to clients |
+| `build_info` | gauge | `version`, `goversion` | constant `1`; build provenance |
+
+Cardinality is bounded by normalizing the HTTP `path` label (`internal/server/middleware.go`)
+and the k8s `resource` label (`internal/k8s/metrics_transport.go`). All metrics live in
+`internal/observability/metrics.go`. K8s API instrumentation is installed via
+`rest.Config.WrapTransport` in `internal/k8s/client.go`, so new tasks are covered automatically.
+
 ## Build & Deploy
 
 **Build image** (uses ko):
@@ -219,8 +244,8 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.32.0
-- **Helm chart**: 0.21.0
+- **pico-agent**: v0.40.0
+- **Helm chart**: 0.42.0
 
 ## Key Dependencies
 

@@ -48,6 +48,7 @@ func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []b
 	// 1. Check for mTLS (SPIRE X.509 SVID)
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		slog.Debug("authenticated via mTLS", "remote_addr", r.RemoteAddr)
+		h.metrics.RecordAuthAttempt("mtls", "success")
 		return authResult{authenticated: true}
 	}
 
@@ -58,10 +59,12 @@ func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []b
 			spiffeID, err := h.spireClient.ValidateJWTToken(ctx, authHeader)
 			if err != nil {
 				slog.Warn("JWT-SVID validation failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.metrics.RecordAuthAttempt("jwt", "rejected")
 				h.writeError(w, http.StatusUnauthorized, "invalid JWT-SVID")
 				return authResult{rejected: true}
 			}
 			slog.Debug("authenticated via JWT-SVID", "spiffe_id", spiffeID.String(), "remote_addr", r.RemoteAddr)
+			h.metrics.RecordAuthAttempt("jwt", "success")
 			return authResult{authenticated: true}
 		}
 	}
@@ -69,9 +72,11 @@ func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []b
 	// 3. Dev mode - allow unauthenticated if configured
 	if h.allowUnauthenticated {
 		slog.Debug("allowing unauthenticated request (dev mode)", "remote_addr", r.RemoteAddr)
+		h.metrics.RecordAuthAttempt("dev", "success")
 		return authResult{authenticated: true}
 	}
 
+	h.metrics.RecordAuthAttempt("none", "unauthenticated")
 	return authResult{}
 }
 

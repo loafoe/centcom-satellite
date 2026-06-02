@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/spire"
 )
 
@@ -28,14 +29,16 @@ type LogLine struct {
 type StreamHandlers struct {
 	clientset            kubernetes.Interface
 	spireClient          *spire.Client
+	metrics              *observability.Metrics
 	allowUnauthenticated bool
 }
 
 // NewStreamHandlers creates a new StreamHandlers instance.
-func NewStreamHandlers(clientset kubernetes.Interface, spireClient *spire.Client, allowUnauthenticated bool) *StreamHandlers {
+func NewStreamHandlers(clientset kubernetes.Interface, spireClient *spire.Client, metrics *observability.Metrics, allowUnauthenticated bool) *StreamHandlers {
 	return &StreamHandlers{
 		clientset:            clientset,
 		spireClient:          spireClient,
+		metrics:              metrics,
 		allowUnauthenticated: allowUnauthenticated,
 	}
 }
@@ -47,6 +50,7 @@ func (h *StreamHandlers) authenticate(w http.ResponseWriter, r *http.Request) bo
 	// 1. Check for mTLS (SPIRE X.509 SVID)
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		slog.Debug("stream authenticated via mTLS", "remote_addr", r.RemoteAddr)
+		h.metrics.RecordAuthAttempt("mtls", "success")
 		return true
 	}
 
@@ -57,10 +61,12 @@ func (h *StreamHandlers) authenticate(w http.ResponseWriter, r *http.Request) bo
 			spiffeID, err := h.spireClient.ValidateJWTToken(ctx, authHeader)
 			if err != nil {
 				slog.Warn("stream JWT-SVID validation failed", "error", err, "remote_addr", r.RemoteAddr)
+				h.metrics.RecordAuthAttempt("jwt", "rejected")
 				http.Error(w, "invalid JWT-SVID", http.StatusUnauthorized)
 				return false
 			}
 			slog.Debug("stream authenticated via JWT-SVID", "spiffe_id", spiffeID.String(), "remote_addr", r.RemoteAddr)
+			h.metrics.RecordAuthAttempt("jwt", "success")
 			return true
 		}
 	}
@@ -68,10 +74,12 @@ func (h *StreamHandlers) authenticate(w http.ResponseWriter, r *http.Request) bo
 	// 3. Dev mode - allow unauthenticated if configured
 	if h.allowUnauthenticated {
 		slog.Debug("stream allowing unauthenticated request (dev mode)", "remote_addr", r.RemoteAddr)
+		h.metrics.RecordAuthAttempt("dev", "success")
 		return true
 	}
 
 	slog.Warn("stream unauthenticated request rejected", "remote_addr", r.RemoteAddr)
+	h.metrics.RecordAuthAttempt("none", "unauthenticated")
 	http.Error(w, "authentication required", http.StatusUnauthorized)
 	return false
 }
@@ -159,6 +167,14 @@ func (h *StreamHandlers) HandleLogStream(w http.ResponseWriter, r *http.Request)
 
 	slog.Info("starting log stream", "namespace", namespace, "pod", podName, "container", containerName)
 
+	// Track stream lifecycle for metrics.
+	streamStart := time.Now()
+	h.metrics.LogStreamsActive.Inc()
+	defer func() {
+		h.metrics.LogStreamsActive.Dec()
+		h.metrics.LogStreamDuration.Observe(time.Since(streamStart).Seconds())
+	}()
+
 	// Stream logs line by line
 	scanner := bufio.NewScanner(stream)
 	// Increase buffer size for long lines
@@ -188,6 +204,7 @@ func (h *StreamHandlers) HandleLogStream(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		flusher.Flush()
+		h.metrics.LogStreamLines.Inc()
 	}
 
 	if err := scanner.Err(); err != nil {
