@@ -12,6 +12,8 @@ import (
 	"github.com/loafoe/pico-agent/internal/observability"
 	"github.com/loafoe/pico-agent/internal/spire"
 	"github.com/loafoe/pico-agent/internal/task"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Handlers holds HTTP handler dependencies.
@@ -125,15 +127,20 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute task
-	ctx, span := observability.StartSpan(r.Context(), "task.execute")
+	// Execute task. The span is named after the task type and carries the
+	// task type as an attribute so traces from pico-mcp can be filtered and
+	// aggregated per task. Payload contents are deliberately not recorded as
+	// they may contain sensitive data (e.g. ConfigMap values).
+	ctx, span := observability.StartSpan(r.Context(), "task.execute "+req.Type)
+	span.SetAttributes(attribute.String("pico_agent.task.type", req.Type))
 	result, err := h.registry.Execute(ctx, *req)
-	span.End()
 
 	duration := time.Since(start).Seconds()
 
 	if err != nil {
-		slog.Error("task execution failed", "type", req.Type, "error", err, "duration", duration)
+		observability.RecordError(span, err)
+		span.End()
+		slog.ErrorContext(ctx, "task execution failed", "type", req.Type, "error", err, "duration", duration)
 		h.metrics.RecordTask(req.Type, "error", duration)
 		h.writeError(w, http.StatusInternalServerError, "task execution failed")
 		return
@@ -143,9 +150,14 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	if !result.Success {
 		status = "failure"
 	}
+	span.SetAttributes(attribute.Bool("pico_agent.task.success", result.Success))
+	if !result.Success {
+		span.SetStatus(codes.Error, result.Error)
+	}
+	span.End()
 	h.metrics.RecordTask(req.Type, status, duration)
 
-	slog.Info("task completed", "type", req.Type, "success", result.Success, "duration", duration)
+	slog.InfoContext(ctx, "task completed", "type", req.Type, "success", result.Success, "duration", duration)
 	h.writeJSON(w, http.StatusOK, result)
 }
 
