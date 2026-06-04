@@ -93,6 +93,11 @@ discover() {
   [ -n "$CLUSTER_NAME" ] || CLUSTER_NAME="$CTX"
   [ -n "$JWT_AUDIENCE" ] || JWT_AUDIENCE="pico-agent-${CLUSTER_NAME}"
 
+  # Is the release already present? Used purely for messaging (the helm
+  # upgrade --install below is idempotent either way).
+  RELEASE_EXISTS=false
+  helm status "$RELEASE_NAME" -n "$NAMESPACE" >/dev/null 2>&1 && RELEASE_EXISTS=true
+
   # SPIRE className: most common across existing ClusterSPIFFEIDs
   if [ -z "$SPIRE_CLASSNAME" ]; then
     SPIRE_CLASSNAME=$(kubectl get clusterspiffeids \
@@ -157,6 +162,11 @@ summarize() {
   _row "🎫" "jwt audience" "${JWT_AUDIENCE}"
   _row "🛣️ " "httproute"    "${route}"
   _row "📊" "monitoring"   "serviceMonitor=${SERVICEMONITOR_ENABLED}"
+  if [ "$RELEASE_EXISTS" = "true" ]; then
+    _row "♻️ " "action"       "reconcile existing release \033[2m(idempotent — no change if already current)\033[0m"
+  else
+    _row "🌱" "action"       "fresh install"
+  fi
   [ "$DRY_RUN" = "true" ] && _row "🧪" "mode"        "\033[1;33mDRY RUN — nothing will change\033[0m"
   printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
   printf '\n' >&2
@@ -312,7 +322,11 @@ done_msg() {
   local url="https://${HOSTNAME_FQDN:-<your-hostname>}"
 
   printf '\n' >&2
-  printf '  \033[1;32m✅ pico-agent installed on \033[1;36m%s\033[1;32m!\033[0m\n' "$CLUSTER_NAME" >&2
+  if [ "${RELEASE_EXISTS:-false}" = "true" ]; then
+    printf '  \033[1;32m✅ pico-agent up to date on \033[1;36m%s\033[1;32m \033[2m(reconciled)\033[0m\n' "$CLUSTER_NAME" >&2
+  else
+    printf '  \033[1;32m✅ pico-agent installed on \033[1;36m%s\033[1;32m!\033[0m\n' "$CLUSTER_NAME" >&2
+  fi
   printf '\n' >&2
   printf '  \033[1m🤖 Register the agent — paste this to ClusterClaw:\033[0m\n' >&2
   printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
