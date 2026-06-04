@@ -2,6 +2,43 @@
 
 This guide walks you through deploying pico-agent to a new Kubernetes cluster and connecting it to pico-mcp.
 
+## Quick install (one-liner)
+
+For clusters that already have SPIRE installed and follow the common conventions
+(a SPIRE controller class, a Gateway API `Gateway`, and a consistent hostname
+pattern), the whole flow below is automated by [`install.sh`](install.sh):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loafoe/pico-agent/main/install.sh | bash
+```
+
+It targets your **current `kubectl` context**, auto-discovers the SPIRE class
+name, Gateway, base domain and cluster name, applies the pico-mcp
+`ClusterFederatedTrustDomain`, and runs `helm upgrade --install`. It is
+non-interactive and fails fast if `kubectl`/`helm` are missing or the cluster is
+unreachable.
+
+**Preview without changing anything:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loafoe/pico-agent/main/install.sh | DRY_RUN=true bash
+```
+
+**Override any auto-discovered or baked-in value via env vars** (see the clearly
+delimited `BAKED-IN DEFAULTS` block at the top of the script). The pico-mcp
+federation settings (trust domain, bundle endpoint, allowed SPIFFE ID) are baked
+in there and easy to edit; everything else is discovered or overridable:
+
+```bash
+# Onboard a different pico-mcp, custom hostname, pinned chart:
+curl -fsSL .../install.sh | \
+  MCP_TRUST_DOMAIN=other.example.com \
+  HOSTNAME_FQDN=pico-agent.edge.example.com \
+  CHART_VERSION=0.43.0 bash
+```
+
+If your cluster doesn't fit these conventions, follow the manual steps below.
+
 ## Prerequisites
 
 - Kubernetes cluster with SPIRE installed (with controller/CRDs)
