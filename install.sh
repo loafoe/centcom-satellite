@@ -55,6 +55,8 @@ set -euo pipefail
 : "${REPLICA_COUNT:=1}"
 : "${DRY_RUN:=false}"         # true = print helm/kubectl actions, change nothing
 : "${WAIT_TIMEOUT:=180s}"
+: "${COUNTDOWN:=}"            # pre-install review countdown (s); empty = auto from reading time
+: "${ASSUME_YES:=false}"     # true = skip the countdown entirely (CI / unattended)
 # ============================================================================
 # END CONFIG
 # ============================================================================
@@ -135,26 +137,82 @@ discover() {
 }
 
 # ---------------------------------------------------------------------------
-# summarize: show the resolved plan (no secrets)
+# summarize: show the resolved plan (no secrets), as an elegant panel
 # ---------------------------------------------------------------------------
 summarize() {
-  log "pico-agent installer — resolved configuration"
-  cat >&2 <<EOF
-    context            : ${CTX}
-    cluster name       : ${CLUSTER_NAME}
-    namespace          : ${NAMESPACE}
-    release            : ${RELEASE_NAME}
-    chart              : ${CHART}${CHART_VERSION:+ (version ${CHART_VERSION})}
-    image tag          : ${IMAGE_TAG:-<chart default>}
-    SPIRE className     : ${SPIRE_CLASSNAME}
-    trust pico-mcp     : ${MCP_TRUST_DOMAIN}
-    allowed SPIFFE ID  : ${MCP_SPIFFE_ID}
-    federation CFTD    : ${MCP_FEDERATION_NAME} -> ${MCP_BUNDLE_ENDPOINT}
-    JWT audience       : ${JWT_AUDIENCE}
-    HTTPRoute          : ${HTTPROUTE_ENABLED}$( [ "$HTTPROUTE_ENABLED" = true ] && printf ' (%s, gw %s/%s, section "%s")' "$HOSTNAME_FQDN" "$GATEWAY_NAMESPACE" "$GATEWAY_NAME" "$GATEWAY_SECTION" )
-    serviceMonitor     : ${SERVICEMONITOR_ENABLED}
-    dry run            : ${DRY_RUN}
-EOF
+  local route="disabled"
+  [ "$HTTPROUTE_ENABLED" = "true" ] && \
+    route="$(printf '%s  (gw %s/%s, section "%s")' "$HOSTNAME_FQDN" "$GATEWAY_NAMESPACE" "$GATEWAY_NAME" "$GATEWAY_SECTION")"
+
+  printf '\n' >&2
+  printf '  \033[1;36m🚀 pico-agent\033[0m \033[2m· resolved install plan\033[0m\n' >&2
+  printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
+  _row "🎯" "target"       "${CLUSTER_NAME}  \033[2m(context: ${CTX})\033[0m"
+  _row "📦" "release"      "${RELEASE_NAME}  →  ns/${NAMESPACE}"
+  _row "🏷️ " "chart"        "${CHART##*/}${CHART_VERSION:+ @ ${CHART_VERSION}}  \033[2m(image: ${IMAGE_TAG:-chart default})\033[0m"
+  _row "🔐" "spire class"  "${SPIRE_CLASSNAME}"
+  _row "🤝" "trusts mcp"   "${MCP_TRUST_DOMAIN}"
+  _row "🪪 " "spiffe id"    "${MCP_SPIFFE_ID}"
+  _row "🌐" "federation"   "${MCP_FEDERATION_NAME}  →  ${MCP_BUNDLE_ENDPOINT}"
+  _row "🎫" "jwt audience" "${JWT_AUDIENCE}"
+  _row "🛣️ " "httproute"    "${route}"
+  _row "📊" "monitoring"   "serviceMonitor=${SERVICEMONITOR_ENABLED}"
+  [ "$DRY_RUN" = "true" ] && _row "🧪" "mode"        "\033[1;33mDRY RUN — nothing will change\033[0m"
+  printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
+  printf '\n' >&2
+}
+
+# _row <emoji> <label> <value>
+_row() {
+  printf '  %s  \033[1m%-13s\033[0m %b\n' "$1" "$2" "$3" >&2
+}
+
+# ---------------------------------------------------------------------------
+# confirm_countdown: give the operator time to read the plan; ESC aborts.
+# Reads keys from /dev/tty so it works under `curl ... | bash`.
+# ---------------------------------------------------------------------------
+confirm_countdown() {
+  [ "$DRY_RUN" = "true" ] && return 0
+  [ "$ASSUME_YES" = "true" ] && { log "ASSUME_YES=true — skipping review countdown"; return 0; }
+
+  # Auto-pick a duration from "reading time". The panel has ~11 rows of
+  # short key→value pairs; scanning config (not prose) runs ~1.5s/row. We
+  # budget that and clamp to a humane 8–20s window. Override with COUNTDOWN.
+  local secs="$COUNTDOWN"
+  if [ -z "$secs" ]; then
+    local rows=11
+    secs=$(( (rows * 3) / 2 ))      # ~1.5s per row
+    [ "$secs" -lt 8 ]  && secs=8
+    [ "$secs" -gt 20 ] && secs=20
+  fi
+
+  # Need a real terminal to capture ESC; if none, fall back to a plain sleep.
+  if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    printf '  \033[2m⏳ starting in %ss (no TTY — cannot abort)\033[0m\n' "$secs" >&2
+    sleep "$secs"
+    printf '\n' >&2
+    return 0
+  fi
+
+  local tty=/dev/tty
+  [ -r "$tty" ] || tty=/dev/stdin
+
+  printf '  \033[1;32m✨ Review the plan above.\033[0m  Installing in \033[1m%ss\033[0m — press \033[1mESC\033[0m to abort, \033[1mENTER\033[0m to go now.\n' "$secs" >&2
+
+  local remaining="$secs" key
+  while [ "$remaining" -gt 0 ]; do
+    printf '\r  \033[2m⏳ %2ss …\033[0m \033[2m(ESC = abort)\033[0m   ' "$remaining" >&2
+    # read one key with a 1s timeout from the terminal
+    if IFS= read -rsn1 -t 1 key <"$tty" 2>/dev/null; then
+      case "$key" in
+        $'\e')        printf '\r\033[K  \033[1;31m🛑 aborted by operator — nothing changed.\033[0m\n' >&2; exit 130 ;;
+        ''|$'\n'|$'\r') printf '\r\033[K  \033[1;32m▶️  proceeding now.\033[0m\n' >&2; return 0 ;;  # ENTER (LF or CR)
+        *)            : ;;  # any other key: ignore, keep counting
+      esac
+    fi
+    remaining=$((remaining - 1))
+  done
+  printf '\r\033[K  \033[1;32m▶️  proceeding.\033[0m\n' >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -251,26 +309,36 @@ verify() {
 
 # ---------------------------------------------------------------------------
 done_msg() {
-  log "pico-agent installed."
-  cat >&2 <<EOF
+  local url="https://${HOSTNAME_FQDN:-<your-hostname>}"
 
-  Next steps (register in pico-mcp):
+  printf '\n' >&2
+  printf '  \033[1;32m✅ pico-agent installed on \033[1;36m%s\033[1;32m!\033[0m\n' "$CLUSTER_NAME" >&2
+  printf '\n' >&2
+  printf '  \033[1m🤖 Register the agent — paste this to ClusterClaw:\033[0m\n' >&2
+  printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
+  # The ClusterClaw-ready prompt. Goes to stdout (clean, copy/paste friendly).
+  cat <<EOF
+Please onboard this pico-agent by calling:
 
-    agents:
-      - id: ${CLUSTER_NAME}
-        url: https://${HOSTNAME_FQDN:-<your-hostname>}
-        jwt_audience: ${JWT_AUDIENCE}
-
-  Inspect:
-    kubectl -n ${NAMESPACE} get pods
-    kubectl -n ${NAMESPACE} logs deploy/${RELEASE_NAME} --tail=20
+mcp_pico-mcp_upsert_agent(
+  id: "${CLUSTER_NAME}",
+  url: "${url}",
+  jwt_audience: "${JWT_AUDIENCE}"
+)
 EOF
+  printf '  \033[2m────────────────────────────────────────────────────────────\033[0m\n' >&2
+  printf '\n' >&2
+  printf '  \033[2m🔎 Inspect:\033[0m\n' >&2
+  printf '     kubectl -n %s get pods\n' "$NAMESPACE" >&2
+  printf '     kubectl -n %s logs deploy/%s --tail=20\n' "$NAMESPACE" "$RELEASE_NAME" >&2
+  printf '\n' >&2
 }
 
 main() {
   preflight
   discover
   summarize
+  confirm_countdown
   configure_federation
   deploy
   verify
