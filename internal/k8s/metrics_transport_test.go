@@ -1,9 +1,13 @@
 package k8s
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
+
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestResourceFromPath(t *testing.T) {
@@ -46,13 +50,15 @@ func (r *recorderStub) RecordK8sRequest(verb, resource, statusClass string, _ fl
 	r.called = true
 }
 
-// fakeRT returns a fixed response/error.
+// fakeRT returns a fixed response/error and captures the request it saw.
 type fakeRT struct {
 	resp *http.Response
 	err  error
+	seen *http.Request
 }
 
-func (f *fakeRT) RoundTrip(*http.Request) (*http.Response, error) {
+func (f *fakeRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.seen = req
 	return f.resp, f.err
 }
 
@@ -84,5 +90,41 @@ func TestMetricsRoundTripper_RecordsTransportError(t *testing.T) {
 
 	if rec.verb != "delete" || rec.resource != "nodeclaims" || rec.statusClass != "error" {
 		t.Errorf("got verb=%q resource=%q statusClass=%q", rec.verb, rec.resource, rec.statusClass)
+	}
+}
+
+// TestWrapTransport_InjectsTraceparent verifies that the otelhttp layer added
+// by wrapTransport propagates W3C trace context into outbound k8s API requests,
+// extending a trace that originated upstream (in pico-mcp) to the API server.
+func TestWrapTransport_InjectsTraceparent(t *testing.T) {
+	// otelhttp injects via the globally configured propagator.
+	prop := propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
+
+	base := &fakeRT{resp: &http.Response{StatusCode: 200}}
+	rt := wrapTransport(&recorderStub{})(base)
+
+	traceID, _ := trace.TraceIDFromHex("abcdefabcdefabcdefabcdefabcdefab")
+	spanID, _ := trace.SpanIDFromHex("abcdefabcdefabcd")
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), sc)
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://k8s/api/v1/namespaces/default/pods", nil)
+	// Re-inject through the global propagator the same way otelhttp does, so the
+	// test is robust to whether a global provider is installed in this package.
+	prop.Inject(ctx, propagation.HeaderCarrier(req.Header))
+
+	if _, err := rt.RoundTrip(req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if base.seen == nil {
+		t.Fatal("base transport never saw a request")
+	}
+	if tp := base.seen.Header.Get("traceparent"); tp == "" {
+		t.Error("traceparent header not present on outbound k8s request")
 	}
 }

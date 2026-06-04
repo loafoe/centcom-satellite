@@ -119,7 +119,8 @@ Environment variables:
 - `ALLOW_UNAUTHENTICATED` (default: false) - Allow unauthenticated requests (dev mode only)
 - `LOG_LEVEL` (default: info) - debug, info, warn, error
 - `LOG_FORMAT` (default: json) - json, text
-- `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint (span export). When empty, spans are not exported but trace context is still propagated.
+- `OTEL_EXPORTER_OTLP_INSECURE` / `OTEL_EXPORTER_OTLP_TRACES_INSECURE` - set to `false` to use TLS for the OTLP exporter (default: insecure/plaintext)
 - `OTEL_SERVICE_NAME` (default: pico-agent) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 
@@ -156,6 +157,38 @@ Cardinality is bounded by normalizing the HTTP `path` label (`internal/server/mi
 and the k8s `resource` label (`internal/k8s/metrics_transport.go`). All metrics live in
 `internal/observability/metrics.go`. K8s API instrumentation is installed via
 `rest.Config.WrapTransport` in `internal/k8s/client.go`, so new tasks are covered automatically.
+
+## Tracing & End-to-End Traceability
+
+pico-agent participates in distributed traces that originate in **pico-mcp** (the
+caller). The full chain is: `pico-mcp → [HTTP /task] → pico-agent → [client-go] → kube-apiserver`,
+all stitched into one trace via **W3C Trace Context** (`traceparent`/`tracestate`)
+plus baggage.
+
+Note: pico-agent is a plain HTTP/JSON webhook receiver, **not** an MCP server, so
+the MCP-specific instrumentation conventions (e.g. grafana's `mcpconv`, which
+encode `tools/call`/MCP method semantics) do not apply here. The relevant standard
+for this hop is W3C Trace Context over HTTP + OTel HTTP/k8s semantic conventions.
+
+**Propagation is always on.** The global OTel propagator is installed in
+`SetupTracing` even when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset — so trace context
+flows through pico-agent regardless of whether this process exports its own spans.
+Span export (to the OTLP collector) is the only thing gated by the endpoint.
+
+Instrumentation points:
+
+| Hop | Mechanism | File |
+|-----|-----------|------|
+| Inbound HTTP | `otelhttp.NewHandler` server span; extracts `traceparent` from pico-mcp; span named `METHOD <route>` (normalized, low-cardinality) | `internal/server/middleware.go` (`TracingMiddleware`) |
+| Task dispatch | child span `task.execute <type>` with `pico_agent.task.type` / `pico_agent.task.success` attributes; `RecordError` + Error status on failure. Payloads are **not** recorded (may hold secrets) | `internal/server/handlers.go` |
+| Outbound k8s API | `otelhttp.NewTransport` wraps the metrics transport; creates `k8s <verb> <resource>` child spans and injects `traceparent` into every client-go request | `internal/k8s/metrics_transport.go` (`wrapTransport`) |
+| Logs | slog handler injects `trace_id`/`span_id` from context into records (`*Context` log calls); access logs include them too | `internal/observability/logging.go`, `internal/server/middleware.go` |
+
+The OTLP exporter uses `ParentBased(AlwaysSample)` so sampling decisions made
+upstream by pico-mcp are honoured. `RecordError`/span helpers live in
+`internal/observability/tracing.go`. Because k8s tracing rides on
+`rest.Config.WrapTransport` (same place as the metrics transport), **new tasks are
+traced automatically** — no per-task wiring needed.
 
 ## Build & Deploy
 
@@ -244,7 +277,7 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.40.0
+- **pico-agent**: v0.41.0
 - **Helm chart**: 0.42.0
 
 ## Key Dependencies

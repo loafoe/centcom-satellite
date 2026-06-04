@@ -165,7 +165,7 @@ func (h *StreamHandlers) HandleLogStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	slog.Info("starting log stream", "namespace", namespace, "pod", podName, "container", containerName)
+	slog.InfoContext(ctx, "starting log stream", "namespace", namespace, "pod", podName, "container", containerName)
 
 	// Track stream lifecycle for metrics.
 	streamStart := time.Now()
@@ -214,7 +214,7 @@ func (h *StreamHandlers) HandleLogStream(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	slog.Info("log stream ended", "namespace", namespace, "pod", podName)
+	slog.InfoContext(ctx, "log stream ended", "namespace", namespace, "pod", podName)
 }
 
 // parseTimestampedLine splits a k8s timestamped log line into timestamp and content.

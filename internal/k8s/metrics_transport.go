@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // K8sMetricsRecorder records Kubernetes API client request metrics.
@@ -50,10 +52,27 @@ type metricsRoundTripper struct {
 }
 
 // wrapTransport returns a transport.WrapperFunc-compatible function that
-// instruments the given RoundTripper.
+// instruments the given RoundTripper with both Prometheus metrics and
+// OpenTelemetry tracing.
+//
+// The chain is, from outermost (what client-go calls) inward:
+//
+//	otelhttp -> metricsRoundTripper -> base transport
+//
+// otelhttp is outermost so it creates a client span for every Kubernetes API
+// call (a child of the in-flight task span) and injects W3C trace context
+// (traceparent) into the outbound request using the globally configured
+// propagator — extending the trace that originated in pico-mcp all the way to
+// the API server. Spans are named "k8s <verb> <resource>" with bounded
+// cardinality to mirror the metric labels.
 func wrapTransport(recorder K8sMetricsRecorder) func(http.RoundTripper) http.RoundTripper {
 	return func(rt http.RoundTripper) http.RoundTripper {
-		return &metricsRoundTripper{next: rt, recorder: recorder}
+		metered := &metricsRoundTripper{next: rt, recorder: recorder}
+		return otelhttp.NewTransport(metered,
+			otelhttp.WithSpanNameFormatter(func(_ string, req *http.Request) string {
+				return "k8s " + strings.ToLower(req.Method) + " " + resourceFromPath(req.URL.Path)
+			}),
+		)
 	}
 }
 

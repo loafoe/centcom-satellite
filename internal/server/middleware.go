@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/loafoe/pico-agent/internal/observability"
-	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
@@ -35,13 +36,19 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
-		slog.Info("http request",
+		// Include trace/span IDs so access logs correlate with the
+		// distributed trace originating from pico-mcp.
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", wrapped.status,
 			"duration", time.Since(start).String(),
 			"remote_addr", r.RemoteAddr,
-		)
+		}
+		if sc := trace.SpanContextFromContext(r.Context()); sc.HasTraceID() {
+			attrs = append(attrs, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
+		}
+		slog.Info("http request", attrs...)
 	})
 }
 
@@ -84,20 +91,18 @@ func MetricsMiddleware(metrics *observability.Metrics) func(http.Handler) http.H
 	}
 }
 
-// TracingMiddleware extracts trace context from incoming requests.
+// TracingMiddleware extracts W3C trace context from incoming requests (injected
+// by pico-mcp) and starts a server span for each request. It delegates to
+// otelhttp so spans follow OpenTelemetry HTTP server semantic conventions
+// (http.method, http.route, http.status_code, error status on 5xx) and use the
+// globally configured propagator. The span is named by its matched route to
+// keep span names low-cardinality.
 func TracingMiddleware(next http.Handler) http.Handler {
-	propagator := propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
+	return otelhttp.NewHandler(next, "http.server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + normalizeRoute(r.URL.Path)
+		}),
 	)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		ctx, span := observability.StartSpan(ctx, r.Method+" "+r.URL.Path)
-		defer span.End()
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
 }
 
 // RecoveryMiddleware recovers from panics and returns 500.
