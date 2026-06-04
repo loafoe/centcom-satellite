@@ -39,6 +39,21 @@ curl -fsSL .../install.sh | \
 
 If your cluster doesn't fit these conventions, follow the manual steps below.
 
+### Uninstall
+
+To remove pico-agent from the current cluster, use [`uninstall.sh`](uninstall.sh).
+It requires a **hard confirmation** — you must type the agent id (the
+kube-context / cluster name) exactly before anything is deleted:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loafoe/pico-agent/main/uninstall.sh | bash
+```
+
+It removes the Helm release and namespace but **keeps** the SPIRE
+`ClusterFederatedTrustDomain` (often shared). Pass `REMOVE_FEDERATION=true` to
+delete that too, or `DRY_RUN=true` to preview. Remember to deregister the agent
+in pico-mcp afterwards.
+
 ## Prerequisites
 
 - Kubernetes cluster with SPIRE installed (with controller/CRDs)
