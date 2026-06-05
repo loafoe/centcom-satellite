@@ -37,6 +37,17 @@ curl -fsSL .../install.sh | \
   CHART_VERSION=0.43.0 bash
 ```
 
+**Read-only mode.** For an observe-only agent, set `READ_ONLY=true`. This
+disables every mutating task — `workloadRestart`, `workloadScale`, `podEvict`,
+`podResize`, `nodeclaimDelete`, `pvResize`, `autoRemediate` — while keeping all
+introspection tasks enabled (`getResource`, `argocd`, `configmapRead`,
+`httpRequest`). The mutating flags are set to `false` explicitly, so re-running
+also disables them on an existing install.
+
+```bash
+curl -fsSL .../install.sh | READ_ONLY=true bash
+```
+
 If your cluster doesn't fit these conventions, follow the manual steps below.
 
 ### Uninstall

@@ -14,6 +14,10 @@
 #   CLUSTER_NAME=edge BASE_DOMAIN=example.com \
 #     curl -fsSL .../install.sh | bash
 #
+# For an observe-only agent (all mutating tasks disabled), set READ_ONLY=true:
+#
+#   curl -fsSL .../install.sh | READ_ONLY=true bash
+#
 set -euo pipefail
 
 # ============================================================================
@@ -34,8 +38,19 @@ set -euo pipefail
 : "${CHART_VERSION:=}"        # empty = latest
 : "${IMAGE_TAG:=}"            # empty = chart default appVersion
 
-# Feature flags (helm --set features.*). Edit to taste.
-: "${FEATURES:=argocd=true,autoRemediate=true,configmapRead=true,httpRequest=true,podEvict=true,podResize=true,pvResize=true,workloadRestart=true,workloadScale=true}"
+# Read-only mode: disable every mutating task, keep all introspection/read
+# tasks enabled. Set READ_ONLY=true for an observe-only agent.
+: "${READ_ONLY:=false}"
+
+# Feature flags (helm --set features.*). Edit to taste. An explicit FEATURES
+# always wins; otherwise the default is chosen by READ_ONLY. In read-only mode
+# the mutating features are explicitly set to false so a re-run also *disables*
+# them on an existing install (declarative reconcile).
+if [ "$READ_ONLY" = "true" ]; then
+  : "${FEATURES:=getResource=true,argocd=true,configmapRead=true,httpRequest=true,workloadRestart=false,workloadScale=false,podEvict=false,podResize=false,nodeclaimDelete=false,pvResize=false,autoRemediate=false}"
+else
+  : "${FEATURES:=argocd=true,autoRemediate=true,configmapRead=true,httpRequest=true,podEvict=true,podResize=true,pvResize=true,workloadRestart=true,workloadScale=true}"
+fi
 
 # Networking / exposure. Empty values are auto-discovered (see below).
 : "${HTTPROUTE_ENABLED:=true}"
@@ -162,6 +177,9 @@ summarize() {
   _row "🎫" "jwt audience" "${JWT_AUDIENCE}"
   _row "🛣️ " "httproute"    "${route}"
   _row "📊" "monitoring"   "serviceMonitor=${SERVICEMONITOR_ENABLED}"
+  if [ "$READ_ONLY" = "true" ]; then
+    _row "👁️ " "mode"         "\033[1;33mREAD-ONLY\033[0m \033[2m(mutating tasks disabled; introspection only)\033[0m"
+  fi
   if [ "$RELEASE_EXISTS" = "true" ]; then
     _row "♻️ " "action"       "reconcile existing release \033[2m(idempotent — no change if already current)\033[0m"
   else
