@@ -58,6 +58,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mainMux.HandleFunc("/healthz", s.handlers.HandleHealthz)
 	mainMux.HandleFunc("/readyz", s.handlers.HandleReadyz)
 	mainMux.HandleFunc("/version", s.handlers.HandleVersion)
+	mainMux.HandleFunc("/info", s.handlers.HandleInfo)
 	mainMux.HandleFunc("/logs/stream", s.streamHandlers.HandleLogStream)
 
 	// Apply middleware
