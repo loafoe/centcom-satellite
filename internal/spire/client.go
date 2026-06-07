@@ -31,6 +31,14 @@ func NewClient(cfg *Config) *Client {
 	}
 }
 
+// JWTAudiences returns the configured JWT audience values for this agent.
+func (c *Client) JWTAudiences() []string {
+	if c == nil || c.config == nil {
+		return nil
+	}
+	return c.config.JWT.Audiences
+}
+
 // Start connects to the SPIRE workload API and starts watching for SVIDs.
 func (c *Client) Start(ctx context.Context) error {
 	if !c.config.Enabled {

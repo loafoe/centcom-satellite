@@ -167,6 +167,26 @@ func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// HandleInfo returns agent identity metadata for discovery/registration.
+// This endpoint is unauthenticated — the returned data is not secret
+// (audiences are public identifiers, like OIDC issuer metadata).
+func (h *Handlers) HandleInfo(w http.ResponseWriter, r *http.Request) {
+	info := map[string]any{
+		"version": h.version,
+	}
+	if h.spireClient != nil {
+		if audiences := h.spireClient.JWTAudiences(); len(audiences) > 0 {
+			info["jwt_audiences"] = audiences
+			// Derive a suggested agent ID from the first audience
+			// Convention: "pico-agent-<cluster>" → id = "<cluster>"
+			if len(audiences) > 0 {
+				info["suggested_id"] = audiences[0]
+			}
+		}
+	}
+	h.writeJSON(w, http.StatusOK, info)
+}
+
 // HandleReadyz handles readiness probe requests.
 func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 	// Could add additional checks here (e.g., k8s connectivity)

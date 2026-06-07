@@ -60,6 +60,7 @@ var knownRoutes = map[string]struct{}{
 	"/healthz":     {},
 	"/readyz":      {},
 	"/version":     {},
+	"/info":        {},
 	"/logs/stream": {},
 	"/metrics":     {},
 }
