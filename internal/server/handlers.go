@@ -177,11 +177,7 @@ func (h *Handlers) HandleInfo(w http.ResponseWriter, r *http.Request) {
 	if h.spireClient != nil {
 		if audiences := h.spireClient.JWTAudiences(); len(audiences) > 0 {
 			info["jwt_audiences"] = audiences
-			// Derive a suggested agent ID from the first audience
-			// Convention: "pico-agent-<cluster>" → id = "<cluster>"
-			if len(audiences) > 0 {
-				info["suggested_id"] = audiences[0]
-			}
+			info["suggested_id"] = strings.TrimPrefix(audiences[0], "pico-agent-")
 		}
 	}
 	h.writeJSON(w, http.StatusOK, info)
