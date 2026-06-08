@@ -24,6 +24,7 @@ type ClusterInfo struct {
 	Capacity     Capacity     `json:"capacity"`
 	Namespaces   int          `json:"namespaces"`
 	Region       string       `json:"region,omitempty"`
+	AWSAccountID string       `json:"aws_account_id,omitempty"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 
@@ -145,6 +146,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	info.Nodes = t.processNodes(nodes, nodeResources)
 	info.Capacity = t.calculateCapacity(nodes)
 	info.Region = t.detectRegion(nodes)
+	info.AWSAccountID = t.detectAWSAccountID(ctx)
 
 	// Get namespace count
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
