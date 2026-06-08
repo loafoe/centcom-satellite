@@ -23,9 +23,8 @@ func (t *Task) detectAWSAccountID(ctx context.Context) string {
 	return t.detectAccountFromSTS(ctx)
 }
 
-// detectAccountFromCrossplane reads the accountId from the hsp-addons
-// EnvironmentConfig (apiextensions.crossplane.io/v1beta1). Returns empty
-// if the CRD doesn't exist or the resource isn't found.
+// detectAccountFromCrossplane reads the accountId from the hsp-addons or
+// hsp-addons-compat EnvironmentConfig. Returns empty if neither exists.
 func (t *Task) detectAccountFromCrossplane(ctx context.Context) string {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -42,26 +41,30 @@ func (t *Task) detectAccountFromCrossplane(ctx context.Context) string {
 		Resource: "environmentconfigs",
 	}
 
-	obj, err := dyn.Resource(gvr).Get(ctx, "hsp-addons", metav1.GetOptions{})
-	if err != nil {
-		return ""
+	for _, name := range []string{"hsp-addons", "hsp-addons-compat"} {
+		obj, err := dyn.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		data, ok := obj.Object["data"]
+		if !ok {
+			continue
+		}
+		dataBytes, err := json.Marshal(data)
+		if err != nil {
+			continue
+		}
+		var envData struct {
+			AccountID string `json:"accountId"`
+		}
+		if err := json.Unmarshal(dataBytes, &envData); err != nil {
+			continue
+		}
+		if envData.AccountID != "" {
+			return envData.AccountID
+		}
 	}
-
-	data, ok := obj.Object["data"]
-	if !ok {
-		return ""
-	}
-	dataBytes, err := json.Marshal(data)
-	if err != nil {
-		return ""
-	}
-	var envData struct {
-		AccountID string `json:"accountId"`
-	}
-	if err := json.Unmarshal(dataBytes, &envData); err != nil {
-		return ""
-	}
-	return envData.AccountID
+	return ""
 }
 
 // detectAccountFromSTS uses STS GetCallerIdentity as fallback.
