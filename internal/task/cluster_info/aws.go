@@ -2,18 +2,70 @@ package cluster_info
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 )
 
-// detectAWSAccountID attempts to retrieve the AWS account ID via STS
-// GetCallerIdentity. Returns empty string if not running on AWS or if
-// the call fails (no permissions, no credentials, timeout, etc).
+// detectAWSAccountID tries Crossplane EnvironmentConfig first (fast, no external
+// call), then falls back to STS GetCallerIdentity if credentials are available.
 func (t *Task) detectAWSAccountID(ctx context.Context) string {
-	// Quick check: skip entirely if no AWS credential indicators are present
+	if id := t.detectAccountFromCrossplane(ctx); id != "" {
+		return id
+	}
+	return t.detectAccountFromSTS(ctx)
+}
+
+// detectAccountFromCrossplane reads the accountId from the hsp-addons
+// EnvironmentConfig (apiextensions.crossplane.io/v1beta1). Returns empty
+// if the CRD doesn't exist or the resource isn't found.
+func (t *Task) detectAccountFromCrossplane(ctx context.Context) string {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return ""
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return ""
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "apiextensions.crossplane.io",
+		Version:  "v1beta1",
+		Resource: "environmentconfigs",
+	}
+
+	obj, err := dyn.Resource(gvr).Get(ctx, "hsp-addons", metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+
+	data, ok := obj.Object["data"]
+	if !ok {
+		return ""
+	}
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		return ""
+	}
+	var envData struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(dataBytes, &envData); err != nil {
+		return ""
+	}
+	return envData.AccountID
+}
+
+// detectAccountFromSTS uses STS GetCallerIdentity as fallback.
+func (t *Task) detectAccountFromSTS(ctx context.Context) string {
 	if !hasAWSCredentials() {
 		return ""
 	}
@@ -37,7 +89,6 @@ func (t *Task) detectAWSAccountID(ctx context.Context) string {
 	return *output.Account
 }
 
-// hasAWSCredentials checks if AWS credential sources are available.
 func hasAWSCredentials() bool {
 	indicators := []string{
 		"AWS_ACCESS_KEY_ID",
@@ -51,7 +102,6 @@ func hasAWSCredentials() bool {
 			return true
 		}
 	}
-	// EKS pod identity: token file exists at well-known path
 	if _, err := os.Stat("/var/run/secrets/eks.amazonaws.com/serviceaccount/token"); err == nil {
 		return true
 	}
