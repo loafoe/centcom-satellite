@@ -168,16 +168,13 @@ func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleInfo returns agent identity metadata for discovery/registration.
-// This endpoint is unauthenticated — the returned data is not secret
-// (audiences are public identifiers, like OIDC issuer metadata).
+// This endpoint is unauthenticated — only exposes JWT audiences (public
+// identifiers needed for callers to request correctly-scoped tokens).
 func (h *Handlers) HandleInfo(w http.ResponseWriter, r *http.Request) {
-	info := map[string]any{
-		"version": h.version,
-	}
+	info := map[string]any{}
 	if h.spireClient != nil {
 		if audiences := h.spireClient.JWTAudiences(); len(audiences) > 0 {
 			info["jwt_audiences"] = audiences
-			info["suggested_id"] = strings.TrimPrefix(audiences[0], "pico-agent-")
 		}
 	}
 	h.writeJSON(w, http.StatusOK, info)
