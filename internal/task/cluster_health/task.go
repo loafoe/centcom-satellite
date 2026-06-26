@@ -37,13 +37,16 @@ type HealthReport struct {
 
 // UnhealthyPod represents a pod in a problematic state.
 type UnhealthyPod struct {
-	Namespace     string `json:"namespace"`
-	Name          string `json:"name"`
-	Phase         string `json:"phase"`
-	Reason        string `json:"reason,omitempty"`
-	Message       string `json:"message,omitempty"`
-	RestartCount  int32  `json:"restart_count,omitempty"`
-	ContainerName string `json:"container_name,omitempty"`
+	Namespace          string       `json:"namespace"`
+	Name               string       `json:"name"`
+	Phase              string       `json:"phase"`
+	Reason             string       `json:"reason,omitempty"`
+	Message            string       `json:"message,omitempty"`
+	RestartCount       int32        `json:"restart_count,omitempty"`
+	ContainerName      string       `json:"container_name,omitempty"`
+	LastRestartTime    *metav1.Time `json:"last_restart_time,omitempty"`
+	LastRestartReason  string       `json:"last_restart_reason,omitempty"`
+	LastRestartMessage string       `json:"last_restart_message,omitempty"`
 }
 
 // WorkloadStatus summarizes deployment/statefulset/daemonset health.
@@ -201,7 +204,7 @@ func (t *Task) checkPods(ctx context.Context, namespace string) ([]UnhealthyPod,
 		// Check container statuses for running pods
 		for _, cs := range pod.Status.ContainerStatuses {
 			if cs.State.Waiting != nil {
-				unhealthy = append(unhealthy, UnhealthyPod{
+				up := UnhealthyPod{
 					Namespace:     pod.Namespace,
 					Name:          pod.Name,
 					Phase:         "Waiting",
@@ -209,17 +212,45 @@ func (t *Task) checkPods(ctx context.Context, namespace string) ([]UnhealthyPod,
 					Message:       cs.State.Waiting.Message,
 					ContainerName: cs.Name,
 					RestartCount:  cs.RestartCount,
-				})
+				}
+				if cs.LastTerminationState.Terminated != nil {
+					tTerm := cs.LastTerminationState.Terminated
+					if !tTerm.FinishedAt.IsZero() {
+						up.LastRestartTime = &tTerm.FinishedAt
+					}
+					up.LastRestartReason = tTerm.Reason
+					up.LastRestartMessage = tTerm.Message
+				}
+				unhealthy = append(unhealthy, up)
 			} else if cs.RestartCount > 5 {
-				// Flag pods with high restart counts
-				unhealthy = append(unhealthy, UnhealthyPod{
-					Namespace:     pod.Namespace,
-					Name:          pod.Name,
-					Phase:         "HighRestarts",
-					Reason:        fmt.Sprintf("%d restarts", cs.RestartCount),
-					ContainerName: cs.Name,
-					RestartCount:  cs.RestartCount,
-				})
+				// Flag pods with high restart counts only if a restart occurred within the last 3 hours
+				lastRestart := getLastRestartTime(cs)
+				var shouldFlag bool
+				if !lastRestart.IsZero() {
+					shouldFlag = time.Since(lastRestart) <= 3*time.Hour
+				} else {
+					shouldFlag = time.Since(pod.CreationTimestamp.Time) <= 3*time.Hour
+				}
+
+				if shouldFlag {
+					up := UnhealthyPod{
+						Namespace:     pod.Namespace,
+						Name:          pod.Name,
+						Phase:         "HighRestarts",
+						Reason:        fmt.Sprintf("%d restarts", cs.RestartCount),
+						ContainerName: cs.Name,
+						RestartCount:  cs.RestartCount,
+					}
+					if cs.LastTerminationState.Terminated != nil {
+						tTerm := cs.LastTerminationState.Terminated
+						if !tTerm.FinishedAt.IsZero() {
+							up.LastRestartTime = &tTerm.FinishedAt
+						}
+						up.LastRestartReason = tTerm.Reason
+						up.LastRestartMessage = tTerm.Message
+					}
+					unhealthy = append(unhealthy, up)
+				}
 			}
 		}
 	}
@@ -426,4 +457,18 @@ func (t *Task) buildSummary(report *HealthReport) string {
 	}
 
 	return fmt.Sprintf("Cluster has issues: %v", issues)
+}
+
+func getLastRestartTime(cs corev1.ContainerStatus) time.Time {
+	var lastTime time.Time
+	if cs.LastTerminationState.Terminated != nil && !cs.LastTerminationState.Terminated.FinishedAt.IsZero() {
+		lastTime = cs.LastTerminationState.Terminated.FinishedAt.Time
+	}
+	if cs.State.Running != nil && !cs.State.Running.StartedAt.IsZero() {
+		runningTime := cs.State.Running.StartedAt.Time
+		if runningTime.After(lastTime) {
+			lastTime = runningTime
+		}
+	}
+	return lastTime
 }
