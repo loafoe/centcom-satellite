@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -175,20 +176,22 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			continue
 		}
 
-		// Track pending pods
+		// Track pending pods (only flag as pending issues if stuck in pending state for > 5 minutes)
 		if pod.Status.Phase == corev1.PodPending {
-			pp := PendingPod{
-				Namespace: pod.Namespace,
-				Name:      pod.Name,
-			}
-			for _, cond := range pod.Status.Conditions {
-				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
-					pp.Reason = cond.Reason
-					pp.Message = cond.Message
-					break
+			if time.Since(pod.CreationTimestamp.Time) > 5*time.Minute {
+				pp := PendingPod{
+					Namespace: pod.Namespace,
+					Name:      pod.Name,
 				}
+				for _, cond := range pod.Status.Conditions {
+					if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+						pp.Reason = cond.Reason
+						pp.Message = cond.Message
+						break
+					}
+				}
+				report.PendingPods = append(report.PendingPods, pp)
 			}
-			report.PendingPods = append(report.PendingPods, pp)
 		}
 
 		// Initialize namespace tracking
