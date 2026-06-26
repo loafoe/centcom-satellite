@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -165,9 +166,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		})
 	}
 
-	// Determine health
-	if report.PVCSummary.Pending > 0 || report.PVCSummary.Lost > 0 ||
-		report.PVSummary.Failed > 0 || report.PVSummary.Released > 0 {
+	// Determine health: unhealthy if there are any problematic PVCs (stuck pending or lost)
+	// or failed PVs. Released PVs do not fail the health check.
+	if len(report.ProblematicPVCs) > 0 || report.PVSummary.Failed > 0 {
 		report.Healthy = false
 	}
 
@@ -186,7 +187,10 @@ func (t *Task) summarizePVCs(pvcs *corev1.PersistentVolumeClaimList, report *Sto
 			summary.Bound++
 		case corev1.ClaimPending:
 			summary.Pending++
-			report.ProblematicPVCs = append(report.ProblematicPVCs, t.pvcToProblematic(&pvc))
+			// Only flag as problematic if pending for more than 5 minutes to allow for dynamic provisioning
+			if time.Since(pvc.CreationTimestamp.Time) > 5*time.Minute {
+				report.ProblematicPVCs = append(report.ProblematicPVCs, t.pvcToProblematic(&pvc))
+			}
 		case corev1.ClaimLost:
 			summary.Lost++
 			report.ProblematicPVCs = append(report.ProblematicPVCs, t.pvcToProblematic(&pvc))
