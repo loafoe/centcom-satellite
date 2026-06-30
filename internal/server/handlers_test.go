@@ -12,8 +12,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/loafoe/pico-agent/internal/observability"
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 // mockTask implements task.Task for testing.

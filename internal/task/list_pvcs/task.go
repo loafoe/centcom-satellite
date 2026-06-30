@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const TaskName = "list_pvcs"

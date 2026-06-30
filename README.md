@@ -1,4 +1,4 @@
-# pico-agent
+# centcom-satellite
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -48,8 +48,8 @@ A lightweight Kubernetes helper service that receives task requests and executes
 Images are published to GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/loafoe/pico-agent:latest
-docker pull ghcr.io/loafoe/pico-agent:v0.32.0  # specific version
+docker pull ghcr.io/loafoe/centcom-satellite:latest
+docker pull ghcr.io/loafoe/centcom-satellite:v0.32.0  # specific version
 ```
 
 ### Verifying Image Signatures
@@ -60,14 +60,14 @@ All released images are signed using [cosign](https://github.com/sigstore/cosign
 # Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
 
 # Verify the image signature
-cosign verify ghcr.io/loafoe/pico-agent:latest \
-  --certificate-identity-regexp="https://github.com/loafoe/pico-agent/*" \
+cosign verify ghcr.io/loafoe/centcom-satellite:latest \
+  --certificate-identity-regexp="https://github.com/loafoe/centcom-satellite/*" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
 Expected output on success:
 ```
-Verification for ghcr.io/loafoe/pico-agent:latest --
+Verification for ghcr.io/loafoe/centcom-satellite:latest --
 The following checks were performed on each of these signatures:
   - The cosign claims were validated
   - Existence of the claims in the transparency log was verified offline
@@ -89,8 +89,8 @@ make ko-push        # Build and push to registry
 
 ```bash
 # Using Helm (recommended)
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --namespace pico-agent --create-namespace \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
+  --namespace centcom-satellite --create-namespace \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
 
@@ -108,7 +108,7 @@ kubectl apply -k deploy/
 | `LOG_FORMAT` | json | Log format (json, text) |
 | `ALLOW_UNAUTHENTICATED` | false | Allow unauthenticated requests (dev mode only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
-| `OTEL_SERVICE_NAME` | pico-agent | Service name for tracing |
+| `OTEL_SERVICE_NAME` | centcom-satellite | Service name for tracing |
 
 ### SPIFFE/SPIRE Configuration
 
@@ -124,7 +124,7 @@ SPIRE authentication is enabled by default. For local development without SPIRE,
 
 ## SPIFFE/SPIRE Authentication
 
-pico-agent uses [SPIFFE](https://spiffe.io/) workload identity via SPIRE for secure, certificate-based authentication between services.
+centcom-satellite uses [SPIFFE](https://spiffe.io/) workload identity via SPIRE for secure, certificate-based authentication between services.
 
 ### Authentication Modes
 
@@ -140,7 +140,7 @@ pico-agent uses [SPIFFE](https://spiffe.io/) workload identity via SPIRE for sec
 
 ### Federation Support
 
-pico-agent supports federated SPIFFE deployments with multiple trust domains:
+centcom-satellite supports federated SPIFFE deployments with multiple trust domains:
 
 ```yaml
 # Example: Accept SVIDs from multiple trust domains
@@ -150,11 +150,11 @@ SPIRE_ALLOWED_SPIFFE_IDS: "spiffe://cluster-a.example.org/ns/default/sa/pico-mcp
 
 ## Helm Chart
 
-The recommended way to deploy pico-agent is via the Helm chart:
+The recommended way to deploy centcom-satellite is via the Helm chart:
 
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --namespace pico-agent --create-namespace \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
+  --namespace centcom-satellite --create-namespace \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
 ```
@@ -176,7 +176,7 @@ spire:
   jwt:
     enabled: true
     audiences:
-      - pico-agent
+      - centcom-satellite
 ```
 
 See [ONBOARD.md](ONBOARD.md) for detailed deployment instructions.
@@ -232,7 +232,7 @@ Prometheus metrics endpoint.
    import (
        "context"
        "encoding/json"
-       "github.com/loafoe/pico-agent/internal/task"
+       "github.com/loafoe/centcom-satellite/internal/task"
    )
 
    type Task struct{}
@@ -247,7 +247,7 @@ Prometheus metrics endpoint.
    }
    ```
 
-2. Register in `cmd/pico-agent/main.go`:
+2. Register in `cmd/centcom-satellite/main.go`:
    ```go
    registry.Register(my_task.New())
    ```

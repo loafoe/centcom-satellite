@@ -29,7 +29,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
 
       - uses: ko-build/setup-ko@v0.7
 
@@ -58,7 +58,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           # Build and push the image
-          IMAGE=$(ko build ./cmd/pico-agent \
+          IMAGE=$(ko build ./cmd/centcom-satellite \
             --bare \
             --platform=linux/amd64,linux/arm64 \
             --tags=${{ steps.version.outputs.VERSION }},latest \
@@ -78,7 +78,7 @@ jobs:
           IMAGE: ${{ steps.ko.outputs.image }}
         run: |
           # Generate and attach SBOM
-          cosign attach sbom --sbom <(ko sbom ./cmd/pico-agent) "${IMAGE}" || true
+          cosign attach sbom --sbom <(ko sbom ./cmd/centcom-satellite) "${IMAGE}" || true
 
       - name: Verify signature
         env:

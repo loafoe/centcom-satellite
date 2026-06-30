@@ -48,7 +48,7 @@ func TestSetBuildInfo(t *testing.T) {
 	}
 	found := false
 	for _, fam := range mf {
-		if fam.GetName() != "pico_agent_build_info" {
+		if fam.GetName() != "centcom_satellite_build_info" {
 			continue
 		}
 		for _, metric := range fam.GetMetric() {
@@ -104,18 +104,18 @@ func TestMetricFamiliesRegistered(t *testing.T) {
 	m.SetBuildInfo("v0")
 
 	want := []string{
-		"pico_agent_http_requests_total",
-		"pico_agent_http_request_duration_seconds",
-		"pico_agent_http_requests_in_flight",
-		"pico_agent_tasks_total",
-		"pico_agent_task_duration_seconds",
-		"pico_agent_auth_attempts_total",
-		"pico_agent_k8s_requests_total",
-		"pico_agent_k8s_request_duration_seconds",
-		"pico_agent_log_streams_active",
-		"pico_agent_log_stream_duration_seconds",
-		"pico_agent_log_stream_lines_total",
-		"pico_agent_build_info",
+		"centcom_satellite_http_requests_total",
+		"centcom_satellite_http_request_duration_seconds",
+		"centcom_satellite_http_requests_in_flight",
+		"centcom_satellite_tasks_total",
+		"centcom_satellite_task_duration_seconds",
+		"centcom_satellite_auth_attempts_total",
+		"centcom_satellite_k8s_requests_total",
+		"centcom_satellite_k8s_request_duration_seconds",
+		"centcom_satellite_log_streams_active",
+		"centcom_satellite_log_stream_duration_seconds",
+		"centcom_satellite_log_stream_lines_total",
+		"centcom_satellite_build_info",
 	}
 	mf, _ := reg.Gather()
 	have := map[string]bool{}

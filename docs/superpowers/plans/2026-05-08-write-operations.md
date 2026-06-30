@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add three opt-in write operations to pico-agent: workload_restart, workload_scale, and pod_evict.
+**Goal:** Add three opt-in write operations to centcom-satellite: workload_restart, workload_scale, and pod_evict.
 
 **Architecture:** Each operation is a separate task package with feature flag control. Helm chart provides conditional RBAC. pico-mcp exposes MCP tools and enriches "task not found" errors.
 
@@ -12,7 +12,7 @@
 
 ## File Structure
 
-**pico-agent (new files):**
+**centcom-satellite (new files):**
 - `internal/task/workload_restart/task.go` - restart implementation
 - `internal/task/workload_restart/task_test.go` - restart tests
 - `internal/task/workload_scale/task.go` - scale implementation  
@@ -20,14 +20,14 @@
 - `internal/task/pod_evict/task.go` - evict implementation
 - `internal/task/pod_evict/task_test.go` - evict tests
 
-**pico-agent (modify):**
+**centcom-satellite (modify):**
 - `internal/config/config.go` - add feature flags
-- `cmd/pico-agent/main.go` - conditional registration
+- `cmd/centcom-satellite/main.go` - conditional registration
 
 **helm chart (modify):**
-- `charts/pico-agent/values.yaml` - add feature flags
-- `charts/pico-agent/templates/deployment.yaml` - add env vars
-- `charts/pico-agent/templates/clusterrole.yaml` - add RBAC rules
+- `charts/centcom-satellite/values.yaml` - add feature flags
+- `charts/centcom-satellite/templates/deployment.yaml` - add env vars
+- `charts/centcom-satellite/templates/clusterrole.yaml` - add RBAC rules
 
 **pico-mcp (modify):**
 - `internal/mcp/server.go` - add tools and error enrichment
@@ -37,7 +37,7 @@
 ## Task 1: Add Feature Flags to Config
 
 **Files:**
-- Modify: `/Users/andy/DEV/Go/pico-agent/internal/config/config.go`
+- Modify: `/Users/andy/DEV/Go/centcom-satellite/internal/config/config.go`
 
 - [ ] **Step 1: Add feature flags to FeaturesConfig struct**
 
@@ -72,7 +72,7 @@ Features: FeaturesConfig{
 
 - [ ] **Step 3: Verify build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
@@ -87,7 +87,7 @@ git commit -m "feat(config): add feature flags for write operations"
 ## Task 2: Create workload_restart Task
 
 **Files:**
-- Create: `/Users/andy/DEV/Go/pico-agent/internal/task/workload_restart/task.go`
+- Create: `/Users/andy/DEV/Go/centcom-satellite/internal/task/workload_restart/task.go`
 
 - [ ] **Step 1: Create task package with types**
 
@@ -108,7 +108,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const (
@@ -367,7 +367,7 @@ func pdbMatchesSelector(pdb *policyv1.PodDisruptionBudget, workloadSelector *met
 
 - [ ] **Step 5: Verify build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 6: Commit**
@@ -382,7 +382,7 @@ git commit -m "feat(workload_restart): add workload restart task"
 ## Task 3: Create workload_scale Task
 
 **Files:**
-- Create: `/Users/andy/DEV/Go/pico-agent/internal/task/workload_scale/task.go`
+- Create: `/Users/andy/DEV/Go/centcom-satellite/internal/task/workload_scale/task.go`
 
 - [ ] **Step 1: Create task package with types**
 
@@ -401,7 +401,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const (
@@ -612,7 +612,7 @@ func (t *Task) checkHPA(ctx context.Context, namespace, targetKind, targetName s
 
 - [ ] **Step 4: Verify build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 5: Commit**
@@ -627,7 +627,7 @@ git commit -m "feat(workload_scale): add workload scale task"
 ## Task 4: Create pod_evict Task
 
 **Files:**
-- Create: `/Users/andy/DEV/Go/pico-agent/internal/task/pod_evict/task.go`
+- Create: `/Users/andy/DEV/Go/centcom-satellite/internal/task/pod_evict/task.go`
 
 - [ ] **Step 1: Create task package with types**
 
@@ -645,7 +645,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const (
@@ -826,7 +826,7 @@ func (t *Task) getOwnerInfo(pod *corev1.Pod) (kind, name string, willRecreate bo
 
 - [ ] **Step 4: Verify build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 5: Commit**
@@ -841,16 +841,16 @@ git commit -m "feat(pod_evict): add pod eviction task"
 ## Task 5: Register Tasks in main.go
 
 **Files:**
-- Modify: `/Users/andy/DEV/Go/pico-agent/cmd/pico-agent/main.go`
+- Modify: `/Users/andy/DEV/Go/centcom-satellite/cmd/centcom-satellite/main.go`
 
 - [ ] **Step 1: Add imports**
 
 Add these imports after existing task imports:
 
 ```go
-"github.com/loafoe/pico-agent/internal/task/workload_restart"
-"github.com/loafoe/pico-agent/internal/task/workload_scale"
-"github.com/loafoe/pico-agent/internal/task/pod_evict"
+"github.com/loafoe/centcom-satellite/internal/task/workload_restart"
+"github.com/loafoe/centcom-satellite/internal/task/workload_scale"
+"github.com/loafoe/centcom-satellite/internal/task/pod_evict"
 ```
 
 - [ ] **Step 2: Add conditional registration after get_resource block**
@@ -879,13 +879,13 @@ if cfg.Features.PodEvictEnabled {
 
 - [ ] **Step 3: Verify build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add cmd/pico-agent/main.go
+git add cmd/centcom-satellite/main.go
 git commit -m "feat(main): conditionally register write operation tasks"
 ```
 
@@ -894,7 +894,7 @@ git commit -m "feat(main): conditionally register write operation tasks"
 ## Task 6: Update Helm Chart Values
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml`
 
 - [ ] **Step 1: Add feature flags**
 
@@ -913,8 +913,8 @@ features:
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/values.yaml
-git commit -m "feat(pico-agent): add write operation feature flags"
+git add charts/centcom-satellite/values.yaml
+git commit -m "feat(centcom-satellite): add write operation feature flags"
 ```
 
 ---
@@ -922,7 +922,7 @@ git commit -m "feat(pico-agent): add write operation feature flags"
 ## Task 7: Update Helm Deployment Template
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml`
 
 - [ ] **Step 1: Add environment variables**
 
@@ -946,8 +946,8 @@ Find the `{{- if .Values.features.getResource }}` block and add after it:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add charts/pico-agent/templates/deployment.yaml
-git commit -m "feat(pico-agent): add env vars for write operations"
+git add charts/centcom-satellite/templates/deployment.yaml
+git commit -m "feat(centcom-satellite): add env vars for write operations"
 ```
 
 ---
@@ -955,7 +955,7 @@ git commit -m "feat(pico-agent): add env vars for write operations"
 ## Task 8: Update Helm ClusterRole Template
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/clusterrole.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/clusterrole.yaml`
 
 - [ ] **Step 1: Add RBAC rules before additionalRules**
 
@@ -1001,8 +1001,8 @@ Find `{{- with .Values.rbac.additionalRules }}` and add before it:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add charts/pico-agent/templates/clusterrole.yaml
-git commit -m "feat(pico-agent): add RBAC rules for write operations"
+git add charts/centcom-satellite/templates/clusterrole.yaml
+git commit -m "feat(centcom-satellite): add RBAC rules for write operations"
 ```
 
 ---
@@ -1020,7 +1020,7 @@ Find `s.mcpServer.AddTool(mcp.NewTool("pv_resize"` and add after the pv_resize_s
 // Workload restart tool
 s.mcpServer.AddTool(mcp.NewTool("workload_restart",
 	mcp.WithDescription("Trigger a rolling restart of a Deployment, StatefulSet, or DaemonSet. Respects PDBs and opt-out annotations."),
-	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target pico-agent")),
+	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target centcom-satellite")),
 	mcp.WithString("namespace", mcp.Required(), mcp.Description("Kubernetes namespace")),
 	mcp.WithString("name", mcp.Required(), mcp.Description("Workload name")),
 	mcp.WithString("kind", mcp.Required(), mcp.Description("Workload kind: deployment, statefulset, or daemonset")),
@@ -1036,7 +1036,7 @@ s.mcpServer.AddTool(mcp.NewTool("workload_restart",
 // Workload scale tool
 s.mcpServer.AddTool(mcp.NewTool("workload_scale",
 	mcp.WithDescription("Scale a Deployment or StatefulSet to a target replica count. Warns if HPA is present."),
-	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target pico-agent")),
+	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target centcom-satellite")),
 	mcp.WithString("namespace", mcp.Required(), mcp.Description("Kubernetes namespace")),
 	mcp.WithString("name", mcp.Required(), mcp.Description("Workload name")),
 	mcp.WithString("kind", mcp.Required(), mcp.Description("Workload kind: deployment or statefulset")),
@@ -1054,7 +1054,7 @@ s.mcpServer.AddTool(mcp.NewTool("workload_scale",
 // Pod evict tool
 s.mcpServer.AddTool(mcp.NewTool("pod_evict",
 	mcp.WithDescription("Evict or delete a specific pod. Uses Eviction API by default (respects PDB), force mode bypasses PDB."),
-	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target pico-agent")),
+	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target centcom-satellite")),
 	mcp.WithString("namespace", mcp.Required(), mcp.Description("Kubernetes namespace")),
 	mcp.WithString("pod_name", mcp.Required(), mcp.Description("Name of the pod to evict")),
 	mcp.WithNumber("grace_period_seconds", mcp.Description("Grace period for termination (default: 30)")),
@@ -1222,13 +1222,13 @@ git commit -m "feat(mcp): add error enrichment for task not found errors"
 
 ## Task 12: Build and Tag Releases
 
-- [ ] **Step 1: Build and tag pico-agent**
+- [ ] **Step 1: Build and tag centcom-satellite**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git tag v0.29.0
 git push origin main v0.29.0
-VERSION=v0.29.0 KO_DOCKER_REPO=ghcr.io/loafoe/pico-agent ko build --bare --platform=linux/amd64,linux/arm64 --tags=v0.29.0 ./cmd/pico-agent
+VERSION=v0.29.0 KO_DOCKER_REPO=ghcr.io/loafoe/centcom-satellite ko build --bare --platform=linux/amd64,linux/arm64 --tags=v0.29.0 ./cmd/centcom-satellite
 ```
 
 - [ ] **Step 2: Build and tag pico-mcp**
@@ -1246,7 +1246,7 @@ VERSION=v0.40.15 KO_DOCKER_REPO=ghcr.io/loafoe/pico-mcp ko build --bare --platfo
 
 - [ ] **Step 1: Update values for dip-ce-k3s-eu to enable one feature**
 
-Edit `/Users/andy/DEV/Philips/innovation-day/pico-agent/dip-ce-k3s-eu/values.yaml`:
+Edit `/Users/andy/DEV/Philips/innovation-day/centcom-satellite/dip-ce-k3s-eu/values.yaml`:
 
 ```yaml
 image:
@@ -1257,17 +1257,17 @@ features:
   workloadRestart: true
 ```
 
-- [ ] **Step 2: Deploy pico-agent**
+- [ ] **Step 2: Deploy centcom-satellite**
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-KUBECONFIG=/Users/andy/DEV/Personal/pulumi/k3s-on-ec2/dip-ce-k3s-eu.yaml helm upgrade --install pico-agent ./charts/pico-agent -n pico-agent -f /Users/andy/DEV/Philips/innovation-day/pico-agent/dip-ce-k3s-eu/values.yaml
+KUBECONFIG=/Users/andy/DEV/Personal/pulumi/k3s-on-ec2/dip-ce-k3s-eu.yaml helm upgrade --install centcom-satellite ./charts/centcom-satellite -n centcom-satellite -f /Users/andy/DEV/Philips/innovation-day/centcom-satellite/dip-ce-k3s-eu/values.yaml
 ```
 
 - [ ] **Step 3: Verify task is registered**
 
 ```bash
-KUBECONFIG=/Users/andy/DEV/Personal/pulumi/k3s-on-ec2/dip-ce-k3s-eu.yaml kubectl logs -n pico-agent -l app.kubernetes.io/name=pico-agent | grep workload_restart
+KUBECONFIG=/Users/andy/DEV/Personal/pulumi/k3s-on-ec2/dip-ce-k3s-eu.yaml kubectl logs -n centcom-satellite -l app.kubernetes.io/name=centcom-satellite | grep workload_restart
 ```
 
 Expected: `workload_restart task enabled`

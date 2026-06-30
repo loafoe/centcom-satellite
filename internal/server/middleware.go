@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/loafoe/pico-agent/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/observability"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
 )

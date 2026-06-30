@@ -1,17 +1,17 @@
-# AGENTS.md - pico-agent
+# AGENTS.md - centcom-satellite
 
 ## Project Overview
 
-**pico-agent** is a lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations. It's designed for AI agent integration, allowing automated cluster management through a secure webhook interface.
+**centcom-satellite** is a lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations. It's designed for AI agent integration, allowing automated cluster management through a secure webhook interface.
 
-**Repository**: github.com/loafoe/pico-agent  
-**Module**: github.com/loafoe/pico-agent  
+**Repository**: github.com/loafoe/centcom-satellite  
+**Module**: github.com/loafoe/centcom-satellite  
 **License**: MIT (c) 2026 Andy Lo-A-Foe
 
 ## Architecture
 
 ```
-cmd/pico-agent/main.go          # Entry point
+cmd/centcom-satellite/main.go          # Entry point
 internal/
   config/config.go              # Environment-based configuration
   server/
@@ -120,7 +120,7 @@ Environment variables:
 - `LOG_LEVEL` (default: info) - debug, info, warn, error
 - `LOG_FORMAT` (default: json) - json, text
 - `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint
-- `OTEL_SERVICE_NAME` (default: pico-agent) - Service name for tracing
+- `OTEL_SERVICE_NAME` (default: centcom-satellite) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 
 SPIRE configuration:
@@ -140,30 +140,30 @@ make docker-build
 ```
 
 **CI/CD**: GitHub Actions builds and signs images on push to main and tags:
-- `ghcr.io/loafoe/pico-agent:latest` (main branch)
-- `ghcr.io/loafoe/pico-agent:vX.Y.Z` (tagged releases)
+- `ghcr.io/loafoe/centcom-satellite:latest` (main branch)
+- `ghcr.io/loafoe/centcom-satellite:vX.Y.Z` (tagged releases)
 
 **Verify image signature** (keyless cosign):
 ```bash
-cosign verify ghcr.io/loafoe/pico-agent:v0.4.0 \
-  --certificate-identity-regexp='https://github.com/loafoe/pico-agent/.*' \
+cosign verify ghcr.io/loafoe/centcom-satellite:v0.4.0 \
+  --certificate-identity-regexp='https://github.com/loafoe/centcom-satellite/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
 
 ## Helm Chart
 
-**Repository**: oci://ghcr.io/loafoe/helm-charts/pico-agent  
-**Source**: /Users/andy/DEV/Personal/helm-charts/charts/pico-agent
+**Repository**: oci://ghcr.io/loafoe/helm-charts/centcom-satellite  
+**Source**: /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite
 
 **Install**:
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --namespace pico-agent --create-namespace
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
+  --namespace centcom-satellite --create-namespace
 ```
 
 The chart uses SPIRE for authentication by default. For mTLS with federated trust domains:
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.trustDomains[1]=partner.com' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent' \
@@ -172,15 +172,15 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
 
 For JWT-SVID authentication (useful when mTLS is not feasible):
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set 'spire.trustDomains[0]=example.org' \
   --set spire.jwt.enabled=true \
-  --set 'spire.jwt.audiences[0]=pico-agent'
+  --set 'spire.jwt.audiences[0]=centcom-satellite'
 ```
 
 For NodeClaim deletion (Karpenter node management):
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set features.nodeclaimDelete=true
 ```
 
@@ -192,7 +192,7 @@ make test
 
 # Run locally (requires kubeconfig)
 export ALLOW_UNAUTHENTICATED=true
-go run ./cmd/pico-agent
+go run ./cmd/centcom-satellite
 
 # Send test request (no signature needed in dev mode)
 curl -X POST http://localhost:8080/task \
@@ -210,7 +210,7 @@ curl -X POST http://localhost:8080/task \
    }
    ```
 
-2. Register in `cmd/pico-agent/main.go`:
+2. Register in `cmd/centcom-satellite/main.go`:
    ```go
    registry.Register(new_task.New(dependencies))
    ```
@@ -219,7 +219,7 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.32.0
+- **centcom-satellite**: v0.32.0
 - **Helm chart**: 0.21.0
 
 ## Key Dependencies

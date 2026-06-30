@@ -57,14 +57,14 @@ func newMetricsWithRegistry(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		HTTPRequestsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "pico_agent_http_requests_total",
+				Name: "centcom_satellite_http_requests_total",
 				Help: "Total number of HTTP requests",
 			},
 			[]string{"method", "path", "status"},
 		),
 		HTTPRequestDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "pico_agent_http_request_duration_seconds",
+				Name:    "centcom_satellite_http_request_duration_seconds",
 				Help:    "HTTP request duration in seconds",
 				Buckets: prometheus.DefBuckets,
 			},
@@ -72,20 +72,20 @@ func newMetricsWithRegistry(reg prometheus.Registerer) *Metrics {
 		),
 		HTTPRequestsInFlight: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Name: "pico_agent_http_requests_in_flight",
+				Name: "centcom_satellite_http_requests_in_flight",
 				Help: "Number of HTTP requests currently being served",
 			},
 		),
 		TasksTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "pico_agent_tasks_total",
+				Name: "centcom_satellite_tasks_total",
 				Help: "Total number of tasks executed",
 			},
 			[]string{"type", "status"},
 		),
 		TasksDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "pico_agent_task_duration_seconds",
+				Name:    "centcom_satellite_task_duration_seconds",
 				Help:    "Task execution duration in seconds",
 				Buckets: prometheus.DefBuckets,
 			},
@@ -93,21 +93,21 @@ func newMetricsWithRegistry(reg prometheus.Registerer) *Metrics {
 		),
 		AuthAttemptsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "pico_agent_auth_attempts_total",
+				Name: "centcom_satellite_auth_attempts_total",
 				Help: "Total number of authentication attempts by method and result",
 			},
 			[]string{"method", "result"},
 		),
 		K8sRequestsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "pico_agent_k8s_requests_total",
+				Name: "centcom_satellite_k8s_requests_total",
 				Help: "Total number of Kubernetes API requests issued by the agent",
 			},
 			[]string{"verb", "resource", "status_class"},
 		),
 		K8sRequestDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "pico_agent_k8s_request_duration_seconds",
+				Name:    "centcom_satellite_k8s_request_duration_seconds",
 				Help:    "Kubernetes API request duration in seconds",
 				Buckets: prometheus.DefBuckets,
 			},
@@ -115,13 +115,13 @@ func newMetricsWithRegistry(reg prometheus.Registerer) *Metrics {
 		),
 		LogStreamsActive: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Name: "pico_agent_log_streams_active",
+				Name: "centcom_satellite_log_streams_active",
 				Help: "Number of currently active log streams",
 			},
 		),
 		LogStreamDuration: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
-				Name: "pico_agent_log_stream_duration_seconds",
+				Name: "centcom_satellite_log_stream_duration_seconds",
 				Help: "Duration of completed log streams in seconds",
 				// Streams are long-lived; use wide buckets from seconds to ~30 min.
 				Buckets: []float64{1, 5, 15, 30, 60, 300, 900, 1800},
@@ -129,13 +129,13 @@ func newMetricsWithRegistry(reg prometheus.Registerer) *Metrics {
 		),
 		LogStreamLines: prometheus.NewCounter(
 			prometheus.CounterOpts{
-				Name: "pico_agent_log_stream_lines_total",
+				Name: "centcom_satellite_log_stream_lines_total",
 				Help: "Total number of log lines streamed to clients",
 			},
 		),
 		BuildInfo: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: "pico_agent_build_info",
+				Name: "centcom_satellite_build_info",
 				Help: "Build information; constant 1 with version labels",
 			},
 			[]string{"version", "goversion"},

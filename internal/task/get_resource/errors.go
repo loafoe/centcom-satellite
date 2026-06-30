@@ -52,7 +52,7 @@ func NewForbiddenError(kind, name string) *StructuredError {
 	return &StructuredError{
 		Code:    ErrForbidden,
 		Message: fmt.Sprintf("access denied to %s %q", kind, name),
-		Hint:    "pico-agent needs RBAC permission for this resource",
+		Hint:    "centcom-satellite needs RBAC permission for this resource",
 	}
 }
 

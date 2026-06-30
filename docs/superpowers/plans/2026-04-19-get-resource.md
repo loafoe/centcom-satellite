@@ -2,27 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `get_resource` task to pico-agent that retrieves any Kubernetes resource using the dynamic client, exposed via pico-mcp as an MCP tool.
+**Goal:** Add a `get_resource` task to centcom-satellite that retrieves any Kubernetes resource using the dynamic client, exposed via pico-mcp as an MCP tool.
 
-**Architecture:** Extend pico-agent's k8s client with dynamic client + REST mapper. New task package uses these to fetch any resource by GVK. Summary output extracts common fields + heuristic status fields. pico-mcp exposes as MCP tool forwarding to pico-agent.
+**Architecture:** Extend centcom-satellite's k8s client with dynamic client + REST mapper. New task package uses these to fetch any resource by GVK. Summary output extracts common fields + heuristic status fields. pico-mcp exposes as MCP tool forwarding to centcom-satellite.
 
 **Tech Stack:** Go, client-go (dynamic, restmapper), k8s.io/apimachinery
 
 **Repos:**
-- pico-agent: `~/DEV/Go/pico-agent`
+- centcom-satellite: `~/DEV/Go/centcom-satellite`
 - pico-mcp: `~/DEV/Go/pico-mcp`
 
 ---
 
 ## File Structure
 
-**pico-agent:**
+**centcom-satellite:**
 - Modify: `internal/k8s/client.go` — add DynamicClient and RESTMapper fields
 - Create: `internal/task/get_resource/task.go` — main task implementation
 - Create: `internal/task/get_resource/summary.go` — summary extraction logic
 - Create: `internal/task/get_resource/errors.go` — structured error types
 - Create: `internal/task/get_resource/task_test.go` — unit tests
-- Modify: `cmd/pico-agent/main.go` — register task
+- Modify: `cmd/centcom-satellite/main.go` — register task
 
 **pico-mcp:**
 - Modify: `internal/mcp/server.go` — add get_resource tool and handler
@@ -103,13 +103,13 @@ func NewClient() (*Client, error) {
 
 - [ ] **Step 3: Run existing tests to verify no regression**
 
-Run: `cd ~/DEV/Go/pico-agent && go build ./...`
+Run: `cd ~/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
+cd ~/DEV/Go/centcom-satellite
 git add internal/k8s/client.go
 git commit -m "feat(k8s): add dynamic client and REST mapper to k8s.Client"
 ```
@@ -176,7 +176,7 @@ func NewForbiddenError(kind, name string) *StructuredError {
 	return &StructuredError{
 		Code:    ErrForbidden,
 		Message: fmt.Sprintf("access denied to %s %q", kind, name),
-		Hint:    "pico-agent needs RBAC permission for this resource",
+		Hint:    "centcom-satellite needs RBAC permission for this resource",
 	}
 }
 
@@ -242,13 +242,13 @@ The import `"k8s.io/apimachinery/pkg/api/meta"` is needed for NoKindMatchError.
 
 - [ ] **Step 3: Verify it compiles**
 
-Run: `cd ~/DEV/Go/pico-agent && go build ./internal/task/get_resource/...`
+Run: `cd ~/DEV/Go/centcom-satellite && go build ./internal/task/get_resource/...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
+cd ~/DEV/Go/centcom-satellite
 git add internal/task/get_resource/errors.go
 git commit -m "feat(get_resource): add structured error types"
 ```
@@ -430,13 +430,13 @@ Add `"fmt"` to the imports.
 
 - [ ] **Step 3: Verify it compiles**
 
-Run: `cd ~/DEV/Go/pico-agent && go build ./internal/task/get_resource/...`
+Run: `cd ~/DEV/Go/centcom-satellite && go build ./internal/task/get_resource/...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
+cd ~/DEV/Go/centcom-satellite
 git add internal/task/get_resource/summary.go
 git commit -m "feat(get_resource): add summary extraction logic"
 ```
@@ -464,7 +464,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const TaskName = "get_resource"
@@ -585,13 +585,13 @@ func (t *Task) errorResult(err *StructuredError) *task.Result {
 
 - [ ] **Step 2: Verify it compiles**
 
-Run: `cd ~/DEV/Go/pico-agent && go build ./internal/task/get_resource/...`
+Run: `cd ~/DEV/Go/centcom-satellite && go build ./internal/task/get_resource/...`
 Expected: Build succeeds
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
+cd ~/DEV/Go/centcom-satellite
 git add internal/task/get_resource/task.go
 git commit -m "feat(get_resource): add main task implementation"
 ```
@@ -892,13 +892,13 @@ func containsAt(s, substr string, start int) bool {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cd ~/DEV/Go/pico-agent && go test ./internal/task/get_resource/... -v`
+Run: `cd ~/DEV/Go/centcom-satellite && go test ./internal/task/get_resource/... -v`
 Expected: All tests pass
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
+cd ~/DEV/Go/centcom-satellite
 git add internal/task/get_resource/task_test.go
 git commit -m "test(get_resource): add unit tests"
 ```
@@ -908,13 +908,13 @@ git commit -m "test(get_resource): add unit tests"
 ## Task 6: Register task in main.go
 
 **Files:**
-- Modify: `cmd/pico-agent/main.go`
+- Modify: `cmd/centcom-satellite/main.go`
 
 - [ ] **Step 1: Add import for get_resource**
 
 Add to imports:
 ```go
-"github.com/loafoe/pico-agent/internal/task/get_resource"
+"github.com/loafoe/centcom-satellite/internal/task/get_resource"
 ```
 
 - [ ] **Step 2: Register the task after other task registrations**
@@ -926,19 +926,19 @@ registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper
 
 - [ ] **Step 3: Verify build succeeds**
 
-Run: `cd ~/DEV/Go/pico-agent && go build ./...`
+Run: `cd ~/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Run all tests**
 
-Run: `cd ~/DEV/Go/pico-agent && go test ./... -v`
+Run: `cd ~/DEV/Go/centcom-satellite && go test ./... -v`
 Expected: All tests pass
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd ~/DEV/Go/pico-agent
-git add cmd/pico-agent/main.go
+cd ~/DEV/Go/centcom-satellite
+git add cmd/centcom-satellite/main.go
 git commit -m "feat(main): register get_resource task"
 ```
 
@@ -957,7 +957,7 @@ Add after the `get_events` tool registration (around line 349):
 // Specific tool: get_resource - read-only query for any resource by GVK
 s.mcpServer.AddTool(mcp.NewTool("get_resource",
 	mcp.WithDescription("Get any Kubernetes resource by apiVersion, kind, and name. Returns LLM-optimized summary by default."),
-	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target pico-agent")),
+	mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target centcom-satellite")),
 	mcp.WithString("apiVersion", mcp.Required(), mcp.Description("API version (e.g. 'v1', 'apps/v1', 'pkg.crossplane.io/v1beta1')")),
 	mcp.WithString("kind", mcp.Required(), mcp.Description("Resource kind (e.g. 'Pod', 'Deployment', 'Function')")),
 	mcp.WithString("name", mcp.Required(), mcp.Description("Resource name")),
@@ -1062,20 +1062,20 @@ After completing all tasks:
 - [ ] **Step 1: Build both projects**
 
 ```bash
-cd ~/DEV/Go/pico-agent && go build ./...
+cd ~/DEV/Go/centcom-satellite && go build ./...
 cd ~/DEV/Go/pico-mcp && go build ./...
 ```
 
 - [ ] **Step 2: Run all tests**
 
 ```bash
-cd ~/DEV/Go/pico-agent && go test ./...
+cd ~/DEV/Go/centcom-satellite && go test ./...
 cd ~/DEV/Go/pico-mcp && go test ./...
 ```
 
 - [ ] **Step 3: Manual integration test (requires cluster)**
 
-Start pico-agent, then test with curl or MCP client:
+Start centcom-satellite, then test with curl or MCP client:
 ```json
 {
   "type": "get_resource",

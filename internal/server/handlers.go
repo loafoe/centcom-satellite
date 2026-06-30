@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loafoe/pico-agent/internal/observability"
-	"github.com/loafoe/pico-agent/internal/spire"
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/spire"
+	"github.com/loafoe/centcom-satellite/internal/task"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -132,7 +132,7 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	// aggregated per task. Payload contents are deliberately not recorded as
 	// they may contain sensitive data (e.g. ConfigMap values).
 	ctx, span := observability.StartSpan(r.Context(), "task.execute "+req.Type)
-	span.SetAttributes(attribute.String("pico_agent.task.type", req.Type))
+	span.SetAttributes(attribute.String("centcom_satellite.task.type", req.Type))
 	result, err := h.registry.Execute(ctx, *req)
 
 	duration := time.Since(start).Seconds()
@@ -150,7 +150,7 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	if !result.Success {
 		status = "failure"
 	}
-	span.SetAttributes(attribute.Bool("pico_agent.task.success", result.Success))
+	span.SetAttributes(attribute.Bool("centcom_satellite.task.success", result.Success))
 	if !result.Success {
 		span.SetStatus(codes.Error, result.Error)
 	}

@@ -11,9 +11,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/observability"
-	"github.com/loafoe/pico-agent/internal/spire"
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/spire"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 // Config holds server configuration.

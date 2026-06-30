@@ -85,7 +85,7 @@ func TestExecuteGET(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Test", "value")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("hello"))
+		_, _ = w.Write([]byte("hello"))
 	}))
 	defer server.Close()
 

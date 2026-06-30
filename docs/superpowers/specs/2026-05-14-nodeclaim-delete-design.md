@@ -6,7 +6,7 @@
 
 ## Overview
 
-Add a task to pico-agent for safely deleting Karpenter NodeClaims. Deleting a NodeClaim (rather than the K8s Node directly) lets Karpenter orchestrate graceful drain, PDB compliance, and clean EC2 termination.
+Add a task to centcom-satellite for safely deleting Karpenter NodeClaims. Deleting a NodeClaim (rather than the K8s Node directly) lets Karpenter orchestrate graceful drain, PDB compliance, and clean EC2 termination.
 
 ## Use Cases
 
@@ -36,7 +36,7 @@ Uses `k8s.io/client-go/dynamic` to interact with the NodeClaim CRD (`karpenter.s
 
 - No new dependency on Karpenter SDK (~20+ transitive deps)
 - No version coupling with Karpenter releases
-- Matches existing pico-agent patterns
+- Matches existing centcom-satellite patterns
 - NodeClaim schema is simple and stable
 
 ## API
@@ -161,7 +161,7 @@ var nodeClaimGVR = schema.GroupVersionResource{
 
 ## RBAC Requirements
 
-### Helm Chart (at `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent`)
+### Helm Chart (at `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite`)
 
 Add to `values.yaml`:
 ```yaml
@@ -181,7 +181,7 @@ Add to `templates/clusterrole.yaml` (gated by feature flag):
 
 Bump chart version in `Chart.yaml`.
 
-### pico-agent deploy/rbac.yaml
+### centcom-satellite deploy/rbac.yaml
 
 Add ungated rule for clusters always using this feature:
 ```yaml

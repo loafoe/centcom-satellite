@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const TaskName = "connectivity_test"

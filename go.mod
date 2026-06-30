@@ -1,4 +1,4 @@
-module github.com/loafoe/pico-agent
+module github.com/loafoe/centcom-satellite
 
 go 1.25.0
 

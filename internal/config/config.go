@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/loafoe/pico-agent/internal/spire"
+	"github.com/loafoe/centcom-satellite/internal/spire"
 )
 
 // Config holds all application configuration.
@@ -113,7 +113,7 @@ func Load() (*Config, error) {
 		LogLevel:             getEnvString("LOG_LEVEL", "info"),
 		LogFormat:            getEnvString("LOG_FORMAT", "json"),
 		OTelEndpoint:         os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		OTelServiceName:      getEnvString("OTEL_SERVICE_NAME", "pico-agent"),
+		OTelServiceName:      getEnvString("OTEL_SERVICE_NAME", "centcom-satellite"),
 		SPIRE: spire.Config{
 			Enabled:          getEnvBool("SPIRE_ENABLED", false),
 			AgentSocket:      getEnvString("SPIRE_AGENT_SOCKET", "unix:///run/spire/agent/sockets/spire-agent.sock"),

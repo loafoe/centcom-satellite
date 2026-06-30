@@ -137,8 +137,8 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected default LogFormat 'json', got %s", cfg.LogFormat)
 	}
 
-	if cfg.OTelServiceName != "pico-agent" {
-		t.Errorf("expected default OTelServiceName 'pico-agent', got %s", cfg.OTelServiceName)
+	if cfg.OTelServiceName != "centcom-satellite" {
+		t.Errorf("expected default OTelServiceName 'centcom-satellite', got %s", cfg.OTelServiceName)
 	}
 
 	if cfg.AllowUnauthenticated != true {
@@ -149,7 +149,7 @@ func TestConfigDefaults(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go test ./internal/config/... -v`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go test ./internal/config/... -v`
 Expected: FAIL - `AllowUnauthenticated` field doesn't exist
 
 - [ ] **Step 3: Update config.go**
@@ -193,13 +193,13 @@ if !c.SPIRE.Enabled && !c.AllowUnauthenticated {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go test ./internal/config/... -v`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go test ./internal/config/... -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add internal/config/
 git commit -m "feat(config): replace WebhookSecret with AllowUnauthenticated
 
@@ -217,19 +217,19 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Delete the webhook directory**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 rm -rf internal/webhook
 ```
 
 - [ ] **Step 2: Verify build still works (expect failures in dependent files)**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: FAIL - imports of `internal/webhook` will fail in handlers.go, server.go, main.go
 
 - [ ] **Step 3: Commit deletion**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add -A internal/webhook
 git commit -m "refactor: delete webhook signature package
 
@@ -311,18 +311,18 @@ func (h *Handlers) authenticate(w http.ResponseWriter, r *http.Request, body []b
 Remove from imports:
 ```go
 // Remove this line:
-// "github.com/loafoe/pico-agent/internal/webhook"
+// "github.com/loafoe/centcom-satellite/internal/webhook"
 ```
 
 - [ ] **Step 4: Verify handlers.go compiles**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./internal/server/`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./internal/server/`
 Expected: FAIL - server.go still references old signature
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add internal/server/handlers.go
 git commit -m "refactor(handlers): remove webhook verifier, add allowUnauthenticated
 
@@ -357,18 +357,18 @@ func New(cfg Config, registry *task.Registry, metrics *observability.Metrics, sp
 Remove from imports:
 ```go
 // Remove this line:
-// "github.com/loafoe/pico-agent/internal/webhook"
+// "github.com/loafoe/centcom-satellite/internal/webhook"
 ```
 
 - [ ] **Step 3: Verify server package compiles**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./internal/server/`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./internal/server/`
 Expected: PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add internal/server/server.go
 git commit -m "refactor(server): remove webhook verifier parameter
 
@@ -380,14 +380,14 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ### Task 5: Update Main - Remove Webhook, Add Warning
 
 **Files:**
-- Modify: `cmd/pico-agent/main.go`
+- Modify: `cmd/centcom-satellite/main.go`
 
 - [ ] **Step 1: Remove webhook import and verifier creation**
 
 Remove from imports:
 ```go
 // Remove this line:
-// "github.com/loafoe/pico-agent/internal/webhook"
+// "github.com/loafoe/centcom-satellite/internal/webhook"
 ```
 
 Remove the verifier creation block (around lines 151-154):
@@ -427,14 +427,14 @@ if cfg.AllowUnauthenticated {
 
 - [ ] **Step 4: Verify full build and tests pass**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./... && go test ./... -v`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./... && go test ./... -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
-git add cmd/pico-agent/main.go
+cd /Users/andy/DEV/Go/centcom-satellite
+git add cmd/centcom-satellite/main.go
 git commit -m "refactor(main): remove webhook, add unauthenticated warning
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
@@ -445,32 +445,32 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ### Task 6: Update Helm Chart - Remove Webhook Resources
 
 **Files:**
-- Delete: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/secret.yaml`
-- Delete: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/secret-init-job.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/_helpers.tpl`
+- Delete: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/secret.yaml`
+- Delete: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/secret-init-job.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/_helpers.tpl`
 
 - [ ] **Step 1: Delete secret templates**
 
 ```bash
-rm /Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/secret.yaml
-rm /Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/secret-init-job.yaml
+rm /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/secret.yaml
+rm /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/secret-init-job.yaml
 ```
 
 - [ ] **Step 2: Remove helper functions from _helpers.tpl**
 
 Remove these template definitions from `_helpers.tpl`:
-- `pico-agent.secretName`
-- `pico-agent.createSecret`
-- `pico-agent.needsInitJob`
+- `centcom-satellite.secretName`
+- `centcom-satellite.createSecret`
+- `centcom-satellite.needsInitJob`
 
-The file should end after `pico-agent.serviceAccountName`.
+The file should end after `centcom-satellite.serviceAccountName`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/templates/
-git commit -m "refactor(pico-agent): remove webhook secret templates
+git add charts/centcom-satellite/templates/
+git commit -m "refactor(centcom-satellite): remove webhook secret templates
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
@@ -480,8 +480,8 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ### Task 7: Update Helm Chart - values.yaml and deployment.yaml
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml`
 
 - [ ] **Step 1: Update values.yaml**
 
@@ -520,7 +520,7 @@ Remove the WEBHOOK_SECRET env var block (lines 51-57):
 # - name: WEBHOOK_SECRET
 #   valueFrom:
 #     secretKeyRef:
-#       name: {{ include "pico-agent.secretName" . }}
+#       name: {{ include "centcom-satellite.secretName" . }}
 #       key: secret
 # {{- end }}
 ```
@@ -529,7 +529,7 @@ Remove the WEBHOOK_SECRET env var block (lines 51-57):
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-helm template test charts/pico-agent --set spire.trustDomains[0]=example.org
+helm template test charts/centcom-satellite --set spire.trustDomains[0]=example.org
 ```
 Expected: Valid YAML output without webhook references
 
@@ -537,8 +537,8 @@ Expected: Valid YAML output without webhook references
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/
-git commit -m "refactor(pico-agent): remove webhook config, default spire.enabled=true
+git add charts/centcom-satellite/
+git commit -m "refactor(centcom-satellite): remove webhook config, default spire.enabled=true
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
@@ -548,7 +548,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ### Task 8: Update Helm Chart - NOTES.txt
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/NOTES.txt`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/NOTES.txt`
 
 - [ ] **Step 1: Rewrite NOTES.txt for SPIRE-only auth**
 
@@ -558,7 +558,7 @@ Thank you for installing {{ .Chart.Name }}!
 Your release is named: {{ .Release.Name }}
 
 Endpoint URL (from within the cluster):
-  http://{{ include "pico-agent.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/task
+  http://{{ include "centcom-satellite.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/task
 
 Authentication:
   This deployment uses SPIFFE/SPIRE for workload identity authentication.
@@ -588,17 +588,17 @@ Example payload for PV resize:
 }
 
 To verify the installation:
-  kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "pico-agent.name" . }},app.kubernetes.io/instance={{ .Release.Name }}"
+  kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "centcom-satellite.name" . }},app.kubernetes.io/instance={{ .Release.Name }}"
 
-For more information, visit: https://github.com/loafoe/pico-agent
+For more information, visit: https://github.com/loafoe/centcom-satellite
 ```
 
 - [ ] **Step 2: Commit**
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/templates/NOTES.txt
-git commit -m "docs(pico-agent): update NOTES.txt for SPIRE-only auth
+git add charts/centcom-satellite/templates/NOTES.txt
+git commit -m "docs(centcom-satellite): update NOTES.txt for SPIRE-only auth
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
@@ -608,8 +608,8 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ### Task 9: Update CLAUDE.md and Bump Versions
 
 **Files:**
-- Modify: `/Users/andy/DEV/Go/pico-agent/CLAUDE.md`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/Chart.yaml`
+- Modify: `/Users/andy/DEV/Go/centcom-satellite/CLAUDE.md`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/Chart.yaml`
 
 - [ ] **Step 1: Update CLAUDE.md**
 
@@ -624,7 +624,7 @@ make test
 
 # Run locally (requires kubeconfig)
 export ALLOW_UNAUTHENTICATED=true
-go run ./cmd/pico-agent
+go run ./cmd/centcom-satellite
 
 # Send test request (no signature needed in dev mode)
 curl -X POST http://localhost:8080/task \
@@ -642,7 +642,7 @@ Bump `version` and `appVersion` to 0.9.0.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add CLAUDE.md
 git commit -m "docs: update CLAUDE.md for SPIRE-only auth
 
@@ -651,8 +651,8 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/Chart.yaml
-git commit -m "chore(pico-agent): bump version to 0.9.0
+git add charts/centcom-satellite/Chart.yaml
+git commit -m "chore(centcom-satellite): bump version to 0.9.0
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
@@ -664,7 +664,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Run full test suite**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 go test ./... -v
 ```
 Expected: All tests pass
@@ -672,8 +672,8 @@ Expected: All tests pass
 - [ ] **Step 2: Test local dev mode**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
-ALLOW_UNAUTHENTICATED=true go run ./cmd/pico-agent &
+cd /Users/andy/DEV/Go/centcom-satellite
+ALLOW_UNAUTHENTICATED=true go run ./cmd/centcom-satellite &
 sleep 2
 curl -s http://localhost:8080/task -X POST -H "Content-Type: application/json" -d '{"type":"cluster_info","payload":{}}'
 kill %1
@@ -684,7 +684,7 @@ Expected: Response (may fail due to no k8s, but auth should pass)
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-helm lint charts/pico-agent
-helm template test charts/pico-agent --set spire.trustDomains[0]=example.org | head -100
+helm lint charts/centcom-satellite
+helm template test charts/centcom-satellite --set spire.trustDomains[0]=example.org | head -100
 ```
 Expected: No errors, valid YAML

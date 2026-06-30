@@ -1,15 +1,15 @@
-# Write Operations for pico-agent
+# Write Operations for centcom-satellite
 
 **Date:** 2026-05-08  
 **Status:** Approved
 
 ## Overview
 
-Add three opt-in write operations to pico-agent for incident response: workload restart, workload scaling, and pod eviction. Each operation is individually enabled via helm chart feature flags, with fine-grained RBAC permissions per feature.
+Add three opt-in write operations to centcom-satellite for incident response: workload restart, workload scaling, and pod eviction. Each operation is individually enabled via helm chart feature flags, with fine-grained RBAC permissions per feature.
 
 ## Goals
 
-- Enable common operational mutations through pico-agent (restart, scale, evict)
+- Enable common operational mutations through centcom-satellite (restart, scale, evict)
 - Maintain security via opt-in feature flags and least-privilege RBAC
 - Provide safety rails to prevent accidental outages
 - Support graceful capability discovery (agents advertise what they support)
@@ -257,7 +257,7 @@ Capabilities are advertised implicitly: disabled tasks are not registered, so th
 ## File Structure
 
 ```
-pico-agent/
+centcom-satellite/
 ├── internal/
 │   ├── config/
 │   │   └── config.go                    # Add feature flags
@@ -272,10 +272,10 @@ pico-agent/
 │           ├── task.go
 │           └── task_test.go
 ├── cmd/
-│   └── pico-agent/
+│   └── centcom-satellite/
 │       └── main.go                      # Conditional registration
 
-pico-agent helm chart/
+centcom-satellite helm chart/
 ├── values.yaml                          # Add feature flags
 └── templates/
     ├── clusterrole.yaml                 # Add conditional RBAC
@@ -300,7 +300,7 @@ pico-mcp/
 
 ## Rollout Plan
 
-1. Implement pico-agent tasks and helm chart changes
+1. Implement centcom-satellite tasks and helm chart changes
 2. Deploy to dip-ce-k3s-eu with all features disabled (verify no regression)
 3. Enable one feature at a time, test in staging
 4. Update pico-mcp with error enrichment and tool schemas

@@ -19,7 +19,7 @@ import (
 
 // Tracer is the global tracer for the application.
 // It's initialized to a no-op tracer by default.
-var Tracer trace.Tracer = noop.NewTracerProvider().Tracer("pico-agent")
+var Tracer trace.Tracer = noop.NewTracerProvider().Tracer("centcom-satellite")
 
 // Propagator carries W3C trace context (traceparent/tracestate) and baggage
 // across service boundaries. pico-mcp injects these headers when it calls us;

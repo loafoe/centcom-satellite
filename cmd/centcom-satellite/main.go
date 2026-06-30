@@ -1,4 +1,4 @@
-// Package main is the entry point for pico-agent.
+// Package main is the entry point for centcom-satellite.
 package main
 
 import (
@@ -9,47 +9,47 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/loafoe/pico-agent/internal/config"
-	"github.com/loafoe/pico-agent/internal/k8s"
-	"github.com/loafoe/pico-agent/internal/observability"
-	"github.com/loafoe/pico-agent/internal/server"
-	"github.com/loafoe/pico-agent/internal/spire"
-	"github.com/loafoe/pico-agent/internal/task"
-	"github.com/loafoe/pico-agent/internal/task/cluster_health"
-	"github.com/loafoe/pico-agent/internal/task/cluster_info"
-	"github.com/loafoe/pico-agent/internal/task/connectivity_test"
-	"github.com/loafoe/pico-agent/internal/task/dns_check"
-	"github.com/loafoe/pico-agent/internal/task/get_configmap"
-	"github.com/loafoe/pico-agent/internal/task/get_events"
-	"github.com/loafoe/pico-agent/internal/task/get_logs"
-	"github.com/loafoe/pico-agent/internal/task/get_resource"
-	"github.com/loafoe/pico-agent/internal/task/http_request"
-	"github.com/loafoe/pico-agent/internal/task/list_argocd_applications"
-	"github.com/loafoe/pico-agent/internal/task/list_configmaps"
-	"github.com/loafoe/pico-agent/internal/task/list_endpoints"
-	"github.com/loafoe/pico-agent/internal/task/list_gateways"
-	"github.com/loafoe/pico-agent/internal/task/list_ingresses"
-	"github.com/loafoe/pico-agent/internal/task/list_namespaces"
-	"github.com/loafoe/pico-agent/internal/task/list_network_policies"
-	"github.com/loafoe/pico-agent/internal/task/list_nodeclaims"
-	"github.com/loafoe/pico-agent/internal/task/list_nodepools"
-	"github.com/loafoe/pico-agent/internal/task/list_pods"
-	"github.com/loafoe/pico-agent/internal/task/list_pvcs"
-	"github.com/loafoe/pico-agent/internal/task/list_routes"
-	"github.com/loafoe/pico-agent/internal/task/list_services"
-	"github.com/loafoe/pico-agent/internal/task/list_vpas"
-	"github.com/loafoe/pico-agent/internal/task/list_workloads"
-	"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
-	"github.com/loafoe/pico-agent/internal/task/pod_evict"
-	"github.com/loafoe/pico-agent/internal/task/pod_resize"
-	"github.com/loafoe/pico-agent/internal/task/pod_resource_usage"
-	"github.com/loafoe/pico-agent/internal/task/pv_resize"
-	"github.com/loafoe/pico-agent/internal/task/pv_resize_status"
-	"github.com/loafoe/pico-agent/internal/task/pv_usage"
-	"github.com/loafoe/pico-agent/internal/task/resource_pressure"
-	"github.com/loafoe/pico-agent/internal/task/storage_status"
-	"github.com/loafoe/pico-agent/internal/task/workload_restart"
-	"github.com/loafoe/pico-agent/internal/task/workload_scale"
+	"github.com/loafoe/centcom-satellite/internal/config"
+	"github.com/loafoe/centcom-satellite/internal/k8s"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/server"
+	"github.com/loafoe/centcom-satellite/internal/spire"
+	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/cluster_health"
+	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
+	"github.com/loafoe/centcom-satellite/internal/task/connectivity_test"
+	"github.com/loafoe/centcom-satellite/internal/task/dns_check"
+	"github.com/loafoe/centcom-satellite/internal/task/get_configmap"
+	"github.com/loafoe/centcom-satellite/internal/task/get_events"
+	"github.com/loafoe/centcom-satellite/internal/task/get_logs"
+	"github.com/loafoe/centcom-satellite/internal/task/get_resource"
+	"github.com/loafoe/centcom-satellite/internal/task/http_request"
+	"github.com/loafoe/centcom-satellite/internal/task/list_argocd_applications"
+	"github.com/loafoe/centcom-satellite/internal/task/list_configmaps"
+	"github.com/loafoe/centcom-satellite/internal/task/list_endpoints"
+	"github.com/loafoe/centcom-satellite/internal/task/list_gateways"
+	"github.com/loafoe/centcom-satellite/internal/task/list_ingresses"
+	"github.com/loafoe/centcom-satellite/internal/task/list_namespaces"
+	"github.com/loafoe/centcom-satellite/internal/task/list_network_policies"
+	"github.com/loafoe/centcom-satellite/internal/task/list_nodeclaims"
+	"github.com/loafoe/centcom-satellite/internal/task/list_nodepools"
+	"github.com/loafoe/centcom-satellite/internal/task/list_pods"
+	"github.com/loafoe/centcom-satellite/internal/task/list_pvcs"
+	"github.com/loafoe/centcom-satellite/internal/task/list_routes"
+	"github.com/loafoe/centcom-satellite/internal/task/list_services"
+	"github.com/loafoe/centcom-satellite/internal/task/list_vpas"
+	"github.com/loafoe/centcom-satellite/internal/task/list_workloads"
+	"github.com/loafoe/centcom-satellite/internal/task/nodeclaim_delete"
+	"github.com/loafoe/centcom-satellite/internal/task/pod_evict"
+	"github.com/loafoe/centcom-satellite/internal/task/pod_resize"
+	"github.com/loafoe/centcom-satellite/internal/task/pod_resource_usage"
+	"github.com/loafoe/centcom-satellite/internal/task/pv_resize"
+	"github.com/loafoe/centcom-satellite/internal/task/pv_resize_status"
+	"github.com/loafoe/centcom-satellite/internal/task/pv_usage"
+	"github.com/loafoe/centcom-satellite/internal/task/resource_pressure"
+	"github.com/loafoe/centcom-satellite/internal/task/storage_status"
+	"github.com/loafoe/centcom-satellite/internal/task/workload_restart"
+	"github.com/loafoe/centcom-satellite/internal/task/workload_scale"
 )
 
 // Version is set at build time.
@@ -65,7 +65,7 @@ func main() {
 
 	// Setup logging
 	observability.SetupLogging(cfg.LogLevel, cfg.LogFormat)
-	slog.Info("starting pico-agent", "version", Version)
+	slog.Info("starting centcom-satellite", "version", Version)
 
 	if cfg.AllowUnauthenticated {
 		slog.Warn("running without authentication - development mode only")

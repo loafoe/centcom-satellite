@@ -2,17 +2,17 @@
 
 ## Overview
 
-A new pico-agent task that retrieves any Kubernetes resource (built-in or CRD) using the dynamic client and REST mapper. Exposed via pico-mcp as an MCP tool.
+A new centcom-satellite task that retrieves any Kubernetes resource (built-in or CRD) using the dynamic client and REST mapper. Exposed via pico-mcp as an MCP tool.
 
 ## Motivation
 
-Current pico-agent tasks use typed clients, limiting visibility to predefined resource types. Modern Kubernetes deployments rely heavily on CRDs (Crossplane, cert-manager, SPIRE, etc.). A generic `get_resource` tool enables inspection of any resource without adding task-specific code for each CRD.
+Current centcom-satellite tasks use typed clients, limiting visibility to predefined resource types. Modern Kubernetes deployments rely heavily on CRDs (Crossplane, cert-manager, SPIRE, etc.). A generic `get_resource` tool enables inspection of any resource without adding task-specific code for each CRD.
 
 ## Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Location | pico-agent | Keep all k8s access in pico-agent, consistent with existing architecture |
+| Location | centcom-satellite | Keep all k8s access in centcom-satellite, consistent with existing architecture |
 | GVR resolution | Discovery + REST mapper | Standard k8s pattern, handles irregular plurals, client-go caches results |
 | Default output | summary | LLM-optimized output provides more value than raw JSON |
 | Namespace handling | Auto-detect via discovery | Error if namespaced resource missing namespace; don't assume "default" |
@@ -24,7 +24,7 @@ Current pico-agent tasks use typed clients, limiting visibility to predefined re
 
 ```
 get_resource
-├── agent_id (required) — target pico-agent
+├── agent_id (required) — target centcom-satellite
 ├── apiVersion (required) — e.g. "pkg.crossplane.io/v1beta1"
 ├── kind (required) — e.g. "FunctionRevision"
 ├── name (required) — resource name
@@ -32,7 +32,7 @@ get_resource
 └── output (optional) — "summary" (default) or "json"
 ```
 
-### Task Payload (pico-agent)
+### Task Payload (centcom-satellite)
 
 ```go
 type Payload struct {
@@ -138,7 +138,7 @@ Structured error response format:
 | Code | HTTP Status | When | Hint |
 |------|-------------|------|------|
 | `NOT_FOUND` | 404 | Resource doesn't exist | Check the resource name and namespace |
-| `FORBIDDEN` | 403 | RBAC denies access | pico-agent needs RBAC permission for this resource |
+| `FORBIDDEN` | 403 | RBAC denies access | centcom-satellite needs RBAC permission for this resource |
 | `API_NOT_FOUND` | 404 | CRD/API group not installed | Install the CRD or check apiVersion spelling |
 | `INVALID_REQUEST` | — | Malformed apiVersion/kind | Check apiVersion format (group/version) |
 | `NAMESPACE_REQUIRED` | — | Namespaced resource, no namespace given | This resource is namespaced; provide namespace parameter |
@@ -146,7 +146,7 @@ Structured error response format:
 
 ## Implementation
 
-### pico-agent Changes
+### centcom-satellite Changes
 
 **1. Extend k8s client (`internal/k8s/client.go`):**
 
@@ -184,7 +184,7 @@ Add to task registry alongside existing tasks.
 ```go
 s.mcpServer.AddTool(mcp.NewTool("get_resource",
     mcp.WithDescription("Get any Kubernetes resource by apiVersion, kind, and name"),
-    mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target pico-agent")),
+    mcp.WithString("agent_id", mcp.Required(), mcp.Description("The ID of the target centcom-satellite")),
     mcp.WithString("apiVersion", mcp.Required(), mcp.Description("API version (e.g. 'apps/v1', 'pkg.crossplane.io/v1beta1')")),
     mcp.WithString("kind", mcp.Required(), mcp.Description("Resource kind (e.g. 'Deployment', 'Function')")),
     mcp.WithString("name", mcp.Required(), mcp.Description("Resource name")),
@@ -198,7 +198,7 @@ s.mcpServer.AddTool(mcp.NewTool("get_resource",
 
 **2. Handler implementation:**
 
-Forward payload to pico-agent `get_resource` task, return result.
+Forward payload to centcom-satellite `get_resource` task, return result.
 
 ## Testing
 
