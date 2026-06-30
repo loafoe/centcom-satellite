@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const TaskName = "http_request"
@@ -193,7 +193,7 @@ func (t *Task) doRequest(ctx context.Context, method string, payload Payload, ti
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	truncated := len(body) > maxBodySize

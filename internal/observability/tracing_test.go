@@ -13,7 +13,7 @@ import (
 func TestSetupTracingInstallsPropagatorWhenDisabled(t *testing.T) {
 	// With no endpoint, export is disabled but the global propagator must
 	// still be installed so trace context flows end to end.
-	shutdown, err := SetupTracing(context.Background(), "pico-agent", "test", "")
+	shutdown, err := SetupTracing(context.Background(), "centcom-satellite", "test", "")
 	if err != nil {
 		t.Fatalf("SetupTracing returned error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestSetupTracingInstallsPropagatorWhenDisabled(t *testing.T) {
 }
 
 func TestPropagatorRoundTripsTraceContext(t *testing.T) {
-	// Simulate pico-mcp injecting trace context, then pico-agent extracting it.
+	// Simulate pico-mcp injecting trace context, then centcom-satellite extracting it.
 	traceID, _ := trace.TraceIDFromHex("11111111111111111111111111111111")
 	spanID, _ := trace.SpanIDFromHex("2222222222222222")
 	sc := trace.NewSpanContext(trace.SpanContextConfig{

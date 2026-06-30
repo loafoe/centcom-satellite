@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -35,12 +35,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
+          args: --timeout 5m
 
   build:
     runs-on: ubuntu-latest
@@ -49,7 +50,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: 'go.mod'
 
       - name: Build
-        run: go build -o /dev/null ./cmd/pico-agent
+        run: go build -o /dev/null ./cmd/centcom-satellite

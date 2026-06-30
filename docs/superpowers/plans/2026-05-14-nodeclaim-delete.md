@@ -19,11 +19,11 @@
 | `internal/task/nodeclaim_delete/task.go` | Task implementation |
 | `internal/task/nodeclaim_delete/task_test.go` | Unit tests |
 | `internal/config/config.go` | Add `NodeclaimDeleteEnabled` feature flag |
-| `cmd/pico-agent/main.go` | Register task when enabled |
-| `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml` | Add `features.nodeclaimDelete` |
-| `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/clusterrole.yaml` | Add RBAC rule |
-| `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml` | Add env var |
-| `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/Chart.yaml` | Bump version |
+| `cmd/centcom-satellite/main.go` | Register task when enabled |
+| `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml` | Add `features.nodeclaimDelete` |
+| `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/clusterrole.yaml` | Add RBAC rule |
+| `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml` | Add env var |
+| `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/Chart.yaml` | Bump version |
 
 ---
 
@@ -91,7 +91,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const (
@@ -655,14 +655,14 @@ git commit -m "test(nodeclaim_delete): add comprehensive test coverage"
 ## Task 6: Register Task in main.go
 
 **Files:**
-- Modify: `cmd/pico-agent/main.go`
+- Modify: `cmd/centcom-satellite/main.go`
 
 - [ ] **Step 6.1: Add import**
 
-Add to imports in `cmd/pico-agent/main.go`:
+Add to imports in `cmd/centcom-satellite/main.go`:
 
 ```go
-"github.com/loafoe/pico-agent/internal/task/nodeclaim_delete"
+"github.com/loafoe/centcom-satellite/internal/task/nodeclaim_delete"
 ```
 
 - [ ] **Step 6.2: Register task when feature enabled**
@@ -679,13 +679,13 @@ if cfg.Features.NodeclaimDeleteEnabled {
 
 - [ ] **Step 6.3: Build to verify**
 
-Run: `go build ./cmd/pico-agent/...`
+Run: `go build ./cmd/centcom-satellite/...`
 Expected: Success
 
 - [ ] **Step 6.4: Commit**
 
 ```bash
-git add cmd/pico-agent/main.go
+git add cmd/centcom-satellite/main.go
 git commit -m "feat(main): register nodeclaim_delete task"
 ```
 
@@ -694,14 +694,14 @@ git commit -m "feat(main): register nodeclaim_delete task"
 ## Task 7: Update Helm Chart
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/clusterrole.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/Chart.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/clusterrole.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/Chart.yaml`
 
 - [ ] **Step 7.1: Add feature flag to values.yaml**
 
-Add after `podResizeAbsoluteCap` (around line 92) in `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml`:
+Add after `podResizeAbsoluteCap` (around line 92) in `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml`:
 
 ```yaml
   # Enable nodeclaim_delete task for Karpenter node management
@@ -711,7 +711,7 @@ Add after `podResizeAbsoluteCap` (around line 92) in `/Users/andy/DEV/Personal/h
 
 - [ ] **Step 7.2: Add RBAC rule to clusterrole.yaml**
 
-Add before `{{- with .Values.rbac.additionalRules }}` (around line 132) in `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/clusterrole.yaml`:
+Add before `{{- with .Values.rbac.additionalRules }}` (around line 132) in `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/clusterrole.yaml`:
 
 ```yaml
 {{- if .Values.features.nodeclaimDelete }}
@@ -724,7 +724,7 @@ Add before `{{- with .Values.rbac.additionalRules }}` (around line 132) in `/Use
 
 - [ ] **Step 7.3: Add env var to deployment.yaml**
 
-Add after the `POD_RESIZE_ABSOLUTE_CAP` block (around line 107) in `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml`:
+Add after the `POD_RESIZE_ABSOLUTE_CAP` block (around line 107) in `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml`:
 
 ```yaml
             {{- if .Values.features.nodeclaimDelete }}
@@ -735,7 +735,7 @@ Add after the `POD_RESIZE_ABSOLUTE_CAP` block (around line 107) in `/Users/andy/
 
 - [ ] **Step 7.4: Bump chart version**
 
-In `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/Chart.yaml`, change:
+In `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/Chart.yaml`, change:
 
 ```yaml
 version: 0.22.0
@@ -743,15 +743,15 @@ version: 0.22.0
 
 - [ ] **Step 7.5: Test helm template**
 
-Run: `helm template test /Users/andy/DEV/Personal/helm-charts/charts/pico-agent --set features.nodeclaimDelete=true | grep -A5 "nodeclaim"`
+Run: `helm template test /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite --set features.nodeclaimDelete=true | grep -A5 "nodeclaim"`
 Expected: Should show RBAC rule and env var for nodeclaim_delete
 
 - [ ] **Step 7.6: Commit Helm chart changes**
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/
-git commit -m "feat(pico-agent): add nodeclaimDelete feature flag
+git add charts/centcom-satellite/
+git commit -m "feat(centcom-satellite): add nodeclaimDelete feature flag
 
 - Add features.nodeclaimDelete to values.yaml
 - Add RBAC rule for karpenter.sh nodeclaims
@@ -764,7 +764,7 @@ git commit -m "feat(pico-agent): add nodeclaimDelete feature flag
 ## Task 8: Update Documentation
 
 **Files:**
-- Modify: `/Users/andy/DEV/Go/pico-agent/CLAUDE.md`
+- Modify: `/Users/andy/DEV/Go/centcom-satellite/CLAUDE.md`
 
 - [ ] **Step 8.1: Add nodeclaim_delete to Current Tasks section**
 
@@ -821,7 +821,7 @@ Add to the Helm chart section an example:
 ```markdown
 For NodeClaim deletion (Karpenter node management):
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set features.nodeclaimDelete=true
 ```
 ```
@@ -829,7 +829,7 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
 - [ ] **Step 8.4: Commit documentation**
 
 ```bash
-cd /Users/andy/DEV/Go/pico-agent
+cd /Users/andy/DEV/Go/centcom-satellite
 git add CLAUDE.md
 git commit -m "docs: add nodeclaim_delete task documentation"
 ```
@@ -850,12 +850,12 @@ Expected: No errors
 
 - [ ] **Step 9.3: Build binary**
 
-Run: `go build -o /dev/null ./cmd/pico-agent`
+Run: `go build -o /dev/null ./cmd/centcom-satellite`
 Expected: Success
 
 - [ ] **Step 9.4: Verify Helm chart**
 
-Run: `helm lint /Users/andy/DEV/Personal/helm-charts/charts/pico-agent`
+Run: `helm lint /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite`
 Expected: No errors
 
 ---
@@ -864,7 +864,7 @@ Expected: No errors
 
 After completing all tasks:
 
-1. **pico-agent repo** will have:
+1. **centcom-satellite repo** will have:
    - New `nodeclaim_delete` task with full test coverage
    - Feature flag in config
    - Task registration in main.go

@@ -122,7 +122,8 @@ func TestTask_Execute_PodRestarts(t *testing.T) {
 
 	var foundRecent, foundWaiting bool
 	for _, up := range report.UnhealthyPods {
-		if up.Name == "pod-recent" {
+		switch up.Name {
+		case "pod-recent":
 			foundRecent = true
 			assert.Equal(t, "HighRestarts", up.Phase)
 			assert.Equal(t, int32(6), up.RestartCount)
@@ -130,7 +131,7 @@ func TestTask_Execute_PodRestarts(t *testing.T) {
 			assert.Equal(t, recentRestartTime.Unix(), up.LastRestartTime.Unix())
 			assert.Equal(t, "OOMKilled", up.LastRestartReason)
 			assert.Equal(t, "OOM killed container", up.LastRestartMessage)
-		} else if up.Name == "pod-waiting" {
+		case "pod-waiting":
 			foundWaiting = true
 			assert.Equal(t, "Waiting", up.Phase)
 			assert.Equal(t, "CrashLoopBackOff", up.Reason)

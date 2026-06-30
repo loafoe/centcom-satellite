@@ -44,7 +44,7 @@ type JWTConfig struct {
 
 	// Audiences is the list of expected JWT audience values.
 	// The JWT must contain at least one of these audiences.
-	// Example: ["pico-agent", "https://pico-agent.example.org"]
+	// Example: ["centcom-satellite", "https://centcom-satellite.example.org"]
 	Audiences []string
 }
 

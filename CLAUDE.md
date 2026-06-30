@@ -1,17 +1,17 @@
-# CLAUDE.md - pico-agent
+# CLAUDE.md - centcom-satellite
 
 ## Project Overview
 
-**pico-agent** is a lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations. It's designed for AI agent integration, allowing automated cluster management through a secure webhook interface.
+**centcom-satellite** is a lightweight Kubernetes helper service that receives webhook-style task requests and executes cluster operations. It's designed for AI agent integration, allowing automated cluster management through a secure webhook interface.
 
-**Repository**: github.com/loafoe/pico-agent  
-**Module**: github.com/loafoe/pico-agent  
+**Repository**: github.com/loafoe/centcom-satellite  
+**Module**: github.com/loafoe/centcom-satellite  
 **License**: MIT (c) 2026 Andy Lo-A-Foe
 
 ## Architecture
 
 ```
-cmd/pico-agent/main.go          # Entry point
+cmd/centcom-satellite/main.go          # Entry point
 internal/
   config/config.go              # Environment-based configuration
   server/
@@ -121,7 +121,7 @@ Environment variables:
 - `LOG_FORMAT` (default: json) - json, text
 - `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint (span export). When empty, spans are not exported but trace context is still propagated.
 - `OTEL_EXPORTER_OTLP_INSECURE` / `OTEL_EXPORTER_OTLP_TRACES_INSECURE` - set to `false` to use TLS for the OTLP exporter (default: insecure/plaintext)
-- `OTEL_SERVICE_NAME` (default: pico-agent) - Service name for tracing
+- `OTEL_SERVICE_NAME` (default: centcom-satellite) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 
 SPIRE configuration:
@@ -136,7 +136,7 @@ SPIRE configuration:
 ## Metrics
 
 Prometheus metrics are exposed on `METRICS_PORT` (default 9090) at `/metrics`, alongside the
-standard Go runtime and process collectors. Application metrics (all prefixed `pico_agent_`):
+standard Go runtime and process collectors. Application metrics (all prefixed `centcom_satellite_`):
 
 | Metric | Type | Labels | Notes |
 |--------|------|--------|-------|
@@ -160,19 +160,19 @@ and the k8s `resource` label (`internal/k8s/metrics_transport.go`). All metrics 
 
 ## Tracing & End-to-End Traceability
 
-pico-agent participates in distributed traces that originate in **pico-mcp** (the
-caller). The full chain is: `pico-mcp → [HTTP /task] → pico-agent → [client-go] → kube-apiserver`,
+centcom-satellite participates in distributed traces that originate in **pico-mcp** (the
+caller). The full chain is: `pico-mcp → [HTTP /task] → centcom-satellite → [client-go] → kube-apiserver`,
 all stitched into one trace via **W3C Trace Context** (`traceparent`/`tracestate`)
 plus baggage.
 
-Note: pico-agent is a plain HTTP/JSON webhook receiver, **not** an MCP server, so
+Note: centcom-satellite is a plain HTTP/JSON webhook receiver, **not** an MCP server, so
 the MCP-specific instrumentation conventions (e.g. grafana's `mcpconv`, which
 encode `tools/call`/MCP method semantics) do not apply here. The relevant standard
 for this hop is W3C Trace Context over HTTP + OTel HTTP/k8s semantic conventions.
 
 **Propagation is always on.** The global OTel propagator is installed in
 `SetupTracing` even when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset — so trace context
-flows through pico-agent regardless of whether this process exports its own spans.
+flows through centcom-satellite regardless of whether this process exports its own spans.
 Span export (to the OTLP collector) is the only thing gated by the endpoint.
 
 Instrumentation points:
@@ -180,7 +180,7 @@ Instrumentation points:
 | Hop | Mechanism | File |
 |-----|-----------|------|
 | Inbound HTTP | `otelhttp.NewHandler` server span; extracts `traceparent` from pico-mcp; span named `METHOD <route>` (normalized, low-cardinality) | `internal/server/middleware.go` (`TracingMiddleware`) |
-| Task dispatch | child span `task.execute <type>` with `pico_agent.task.type` / `pico_agent.task.success` attributes; `RecordError` + Error status on failure. Payloads are **not** recorded (may hold secrets) | `internal/server/handlers.go` |
+| Task dispatch | child span `task.execute <type>` with `centcom_satellite.task.type` / `centcom_satellite.task.success` attributes; `RecordError` + Error status on failure. Payloads are **not** recorded (may hold secrets) | `internal/server/handlers.go` |
 | Outbound k8s API | `otelhttp.NewTransport` wraps the metrics transport; creates `k8s <verb> <resource>` child spans and injects `traceparent` into every client-go request | `internal/k8s/metrics_transport.go` (`wrapTransport`) |
 | Logs | slog handler injects `trace_id`/`span_id` from context into records (`*Context` log calls); access logs include them too | `internal/observability/logging.go`, `internal/server/middleware.go` |
 
@@ -198,30 +198,30 @@ make docker-build
 ```
 
 **CI/CD**: GitHub Actions builds and signs images on push to main and tags:
-- `ghcr.io/loafoe/pico-agent:latest` (main branch)
-- `ghcr.io/loafoe/pico-agent:vX.Y.Z` (tagged releases)
+- `ghcr.io/loafoe/centcom-satellite:latest` (main branch)
+- `ghcr.io/loafoe/centcom-satellite:vX.Y.Z` (tagged releases)
 
 **Verify image signature** (keyless cosign):
 ```bash
-cosign verify ghcr.io/loafoe/pico-agent:v0.4.0 \
-  --certificate-identity-regexp='https://github.com/loafoe/pico-agent/.*' \
+cosign verify ghcr.io/loafoe/centcom-satellite:v0.4.0 \
+  --certificate-identity-regexp='https://github.com/loafoe/centcom-satellite/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
 
 ## Helm Chart
 
-**Repository**: oci://ghcr.io/loafoe/helm-charts/pico-agent  
-**Source**: /Users/andy/DEV/Personal/helm-charts/charts/pico-agent
+**Repository**: oci://ghcr.io/loafoe/helm-charts/centcom-satellite  
+**Source**: /Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite
 
 **Install**:
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
-  --namespace pico-agent --create-namespace
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
+  --namespace centcom-satellite --create-namespace
 ```
 
 The chart uses SPIRE for authentication by default. For mTLS with federated trust domains:
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.trustDomains[1]=partner.com' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent' \
@@ -230,15 +230,15 @@ helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
 
 For JWT-SVID authentication (useful when mTLS is not feasible):
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set 'spire.trustDomains[0]=example.org' \
   --set spire.jwt.enabled=true \
-  --set 'spire.jwt.audiences[0]=pico-agent'
+  --set 'spire.jwt.audiences[0]=centcom-satellite'
 ```
 
 For NodeClaim deletion (Karpenter node management):
 ```bash
-helm install pico-agent oci://ghcr.io/loafoe/helm-charts/pico-agent \
+helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
   --set features.nodeclaimDelete=true
 ```
 
@@ -250,7 +250,7 @@ make test
 
 # Run locally (requires kubeconfig)
 export ALLOW_UNAUTHENTICATED=true
-go run ./cmd/pico-agent
+go run ./cmd/centcom-satellite
 
 # Send test request (no signature needed in dev mode)
 curl -X POST http://localhost:8080/task \
@@ -268,7 +268,7 @@ curl -X POST http://localhost:8080/task \
    }
    ```
 
-2. Register in `cmd/pico-agent/main.go`:
+2. Register in `cmd/centcom-satellite/main.go`:
    ```go
    registry.Register(new_task.New(dependencies))
    ```
@@ -277,7 +277,7 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **pico-agent**: v0.41.0
+- **centcom-satellite**: v0.41.0
 - **Helm chart**: 0.42.0
 
 ## Key Dependencies

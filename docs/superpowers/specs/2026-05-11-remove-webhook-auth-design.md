@@ -5,7 +5,7 @@
 
 ## Summary
 
-Remove webhook signature (HMAC-SHA256) authentication from pico-agent. The agent will authenticate via SPIRE (mTLS or JWT-SVID) in production, with an explicit `ALLOW_UNAUTHENTICATED` env var for local development.
+Remove webhook signature (HMAC-SHA256) authentication from centcom-satellite. The agent will authenticate via SPIRE (mTLS or JWT-SVID) in production, with an explicit `ALLOW_UNAUTHENTICATED` env var for local development.
 
 ## Motivation
 
@@ -55,7 +55,7 @@ Request arrives
 
 - Remove `verifier *webhook.Verifier` field from `Handlers` struct
 - Remove `verifier` parameter from `NewHandlers()`
-- Remove `"github.com/loafoe/pico-agent/internal/webhook"` import
+- Remove `"github.com/loafoe/centcom-satellite/internal/webhook"` import
 - Update `authenticate()`:
   - Remove webhook signature verification block (lines 71-83)
   - Add `allowUnauthenticated bool` field to `Handlers` or pass via config
@@ -64,12 +64,12 @@ Request arrives
 #### Modify: `internal/server/server.go`
 
 - Remove `verifier *webhook.Verifier` parameter from `New()`
-- Remove `"github.com/loafoe/pico-agent/internal/webhook"` import
+- Remove `"github.com/loafoe/centcom-satellite/internal/webhook"` import
 - Pass `allowUnauthenticated` config to handlers
 
-#### Modify: `cmd/pico-agent/main.go`
+#### Modify: `cmd/centcom-satellite/main.go`
 
-- Remove `"github.com/loafoe/pico-agent/internal/webhook"` import
+- Remove `"github.com/loafoe/centcom-satellite/internal/webhook"` import
 - Remove verifier creation block (lines 151-154)
 - Remove `verifier` from `server.New()` call
 - Add startup warning when `AllowUnauthenticated` is true:
@@ -89,9 +89,9 @@ Request arrives
 #### Modify: `templates/_helpers.tpl`
 
 Remove these template functions:
-- `pico-agent.secretName`
-- `pico-agent.createSecret`
-- `pico-agent.needsInitJob`
+- `centcom-satellite.secretName`
+- `centcom-satellite.createSecret`
+- `centcom-satellite.needsInitJob`
 
 #### Modify: `values.yaml`
 
@@ -124,7 +124,7 @@ Remove the webhook secret env var block (lines 51-57):
 - name: WEBHOOK_SECRET
   valueFrom:
     secretKeyRef:
-      name: {{ include "pico-agent.secretName" . }}
+      name: {{ include "centcom-satellite.secretName" . }}
       key: secret
 {{- end }}
 ```
@@ -173,7 +173,7 @@ Update to remove webhook secret references and document SPIRE-only auth.
 **For local development:**
 ```bash
 export ALLOW_UNAUTHENTICATED=true
-go run ./cmd/pico-agent
+go run ./cmd/centcom-satellite
 ```
 
 ## Testing

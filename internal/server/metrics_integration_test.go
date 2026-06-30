@@ -11,8 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/loafoe/pico-agent/internal/observability"
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 // TestMetricsEndToEnd wires the real middleware chain to the task handler and
@@ -55,11 +55,11 @@ func TestMetricsEndToEnd(t *testing.T) {
 	out := string(raw)
 
 	wantSubstrings := []string{
-		`pico_agent_http_requests_total{method="POST",path="/task",status="OK"} 1`,
+		`centcom_satellite_http_requests_total{method="POST",path="/task",status="OK"} 1`,
 		`path="other"`, // the unknown route was bucketed
-		`pico_agent_tasks_total{status="success",type="test_task"} 1`,
-		`pico_agent_auth_attempts_total{method="dev",result="success"} 1`,
-		`pico_agent_http_requests_in_flight 0`, // both requests finished
+		`centcom_satellite_tasks_total{status="success",type="test_task"} 1`,
+		`centcom_satellite_auth_attempts_total{method="dev",result="success"} 1`,
+		`centcom_satellite_http_requests_in_flight 0`, // both requests finished
 	}
 	for _, want := range wantSubstrings {
 		if !strings.Contains(out, want) {

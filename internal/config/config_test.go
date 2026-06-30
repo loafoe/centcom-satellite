@@ -120,8 +120,8 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected default LogFormat 'json', got %s", cfg.LogFormat)
 	}
 
-	if cfg.OTelServiceName != "pico-agent" {
-		t.Errorf("expected default OTelServiceName 'pico-agent', got %s", cfg.OTelServiceName)
+	if cfg.OTelServiceName != "centcom-satellite" {
+		t.Errorf("expected default OTelServiceName 'centcom-satellite', got %s", cfg.OTelServiceName)
 	}
 
 	if cfg.AllowUnauthenticated != true {

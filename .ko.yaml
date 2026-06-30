@@ -1,9 +1,9 @@
 defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
 
 builds:
-  - id: pico-agent
+  - id: centcom-satellite
     dir: .
-    main: ./cmd/pico-agent
+    main: ./cmd/centcom-satellite
     env:
       - CGO_ENABLED=0
     flags:

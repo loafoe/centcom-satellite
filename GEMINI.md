@@ -1,6 +1,6 @@
 # Pico Agent - Progress Tracking
 
-This file tracks the progress and technical decisions for the `pico-agent` project.
+This file tracks the progress and technical decisions for the `centcom-satellite` project.
 
 ## Completed Tasks
 

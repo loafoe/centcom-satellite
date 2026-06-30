@@ -13,15 +13,15 @@
 ## File Structure
 
 ```
-pico-agent/
+centcom-satellite/
 ├── internal/
 │   ├── config/config.go              # Add PodResizeEnabled + PodResizeConfig
 │   └── task/pod_resize/
 │       └── task.go                   # Task implementation (all logic in one file)
-├── cmd/pico-agent/main.go            # Register task conditionally
+├── cmd/centcom-satellite/main.go            # Register task conditionally
 └── internal/task/cluster_info/task.go # Add PodResize capability
 
-helm-charts/charts/pico-agent/
+helm-charts/charts/centcom-satellite/
 ├── values.yaml                       # Add podResize config
 ├── templates/deployment.yaml         # Add env vars
 └── templates/clusterrole.yaml        # Add conditional RBAC
@@ -75,7 +75,7 @@ type PodResizeConfig struct {
 
 - [ ] **Step 3: Run tests**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 4: Commit**
@@ -108,8 +108,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/loafoe/pico-agent/internal/config"
-	"github.com/loafoe/pico-agent/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/config"
+	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
 const TaskName = "pod_resize"
@@ -388,7 +388,7 @@ func (t *Task) resizePod(ctx context.Context, namespace, podName string, contain
 
 - [ ] **Step 6: Run build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 7: Commit**
@@ -403,14 +403,14 @@ git commit -m "feat(task): add pod_resize task for in-place memory resize"
 ### Task 3: Register Task and Update Capabilities
 
 **Files:**
-- Modify: `cmd/pico-agent/main.go`
+- Modify: `cmd/centcom-satellite/main.go`
 - Modify: `internal/task/cluster_info/task.go`
 
 - [ ] **Step 1: Add import in main.go**
 
 ```go
 // Add to imports (around line 40):
-	"github.com/loafoe/pico-agent/internal/task/pod_resize"
+	"github.com/loafoe/centcom-satellite/internal/task/pod_resize"
 ```
 
 - [ ] **Step 2: Add PodResize to Capabilities struct in cluster_info/task.go**
@@ -446,13 +446,13 @@ git commit -m "feat(task): add pod_resize task for in-place memory resize"
 
 - [ ] **Step 5: Run build**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./...`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./...`
 Expected: Build succeeds
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cmd/pico-agent/main.go internal/task/cluster_info/task.go
+git add cmd/centcom-satellite/main.go internal/task/cluster_info/task.go
 git commit -m "feat: register pod_resize task and advertise capability"
 ```
 
@@ -461,9 +461,9 @@ git commit -m "feat: register pod_resize task and advertise capability"
 ### Task 4: Update Helm Chart
 
 **Files:**
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/values.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/deployment.yaml`
-- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/pico-agent/templates/clusterrole.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/values.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/deployment.yaml`
+- Modify: `/Users/andy/DEV/Personal/helm-charts/charts/centcom-satellite/templates/clusterrole.yaml`
 
 - [ ] **Step 1: Add podResize to values.yaml**
 
@@ -511,8 +511,8 @@ git commit -m "feat: register pod_resize task and advertise capability"
 
 ```bash
 cd /Users/andy/DEV/Personal/helm-charts
-git add charts/pico-agent/values.yaml charts/pico-agent/templates/deployment.yaml charts/pico-agent/templates/clusterrole.yaml
-git commit -m "feat(pico-agent): add pod_resize feature flag and RBAC"
+git add charts/centcom-satellite/values.yaml charts/centcom-satellite/templates/deployment.yaml charts/centcom-satellite/templates/clusterrole.yaml
+git commit -m "feat(centcom-satellite): add pod_resize feature flag and RBAC"
 ```
 
 ---
@@ -557,9 +557,9 @@ git commit -m "feat(ui): add pod_resize capability badge"
 
 ### Task 6: Test End-to-End
 
-- [ ] **Step 1: Build pico-agent**
+- [ ] **Step 1: Build centcom-satellite**
 
-Run: `cd /Users/andy/DEV/Go/pico-agent && go build ./cmd/pico-agent`
+Run: `cd /Users/andy/DEV/Go/centcom-satellite && go build ./cmd/centcom-satellite`
 Expected: Build succeeds
 
 - [ ] **Step 2: Build pico-mcp**
@@ -569,10 +569,10 @@ Expected: Build succeeds
 
 - [ ] **Step 3: Verify helm template renders correctly**
 
-Run: `cd /Users/andy/DEV/Personal/helm-charts && helm template charts/pico-agent --set features.podResize=true | grep -A5 POD_RESIZE`
+Run: `cd /Users/andy/DEV/Personal/helm-charts && helm template charts/centcom-satellite --set features.podResize=true | grep -A5 POD_RESIZE`
 Expected: Shows POD_RESIZE_ENABLED, POD_RESIZE_PERCENTAGE_CAP, POD_RESIZE_ABSOLUTE_CAP env vars
 
 - [ ] **Step 4: Verify RBAC rules render**
 
-Run: `cd /Users/andy/DEV/Personal/helm-charts && helm template charts/pico-agent --set features.podResize=true | grep -A4 "pod_resize"`
+Run: `cd /Users/andy/DEV/Personal/helm-charts && helm template charts/centcom-satellite --set features.podResize=true | grep -A4 "pod_resize"`
 Expected: Shows pods patch and nodes get/list rules

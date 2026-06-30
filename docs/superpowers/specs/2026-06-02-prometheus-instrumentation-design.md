@@ -1,11 +1,11 @@
-# Prometheus Instrumentation for pico-agent
+# Prometheus Instrumentation for centcom-satellite
 
 **Date**: 2026-06-02
 **Status**: Approved (goal-driven)
 
 ## Goal
 
-Fully instrument pico-agent with useful, low-cardinality Prometheus metrics. Identify the
+Fully instrument centcom-satellite with useful, low-cardinality Prometheus metrics. Identify the
 highest-value signals and set up initial support, building on the existing metrics foundation.
 
 ## Current State
@@ -14,10 +14,10 @@ The default Prometheus registry already exposes Go runtime + process collectors 
 `promhttp.Handler()` on the metrics port. Four application metrics exist in
 `internal/observability/metrics.go`:
 
-- `pico_agent_http_requests_total{method, path, status}`
-- `pico_agent_http_request_duration_seconds{method, path}`
-- `pico_agent_tasks_total{type, status}`
-- `pico_agent_task_duration_seconds{type}`
+- `centcom_satellite_http_requests_total{method, path, status}`
+- `centcom_satellite_http_request_duration_seconds{method, path}`
+- `centcom_satellite_tasks_total{type, status}`
+- `centcom_satellite_task_duration_seconds{type}`
 
 These are kept. The work below adds coverage at **low-touch instrumentation points** — no edits
 to the ~35 individual task files.
@@ -26,7 +26,7 @@ to the ~35 individual task files.
 
 ### 1. Auth outcomes
 ```
-pico_agent_auth_attempts_total{method, result}
+centcom_satellite_auth_attempts_total{method, result}
 ```
 - `method`: `mtls | jwt | dev | none`
 - `result`: `success | rejected | unauthenticated`
@@ -35,16 +35,16 @@ Wired into `Handlers.authenticate` and `StreamHandlers.authenticate`. Bounded la
 
 ### 2. In-flight requests + build info
 ```
-pico_agent_http_requests_in_flight              (gauge)
-pico_agent_build_info{version, goversion} = 1   (gauge)
+centcom_satellite_http_requests_in_flight              (gauge)
+centcom_satellite_build_info{version, goversion} = 1   (gauge)
 ```
 In-flight inc/dec in `MetricsMiddleware`. `build_info` set once at startup from the binary
 `Version` and `runtime.Version()`.
 
 ### 3. Kubernetes API calls (via rest.Config.WrapTransport)
 ```
-pico_agent_k8s_request_duration_seconds{verb, resource, status_class}
-pico_agent_k8s_requests_total{verb, resource, status_class}
+centcom_satellite_k8s_request_duration_seconds{verb, resource, status_class}
+centcom_satellite_k8s_requests_total{verb, resource, status_class}
 ```
 - `verb`: derived from HTTP method (`get`, `list/watch` collapse to method-level `get`, plus
   `post`, `put`, `patch`, `delete`)
@@ -58,9 +58,9 @@ per-task code. This is the key move that keeps "all tasks covered" pragmatic.
 
 ### 4. Log-stream metrics (handlers_stream.go)
 ```
-pico_agent_log_streams_active             (gauge)
-pico_agent_log_stream_duration_seconds    (histogram)
-pico_agent_log_stream_lines_total         (counter)
+centcom_satellite_log_streams_active             (gauge)
+centcom_satellite_log_stream_duration_seconds    (histogram)
+centcom_satellite_log_stream_lines_total         (counter)
 ```
 The long-lived SSE endpoint is poorly captured by the generic HTTP duration histogram; these
 record its real behavior.

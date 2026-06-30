@@ -15,7 +15,7 @@ import (
 //
 // The handler is wrapped so that any log emitted with a context carrying an
 // active span (i.e. via slog.InfoContext/ErrorContext/etc.) is automatically
-// annotated with trace_id and span_id. This correlates pico-agent logs with
+// annotated with trace_id and span_id. This correlates centcom-satellite logs with
 // the distributed trace that originates in pico-mcp, so an operator can pivot
 // from a log line to the full trace and back.
 func SetupLogging(level, format string) {

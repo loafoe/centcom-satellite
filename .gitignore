@@ -5,7 +5,7 @@ bin/
 *.dll
 *.so
 *.dylib
-/pico-agent
+/centcom-satellite
 
 # Test artifacts
 coverage.out

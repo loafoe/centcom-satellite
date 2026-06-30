@@ -1,12 +1,12 @@
 .PHONY: build test lint clean ko-build ko-push deploy run verify
 
-BINARY_NAME=pico-agent
-IMAGE_NAME=ghcr.io/loafoe/pico-agent
+BINARY_NAME=centcom-satellite
+IMAGE_NAME=ghcr.io/loafoe/centcom-satellite
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 build:
-	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/pico-agent
+	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/centcom-satellite
 
 test:
 	go test -v -race -coverprofile=coverage.out ./...
@@ -21,15 +21,15 @@ clean:
 	rm -rf bin/ coverage.out coverage.html
 
 run:
-	go run ./cmd/pico-agent
+	go run ./cmd/centcom-satellite
 
 # Build image locally with ko (for testing)
 ko-build:
-	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/pico-agent --bare --local --tags=$(VERSION)
+	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/centcom-satellite --bare --local --tags=$(VERSION)
 
 # Build and push image with ko
 ko-push:
-	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/pico-agent --bare --platform=linux/amd64,linux/arm64 --tags=$(VERSION),latest
+	KO_DOCKER_REPO=$(IMAGE_NAME) VERSION=$(VERSION) ko build ./cmd/centcom-satellite --bare --platform=linux/amd64,linux/arm64 --tags=$(VERSION),latest
 
 # Sign image with cosign (requires COSIGN_PASSWORD or keyless)
 sign:
@@ -38,7 +38,7 @@ sign:
 # Verify image signature
 verify:
 	cosign verify $(IMAGE_NAME):$(VERSION) \
-		--certificate-identity-regexp="https://github.com/loafoe/pico-agent/*" \
+		--certificate-identity-regexp="https://github.com/loafoe/centcom-satellite/*" \
 		--certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 
 deploy:
