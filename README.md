@@ -29,7 +29,7 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `list_namespaces` | List namespaces in the cluster |
 | `list_network_policies` | List network policies |
 | `list_pods` | List pods with status and resource details |
-| `list_routes` | List OpenShift routes |
+| `list_routes` | List Gateway API routes |
 | `list_services` | List services in namespace |
 | `list_workloads` | List deployments, statefulsets, daemonsets |
 | `pod_evict` | Evict a pod from a node |
