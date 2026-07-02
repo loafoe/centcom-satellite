@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add seven read-only AWS CloudWatch/Cost-Explorer data-retrieval tasks to centcom-satellite, ported from the `ai-powered-cw-alarms-rca` prototype and reaching feature parity with the awslabs `cloudwatch-mcp-server` so the upstream MCP server (centcom) no longer needs it.
+**Goal:** Add seven read-only AWS CloudWatch/Cost-Explorer data-retrieval tasks to centcom-satellite, ported from the `ai-powered-cw-alarms-rca` prototype and reaching feature parity with the awslabs `cloudwatch-mcp-server` so the upstream MCP server (centcom) no longer needs it — plus the Helm-chart plumbing to provision the IAM policy/role via Crossplane and grant credentials via IRSA.
 
-**Architecture:** Each capability is a standard task package under `internal/task/`, implementing the existing `task.Task` interface, registered in `main.go` behind one feature flag, using a shared `internal/aws/` helper that builds AWS SDK Go v2 clients from the default credential chain (IRSA). AWS APIs are injected via narrow interfaces for testability.
+**Architecture:** Each capability is a standard task package under `internal/task/`, implementing the existing `task.Task` interface, registered in `main.go` behind one feature flag, using a shared `internal/aws/` helper that builds AWS SDK Go v2 clients from the default credential chain (IRSA). AWS APIs are injected via narrow interfaces for testability. The Helm chart (separate `helm-charts` repo) creates namespaced Crossplane `provider-aws-iam` resources (`iam.aws.m.upbound.io/v1beta1` Policy/Role/RolePolicyAttachment) and stamps a deterministic IRSA role ARN onto the ServiceAccount.
 
-**Tech Stack:** Go 1.25, AWS SDK for Go v2 (`service/cloudwatch`, `service/cloudwatchlogs`, `service/costexplorer`, `config`), `testify`.
+**Tech Stack:** Go 1.25, AWS SDK for Go v2 (`service/cloudwatch`, `service/cloudwatchlogs`, `service/costexplorer`, `config`), `testify`; Helm 3, Crossplane provider-aws-iam v2.6.0 (self-hosted IRSA via `amazon-eks-pod-identity-webhook`).
 
 ## Global Constraints
 
@@ -37,12 +37,23 @@
 - Modify `cmd/centcom-satellite/main.go` — flag-gated registration + capability wiring.
 - Modify `README.md`, `CLAUDE.md` — docs + IAM policy.
 
+Helm chart changes live in a **separate repo**:
+`/Users/andy/DEV/Philips/philips-software/helm-charts/charts/centcom-satellite`.
+
+- Modify `values.yaml` — add `aws.irsa` section + `features.cloudwatchRca`.
+- Modify `templates/_helpers.tpl` — add `centcom-satellite.irsaRoleArn` helper.
+- Modify `templates/serviceaccount.yaml` — merge IRSA role-arn annotation.
+- Modify `templates/deployment.yaml` — `CLOUDWATCH_RCA_ENABLED` + `AWS_REGION` env.
+- Create `templates/crossplane-iam-policy.yaml`, `templates/crossplane-iam-role.yaml`, `templates/crossplane-iam-attachment.yaml`.
+- Modify chart `README.md`.
+
 Tasks are ordered so each ends with an independently testable, committable deliverable:
 - **Task 1** — shared `internal/aws` helper.
 - **Phase 1 (Tasks 2–4)** — `cw_list_alarms`, `cw_alarm_history`, `cost_explorer`.
 - **Phase 2 (Tasks 5–8)** — `cw_get_metrics`, `cw_list_metrics`, `cw_describe_log_groups`, `cw_logs_query`.
 - **Task 9** — config flag + capability + `main.go` registration wiring.
-- **Task 10** — docs (README, CLAUDE.md, IAM policy).
+- **Task 10** — Go-repo docs (README, CLAUDE.md, IAM policy JSON).
+- **Helm (Tasks 11–13)** — chart plumbing (`aws.irsa` values, SA annotation, env), Crossplane IAM templates, and live verification on `dip-ce-k3s-eu`.
 
 ---
 
@@ -2129,9 +2140,389 @@ git commit -m "docs: document CloudWatch RCA tasks and add IAM policy"
 
 ---
 
+## Helm Chart — Crossplane IAM + IRSA
+
+> These tasks are in a **separate repo**:
+> `/Users/andy/DEV/Philips/philips-software/helm-charts/charts/centcom-satellite`.
+> Commit them there, not in the Go repo. Chart facts (verified live on
+> `dip-ce-k3s-eu`): namespaced MRs `iam.aws.m.upbound.io/v1beta1`;
+> `providerConfigRef: {kind: ClusterProviderConfig, name: default}`; self-hosted
+> IRSA via `amazon-eks-pod-identity-webhook`; account `010526241823`; OIDC issuer
+> `k3s-issuer.dip-ce-k3s-eu.hsp.philips.com`; token audience `sts.amazonaws.com`.
+
+### Task 11: Chart values, ServiceAccount IRSA annotation, and env wiring
+
+**Files (helm-charts repo):**
+- Modify: `charts/centcom-satellite/values.yaml`
+- Modify: `charts/centcom-satellite/templates/_helpers.tpl`
+- Modify: `charts/centcom-satellite/templates/serviceaccount.yaml`
+- Modify: `charts/centcom-satellite/templates/deployment.yaml`
+
+**Interfaces:**
+- Consumes: existing helpers `centcom-satellite.fullname`, `centcom-satellite.serviceAccountName`.
+- Produces: `.Values.aws.irsa.*`, `.Values.features.cloudwatchRca`, and helper `centcom-satellite.irsaRoleArn` returning the role ARN (override or computed `arn:aws:iam::<accountId>:role/<fullname>-cw-rca`). Tasks 12–13 rely on these.
+
+- [ ] **Step 1: Add values**
+
+In `charts/centcom-satellite/values.yaml`, add `cloudwatchRca: false` to the `features:` block (after `autoRemediate`), and add this new top-level section after the `serviceAccount:` block:
+```yaml
+# AWS integration: Crossplane-managed IAM + IRSA for CloudWatch RCA tasks
+aws:
+  irsa:
+    # Create Crossplane IAM Policy/Role/Attachment and annotate the SA for IRSA
+    enabled: false
+    # AWS account ID (used to compute the role ARN stamped on the ServiceAccount)
+    accountId: ""
+    # Cluster OIDC issuer host (no scheme), e.g. k3s-issuer.dip-ce-k3s-eu.hsp.philips.com
+    oidcIssuer: ""
+    # Token audience expected in the IRSA trust policy
+    audience: "sts.amazonaws.com"
+    # Crossplane ClusterProviderConfig name
+    providerConfigRef: default
+    # AWS region the SDK uses for CloudWatch/Logs calls (Cost Explorer is us-east-1 in code)
+    region: ""
+    # IAM path and extra tags applied to the created policy/role
+    path: /
+    tags: {}
+    # Bring-your-own role: when set, skip building the ARN from accountId and just
+    # annotate the SA with this ARN (Crossplane resources still render if enabled).
+    roleArnOverride: ""
+```
+
+- [ ] **Step 2: Add the role-ARN helper**
+
+In `charts/centcom-satellite/templates/_helpers.tpl`, append:
+```
+{{/*
+IRSA role ARN: explicit override, else computed from accountId + external name.
+External name of the Crossplane Role is "<fullname>-cw-rca".
+*/}}
+{{- define "centcom-satellite.irsaRoleArn" -}}
+{{- if .Values.aws.irsa.roleArnOverride -}}
+{{- .Values.aws.irsa.roleArnOverride -}}
+{{- else -}}
+{{- printf "arn:aws:iam::%s:role/%s-cw-rca" .Values.aws.irsa.accountId (include "centcom-satellite.fullname" .) -}}
+{{- end -}}
+{{- end }}
+```
+
+- [ ] **Step 3: Merge the IRSA annotation onto the ServiceAccount**
+
+Replace the annotations block in `charts/centcom-satellite/templates/serviceaccount.yaml` (the `{{- with .Values.serviceAccount.annotations }}` … `{{- end }}` section) with:
+```
+  {{- if or .Values.serviceAccount.annotations (and .Values.aws.irsa.enabled (or .Values.aws.irsa.accountId .Values.aws.irsa.roleArnOverride)) }}
+  annotations:
+    {{- with .Values.serviceAccount.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and .Values.aws.irsa.enabled (or .Values.aws.irsa.accountId .Values.aws.irsa.roleArnOverride) }}
+    eks.amazonaws.com/role-arn: {{ include "centcom-satellite.irsaRoleArn" . | quote }}
+    {{- end }}
+  {{- end }}
+```
+
+- [ ] **Step 4: Add env vars to the Deployment**
+
+In `charts/centcom-satellite/templates/deployment.yaml`, add after the `autoRemediate` feature block (before `livenessProbe`):
+```
+            {{- if .Values.features.cloudwatchRca }}
+            - name: CLOUDWATCH_RCA_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.aws.irsa.region }}
+            - name: AWS_REGION
+              value: {{ .Values.aws.irsa.region | quote }}
+            {{- end }}
+```
+
+- [ ] **Step 5: Verify the render (no Crossplane resources yet)**
+
+Run:
+```bash
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+helm template t charts/centcom-satellite \
+  --set features.cloudwatchRca=true \
+  --set aws.irsa.enabled=true \
+  --set aws.irsa.accountId=010526241823 \
+  --set aws.irsa.region=eu-west-1 \
+  --namespace centcom-test | grep -E 'eks.amazonaws.com/role-arn|CLOUDWATCH_RCA_ENABLED|AWS_REGION'
+```
+Expected: shows `eks.amazonaws.com/role-arn: "arn:aws:iam::010526241823:role/t-centcom-satellite-cw-rca"`, `CLOUDWATCH_RCA_ENABLED`, and `AWS_REGION`.
+
+- [ ] **Step 6: Commit (helm-charts repo)**
+
+```bash
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+git add charts/centcom-satellite/
+git commit -m "feat(centcom-satellite): add aws.irsa values, SA role-arn annotation, cloudwatch env"
+```
+
+---
+
+### Task 12: Crossplane IAM Policy, Role, and RolePolicyAttachment templates
+
+**Files (helm-charts repo):**
+- Create: `charts/centcom-satellite/templates/crossplane-iam-policy.yaml`
+- Create: `charts/centcom-satellite/templates/crossplane-iam-role.yaml`
+- Create: `charts/centcom-satellite/templates/crossplane-iam-attachment.yaml`
+
+**Interfaces:**
+- Consumes: `.Values.aws.irsa.*`; helpers `centcom-satellite.fullname`, `centcom-satellite.serviceAccountName`, `centcom-satellite.labels`.
+- Produces: three namespaced `iam.aws.m.upbound.io/v1beta1` managed resources whose external names align with `centcom-satellite.irsaRoleArn` (role external name `<fullname>-cw-rca`).
+
+- [ ] **Step 1: Create the Policy template**
+
+Create `charts/centcom-satellite/templates/crossplane-iam-policy.yaml`:
+```
+{{- if .Values.aws.irsa.enabled }}
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    crossplane.io/external-name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+  labels:
+    {{- include "centcom-satellite.labels" . | nindent 4 }}
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: {{ .Values.aws.irsa.providerConfigRef }}
+  forProvider:
+    path: {{ .Values.aws.irsa.path | quote }}
+    {{- with .Values.aws.irsa.tags }}
+    tags:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "CentcomCloudWatchRCA",
+            "Effect": "Allow",
+            "Action": [
+              "cloudwatch:DescribeAlarms",
+              "cloudwatch:DescribeAlarmHistory",
+              "cloudwatch:GetMetricData",
+              "cloudwatch:ListMetrics",
+              "logs:DescribeLogGroups",
+              "logs:StartQuery",
+              "logs:GetQueryResults",
+              "logs:StopQuery",
+              "ce:GetCostAndUsage"
+            ],
+            "Resource": "*"
+          }
+        ]
+      }
+{{- end }}
+```
+
+- [ ] **Step 2: Create the Role template**
+
+Create `charts/centcom-satellite/templates/crossplane-iam-role.yaml`:
+```
+{{- if and .Values.aws.irsa.enabled (not .Values.aws.irsa.roleArnOverride) }}
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    crossplane.io/external-name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+  labels:
+    {{- include "centcom-satellite.labels" . | nindent 4 }}
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: {{ .Values.aws.irsa.providerConfigRef }}
+  forProvider:
+    path: {{ .Values.aws.irsa.path | quote }}
+    maxSessionDuration: 3600
+    {{- with .Values.aws.irsa.tags }}
+    tags:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "arn:aws:iam::{{ .Values.aws.irsa.accountId }}:oidc-provider/{{ .Values.aws.irsa.oidcIssuer }}"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+              "StringEquals": {
+                "{{ .Values.aws.irsa.oidcIssuer }}:sub": "system:serviceaccount:{{ .Release.Namespace }}:{{ include "centcom-satellite.serviceAccountName" . }}",
+                "{{ .Values.aws.irsa.oidcIssuer }}:aud": {{ .Values.aws.irsa.audience | quote }}
+              }
+            }
+          }
+        ]
+      }
+{{- end }}
+```
+
+- [ ] **Step 3: Create the RolePolicyAttachment template**
+
+Create `charts/centcom-satellite/templates/crossplane-iam-attachment.yaml`:
+```
+{{- if and .Values.aws.irsa.enabled (not .Values.aws.irsa.roleArnOverride) }}
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "centcom-satellite.labels" . | nindent 4 }}
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: {{ .Values.aws.irsa.providerConfigRef }}
+  forProvider:
+    roleRef:
+      name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+    policyArnRef:
+      name: {{ include "centcom-satellite.fullname" . }}-cw-rca
+{{- end }}
+```
+
+- [ ] **Step 4: Render and validate the templates**
+
+Run:
+```bash
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+helm template t charts/centcom-satellite \
+  --set features.cloudwatchRca=true \
+  --set aws.irsa.enabled=true \
+  --set aws.irsa.accountId=010526241823 \
+  --set aws.irsa.oidcIssuer=k3s-issuer.dip-ce-k3s-eu.hsp.philips.com \
+  --set aws.irsa.region=eu-west-1 \
+  --namespace centcom-test \
+  | grep -E 'kind: (Policy|Role|RolePolicyAttachment)|iam.aws.m.upbound.io|ClusterProviderConfig'
+```
+Expected: all three kinds render with apiVersion `iam.aws.m.upbound.io/v1beta1` and `ClusterProviderConfig`.
+
+- [ ] **Step 5: Confirm role-arn annotation matches the Role external name**
+
+Run the same `helm template` and confirm the SA annotation
+`arn:aws:iam::010526241823:role/t-centcom-satellite-cw-rca` matches the Role's
+`crossplane.io/external-name` (`t-centcom-satellite-cw-rca`).
+Expected: they match exactly (proves the deterministic-ARN design holds).
+
+- [ ] **Step 6: Commit (helm-charts repo)**
+
+```bash
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+git add charts/centcom-satellite/templates/crossplane-iam-*.yaml
+git commit -m "feat(centcom-satellite): add Crossplane provider-aws-iam Policy/Role/Attachment for IRSA"
+```
+
+---
+
+### Task 13: Live verification on `dip-ce-k3s-eu` + chart docs
+
+**Files (helm-charts repo):**
+- Modify: `charts/centcom-satellite/README.md`
+
+**Prereqs:** the Go image with the CloudWatch tasks (Tasks 1–10) is built and
+pushed, OR use the current `appVersion` image and only verify IAM/IRSA wiring
+(the SA annotation, Crossplane sync, and `sts get-caller-identity`).
+
+- [ ] **Step 1: Dry-run render against the live cluster**
+
+Run:
+```bash
+export KUBECONFIG=/Users/andy/DEV/Personal/pulumi/k3s-on-ec2/dip-ce-k3s-eu.yaml
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+helm upgrade --install centcom-satellite-cwtest charts/centcom-satellite \
+  --namespace centcom-cwtest --create-namespace \
+  --set spire.enabled=false --set features.cloudwatchRca=true \
+  --set aws.irsa.enabled=true \
+  --set aws.irsa.accountId=010526241823 \
+  --set aws.irsa.oidcIssuer=k3s-issuer.dip-ce-k3s-eu.hsp.philips.com \
+  --set aws.irsa.region=eu-west-1 \
+  --dry-run=server 2>&1 | tail -20
+```
+Expected: server-side dry-run succeeds (the CRDs `iam.aws.m.upbound.io` are recognized — proves the apiVersions are valid on this cluster).
+
+- [ ] **Step 2: Real install**
+
+Run the same command **without** `--dry-run=server`.
+Expected: release deployed.
+
+- [ ] **Step 3: Verify Crossplane resources reconcile**
+
+Run:
+```bash
+kubectl -n centcom-cwtest get policy.iam.aws.m.upbound.io,role.iam.aws.m.upbound.io,rolepolicyattachment.iam.aws.m.upbound.io
+```
+Expected: all three show `SYNCED=True` and `READY=True` (may take ~30–60s). If not ready, `kubectl -n centcom-cwtest describe role.iam.aws.m.upbound.io centcom-satellite-cwtest-cw-rca` and inspect events.
+
+- [ ] **Step 4: Verify the ServiceAccount annotation**
+
+Run:
+```bash
+kubectl -n centcom-cwtest get sa -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.eks\.amazonaws\.com/role-arn}{"\n"}{end}'
+```
+Expected: the centcom-satellite SA shows `arn:aws:iam::010526241823:role/centcom-satellite-cwtest-cw-rca`.
+
+- [ ] **Step 5: Verify IRSA credentials work in-pod**
+
+Run:
+```bash
+kubectl -n centcom-cwtest exec deploy/centcom-satellite-cwtest -- env | grep -E 'AWS_ROLE_ARN|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_REGION'
+```
+Expected: the pod-identity webhook injected `AWS_ROLE_ARN` + `AWS_WEB_IDENTITY_TOKEN_FILE`, and `AWS_REGION=eu-west-1` is present. (Optional: exec an `aws sts get-caller-identity` from a sidecar/debug container to confirm the assumed-role ARN.)
+
+- [ ] **Step 6: End-to-end task check (if the CloudWatch image is deployed)**
+
+Run:
+```bash
+kubectl -n centcom-cwtest port-forward deploy/centcom-satellite-cwtest 18080:8080 &
+sleep 3
+curl -s -X POST http://localhost:18080/task \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"cw_list_alarms","payload":{"region":"eu-west-1"}}' | head -c 400
+kill %1
+```
+Expected: JSON `{"success":true,...}` with an alarm list (or a clean `success:true` empty list). An IAM/permissions error here means the policy didn't attach — recheck Step 3.
+
+- [ ] **Step 7: Tear down the test release**
+
+Run:
+```bash
+helm uninstall centcom-satellite-cwtest -n centcom-cwtest
+kubectl delete ns centcom-cwtest
+```
+Expected: release removed; Crossplane deletes the IAM policy/role/attachment (verify no orphan MRs: `kubectl get policy.iam.aws.m.upbound.io -A | grep cwtest` returns nothing).
+
+- [ ] **Step 8: Document in the chart README**
+
+In `charts/centcom-satellite/README.md`, add a section describing the
+`features.cloudwatchRca` flag and the `aws.irsa.*` values, with an example
+`helm install ... --set aws.irsa.enabled=true --set aws.irsa.accountId=... --set aws.irsa.oidcIssuer=...`
+invocation and a note that it requires Crossplane `provider-aws-iam` and a
+`ClusterProviderConfig`.
+
+- [ ] **Step 9: Commit (helm-charts repo)**
+
+```bash
+cd /Users/andy/DEV/Philips/philips-software/helm-charts
+git add charts/centcom-satellite/README.md
+git commit -m "docs(centcom-satellite): document CloudWatch RCA IRSA setup"
+```
+
+---
+
 ## Final Verification
 
 - [ ] Run `cd /Users/andy/DEV/Go/centcom-satellite && go build ./... && make test` — all green.
 - [ ] Run `gofmt -l internal/aws internal/task/cw_* internal/task/cost_explorer` — no files listed (all formatted).
 - [ ] Confirm `curl -s localhost:8080/tasks` lists all 7 new task names when `CLOUDWATCH_RCA_ENABLED=true`.
 - [ ] Confirm `/info` or `cluster_info` reports `capabilities.cloudwatch_rca: true` when enabled.
+- [ ] Helm: `helm lint charts/centcom-satellite` passes; `helm template` renders the three Crossplane MRs + SA annotation when `aws.irsa.enabled=true`, and renders none of them when disabled (default).
+- [ ] Helm (live): on `dip-ce-k3s-eu` the Policy/Role/RolePolicyAttachment reach `SYNCED=True READY=True`, the SA carries the matching `eks.amazonaws.com/role-arn`, and the pod receives injected `AWS_ROLE_ARN`/`AWS_WEB_IDENTITY_TOKEN_FILE`. Test release torn down with no orphan MRs.
