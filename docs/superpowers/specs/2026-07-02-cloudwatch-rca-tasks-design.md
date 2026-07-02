@@ -34,6 +34,34 @@ dependency of the module via `cluster_info`). We do **not** shell out to the
 Python MCP server — that would drag a Python/`uv` runtime into a hardened,
 distroless Go container and fight the project's design.
 
+### Goal: full `cloudwatch-mcp-server` parity (eliminate the Python dependency)
+
+A primary objective is that **centcom** (the MCP server, formerly `pico-mcp`) can
+expose equivalent tools backed entirely by centcom-satellite tasks, so the
+upstream stack no longer depends on the awslabs
+[`cloudwatch-mcp-server`](https://awslabs.github.io/mcp/servers/cloudwatch-mcp-server)
+at all. The satellite provides the data-retrieval tasks; centcom wraps them as
+MCP tools. To achieve parity we cover the cloudwatch-mcp-server tool surface, not
+just the prototype's subset:
+
+| cloudwatch-mcp-server capability | centcom-satellite task |
+|----------------------------------|------------------------|
+| Get active alarms | `cw_list_alarms` |
+| Get alarm history | `cw_alarm_history` |
+| Describe / list log groups | `cw_describe_log_groups` |
+| Execute Logs Insights query (start + poll + cancel) | `cw_logs_query` |
+| Get metric data | `cw_get_metrics` |
+| List metrics / metric metadata | `cw_list_metrics` |
+| Metrics Insights (SQL) query | `cw_get_metrics` (via `expression`) |
+| Cost & usage (prototype extra) | `cost_explorer` |
+
+**Note on "PromQL":** CloudWatch does not support PromQL. Its query languages are
+**Logs Insights** (logs) and **Metrics Insights** (a SQL dialect for metrics,
+issued through `GetMetricData` expressions). Both are covered above. If a genuine
+Prometheus/Amazon-Managed-Prometheus (AMP) `query`/`query_range` endpoint is
+required, that is a separate `prom_query` task — tracked as an open item, not in
+this scope.
+
 ## Scope
 
 **In scope (read-only):**
@@ -42,8 +70,10 @@ distroless Go container and fight the project's design.
 |----------|------------------|-------------------|
 | `cw_list_alarms` | `main.get_alarms` | `cloudwatch.DescribeAlarms` (paginated; Metric + Composite) |
 | `cw_alarm_history` | `skills.get_incident_timeline` | `cloudwatch.DescribeAlarmHistory` |
-| `cw_get_metrics` | Layer B (metrics) | `cloudwatch.GetMetricData` |
-| `cw_logs_query` | Layer B (Logs Insights) | `cloudwatchlogs.StartQuery` + `GetQueryResults` |
+| `cw_get_metrics` | Layer B (metrics) | `cloudwatch.GetMetricData` (metric query or Metrics Insights `expression`) |
+| `cw_list_metrics` | mcp-server parity | `cloudwatch.ListMetrics` |
+| `cw_describe_log_groups` | mcp-server parity | `cloudwatchlogs.DescribeLogGroups` |
+| `cw_logs_query` | Layer B (Logs Insights) | `cloudwatchlogs.StartQuery` + `GetQueryResults` (+ `StopQuery`) |
 | `cost_explorer` | `skills.analyze_cost` | `costexplorer.GetCostAndUsage` |
 
 **Explicitly out of scope** (state-changing / AI / UI — excluded per stakeholder
@@ -57,8 +87,10 @@ decision):
 
 - **Phase 1 — alarms & cost (pure request/response):** `internal/aws/` helper,
   `cw_list_alarms`, `cw_alarm_history`, `cost_explorer`. No async mechanics.
-- **Phase 2 — metrics & logs:** `cw_get_metrics`, and `cw_logs_query` (the only
-  task with async poll mechanics).
+- **Phase 2 — metrics & logs (cloudwatch-mcp-server parity):** `cw_get_metrics`
+  (incl. Metrics Insights `expression`), `cw_list_metrics`,
+  `cw_describe_log_groups`, and `cw_logs_query` (the only task with async poll
+  mechanics).
 
 Both phases ship behind the same feature flag; Phase 2 tasks simply register
 additionally once implemented.
@@ -72,6 +104,8 @@ internal/aws/
 internal/task/cw_list_alarms/{task.go,task_test.go}
 internal/task/cw_alarm_history/{task.go,task_test.go}
 internal/task/cw_get_metrics/{task.go,task_test.go}
+internal/task/cw_list_metrics/{task.go,task_test.go}
+internal/task/cw_describe_log_groups/{task.go,task_test.go}
 internal/task/cw_logs_query/{task.go,task_test.go}
 internal/task/cost_explorer/{task.go,task_test.go}
 ```
@@ -160,8 +194,33 @@ chronologically (matches `skills.get_incident_timeline`). Default window: last
                "start":"...", "end":"..." } }
 ```
 
-Wraps `GetMetricData` (single query built from the payload). Returns
+Wraps `GetMetricData`. Supports two payload modes: (a) a **metric query**
+(`namespace`+`metric_name`+`dimensions`+`stat`), or (b) a **Metrics Insights
+`expression`** (SQL dialect) via the `MetricDataQuery.Expression` field. Returns
 timestamp/value series.
+
+### `cw_list_metrics`
+
+```json
+{ "type": "cw_list_metrics",
+  "payload": { "namespace":"AWS/EC2", "metric_name":"CPUUtilization",
+               "dimensions":{"InstanceId":"i-123"}, "region":"eu-west-1" } }
+```
+
+Wraps `ListMetrics` (paginated). All fields optional; returns metric metadata
+`{namespace, metric_name, dimensions}` — the discovery capability the
+cloudwatch-mcp-server exposes for finding available metrics.
+
+### `cw_describe_log_groups`
+
+```json
+{ "type": "cw_describe_log_groups",
+  "payload": { "name_prefix":"/aws/lambda/", "limit":50, "region":"eu-west-1" } }
+```
+
+Wraps `DescribeLogGroups` (paginated). Returns
+`{name, arn, stored_bytes, retention_days, created}`. Needed so callers can
+discover which log groups to pass to `cw_logs_query`.
 
 ### `cw_logs_query`
 
@@ -211,6 +270,8 @@ role:
     "cloudwatch:DescribeAlarms",
     "cloudwatch:DescribeAlarmHistory",
     "cloudwatch:GetMetricData",
+    "cloudwatch:ListMetrics",
+    "logs:DescribeLogGroups",
     "logs:StartQuery",
     "logs:GetQueryResults",
     "logs:StopQuery",
@@ -230,8 +291,9 @@ for region/AssumeRole resolution.
 ## Deliverables
 
 - `internal/aws/` shared helper + test
-- 5 task packages (`cw_list_alarms`, `cw_alarm_history`, `cw_get_metrics`,
-  `cw_logs_query`, `cost_explorer`) + tests
+- 7 task packages (`cw_list_alarms`, `cw_alarm_history`, `cw_get_metrics`,
+  `cw_list_metrics`, `cw_describe_log_groups`, `cw_logs_query`, `cost_explorer`)
+  + tests
 - `config.go`: `CloudWatchRCAEnabled` flag
 - `cluster_info`: `CloudWatchRCA` capability
 - `main.go`: flag-gated registration block
@@ -242,7 +304,12 @@ for region/AssumeRole resolution.
 
 These defaults were chosen in the stakeholder's absence and are easily revisited:
 
-1. **All 5 tasks** (in 2 phases) vs. only the 3 pure-request tasks — assumed all 5.
+1. **All 7 tasks** (in 2 phases) vs. only the 3 pure-request tasks — assumed all 7
+   to reach cloudwatch-mcp-server parity.
 2. **Single feature flag** vs. per-task flags — assumed single.
 3. **IRSA / SDK default chain** for credentials — assumed; cross-account
    `AssumeRole` designed as an optional payload extension for later.
+4. **PromQL / Amazon Managed Prometheus:** CloudWatch has no PromQL; assumed the
+   requirement is satisfied by Logs Insights + Metrics Insights. A dedicated
+   `prom_query` task against an AMP/Prometheus endpoint is deferred unless
+   confirmed needed.
