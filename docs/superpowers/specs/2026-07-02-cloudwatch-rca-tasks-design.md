@@ -281,6 +281,100 @@ role:
 }
 ```
 
+## Helm chart: Crossplane-managed IAM + IRSA
+
+The Helm chart at
+`philips-software/helm-charts/charts/centcom-satellite` is extended to
+**provision the IAM policy and role via Crossplane `provider-aws-iam`** and wire
+up **IRSA** so the pod obtains AWS credentials with no static secrets. This
+replaces "hand the operator a JSON policy to attach" with a declarative,
+GitOps-managed flow.
+
+### Target environment facts (from `dip-ce-k3s-eu`)
+
+- Crossplane core + **provider-aws-iam v2.6.0** (crossplane-contrib) installed.
+- **Namespaced** managed resources are available and preferred:
+  `iam.aws.m.upbound.io/v1beta1` (`NAMESPACED=true`) — kinds `Policy`, `Role`,
+  `RolePolicyAttachment`. (Legacy cluster-scoped `iam.aws.upbound.io/v1beta1`
+  also exists but is not used here.)
+- Managed resources reference credentials via
+  `providerConfigRef: { kind: ClusterProviderConfig, name: default }`
+  (`spec.credentials.source: IRSA`).
+- **Self-hosted IRSA** (this is k3s-on-EC2, not EKS): the
+  `amazon-eks-pod-identity-webhook` in `kube-system` injects `AWS_ROLE_ARN` and a
+  projected web-identity token into any pod whose ServiceAccount carries the
+  `eks.amazonaws.com/role-arn` annotation. The SDK then does
+  `AssumeRoleWithWebIdentity`.
+- AWS account: `010526241823`; OIDC issuer:
+  `k3s-issuer.dip-ce-k3s-eu.hsp.philips.com`; token audience: `sts.amazonaws.com`.
+- A working blueprint already exists in-cluster (the `centcom-cnpg-backup`
+  Policy/Role/RolePolicyAttachment in namespace `centcom`).
+
+### Design
+
+New chart values section (`values.yaml`):
+
+```yaml
+aws:
+  # Provision IAM policy + role via Crossplane and enable IRSA on the SA.
+  irsa:
+    enabled: false
+    # AWS account ID (used to build the role ARN stamped on the ServiceAccount).
+    accountId: ""
+    # OIDC issuer host of the cluster (no scheme).
+    oidcIssuer: ""
+    # Crossplane ClusterProviderConfig name.
+    providerConfigRef: default
+    # Optional IAM path and extra tags for the created policy/role.
+    path: /
+    tags: {}
+    # Optional explicit role ARN override; when set, skip building it from
+    # accountId + external name and just annotate the SA (BYO role).
+    roleArnOverride: ""
+```
+
+The chart's existing `features.cloudwatchRca` flag turns the *tasks* on; the new
+`aws.irsa.enabled` flag turns the *credential plumbing* on. They are independent
+(you can point at a pre-existing role via `roleArnOverride` without Crossplane).
+
+**Deterministic role ARN, no reconcile wait.** IAM names are global, so the chart
+sets an explicit `crossplane.io/external-name` on the Policy and Role
+(`<fullname>` / `<fullname>-cw-rca`) and computes the role ARN as
+`arn:aws:iam::<accountId>:role/<external-name>`. That same ARN is stamped onto the
+ServiceAccount's `eks.amazonaws.com/role-arn` annotation at render time — so the
+SA is correct immediately, even before Crossplane finishes creating the role.
+
+New templates (namespace-scoped, gated by `{{- if .Values.aws.irsa.enabled }}`):
+
+- `templates/crossplane-iam-policy.yaml` — `Policy` (`iam.aws.m.upbound.io/v1beta1`)
+  whose `forProvider.policy` is the CloudWatch/CE JSON document above.
+- `templates/crossplane-iam-role.yaml` — `Role` with the
+  `AssumeRoleWithWebIdentity` trust policy scoped to
+  `system:serviceaccount:<release-namespace>:<sa-name>` and aud `sts.amazonaws.com`.
+- `templates/crossplane-iam-attachment.yaml` — `RolePolicyAttachment` binding the
+  two via `roleRef.name`/`policyArnRef.name`.
+
+`templates/serviceaccount.yaml` is extended to merge the computed
+`eks.amazonaws.com/role-arn` annotation (from `aws.irsa`) with any user-supplied
+`serviceAccount.annotations`, via a new `_helpers.tpl` helper
+`centcom-satellite.irsaRoleArn`.
+
+`templates/deployment.yaml` gains an `AWS_REGION` env (from
+`aws.irsa.region` / a sensible default) when IRSA is enabled, since the SDK needs
+a region for CloudWatch/Logs calls (Cost Explorer is pinned to `us-east-1` in
+code regardless).
+
+All three Crossplane resources carry `providerConfigRef: { kind:
+ClusterProviderConfig, name: {{ .Values.aws.irsa.providerConfigRef }} }` and the
+standard chart labels.
+
+### Testing on `dip-ce-k3s-eu`
+
+`helm template` render assertions plus a live `helm upgrade --install` into a test
+namespace on `dip-ce-k3s-eu`, then verify: the Crossplane `Policy`/`Role` reach
+`SYNCED=True READY=True`, the SA carries the role-arn annotation, and a pod can
+`sts get-caller-identity` / run a `cw_list_alarms` task end-to-end.
+
 ## Testing
 
 Each task gets `task_test.go` with the AWS API behind a narrow interface and a
@@ -299,6 +393,12 @@ for region/AssumeRole resolution.
 - `main.go`: flag-gated registration block
 - `go.mod`: add `aws-sdk-go-v2/service/cloudwatch`, `cloudwatchlogs`, `costexplorer`
 - README "Available Tasks" table + CLAUDE.md updates; IAM policy doc
+- Helm chart (`philips-software/helm-charts/charts/centcom-satellite`):
+  `aws.irsa` values section; `features.cloudwatchRca`; three Crossplane IAM
+  templates (Policy/Role/RolePolicyAttachment, `iam.aws.m.upbound.io/v1beta1`);
+  ServiceAccount IRSA annotation + `irsaRoleArn` helper; `AWS_REGION` +
+  `CLOUDWATCH_RCA_ENABLED` env wiring; chart README/values docs. Verified on
+  `dip-ce-k3s-eu`.
 
 ## Open Questions / Assumptions
 
@@ -313,3 +413,11 @@ These defaults were chosen in the stakeholder's absence and are easily revisited
    requirement is satisfied by Logs Insights + Metrics Insights. A dedicated
    `prom_query` task against an AMP/Prometheus endpoint is deferred unless
    confirmed needed.
+5. **Crossplane namespaced MRs (`iam.aws.m.upbound.io/v1beta1`)** with
+   `ClusterProviderConfig/default` — chosen because they satisfy the
+   namespace-scoped requirement and match the in-cluster `centcom-cnpg-backup`
+   blueprint. Cluster-scoped legacy MRs are available but not used.
+6. **Deterministic role ARN** computed in-chart (account ID + external name) and
+   stamped on the SA immediately — avoids waiting for Crossplane to populate the
+   role ARN into status before the pod can use IRSA. `roleArnOverride` supports
+   BYO-role deployments that skip Crossplane entirely.
