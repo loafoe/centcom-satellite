@@ -41,7 +41,11 @@ func TestExecute_MetricQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	series := res.Details.(MetricResult).Series
+	result, ok := res.Details.(MetricResult)
+	if !ok {
+		t.Fatalf("expected MetricResult, got %T", res.Details)
+	}
+	series := result.Series
 	if len(series) != 1 || series[0].Values[0] != 42.5 {
 		t.Fatalf("unexpected series: %+v", series)
 	}
@@ -49,10 +53,27 @@ func TestExecute_MetricQuery(t *testing.T) {
 	if q.MetricStat == nil || aws.ToString(q.MetricStat.Metric.MetricName) != "CPUUtilization" {
 		t.Fatalf("expected MetricStat query, got %+v", q)
 	}
+	if aws.ToInt32(q.MetricStat.Period) != 300 {
+		t.Fatalf("expected Period=300, got %d", aws.ToInt32(q.MetricStat.Period))
+	}
+	if aws.ToString(q.MetricStat.Stat) != "Average" {
+		t.Fatalf("expected Stat=Average, got %s", aws.ToString(q.MetricStat.Stat))
+	}
+	foundInstanceId := false
+	for _, dim := range q.MetricStat.Metric.Dimensions {
+		if aws.ToString(dim.Name) == "InstanceId" && aws.ToString(dim.Value) == "i-1" {
+			foundInstanceId = true
+			break
+		}
+	}
+	if !foundInstanceId {
+		t.Fatalf("expected InstanceId dimension with value i-1")
+	}
 }
 
 func TestExecute_MetricsInsightsExpression(t *testing.T) {
 	api := &fakeGMD{out: &cloudwatch.GetMetricDataOutput{}}
+	expectedExpr := `SELECT AVG(CPUUtilization) FROM "AWS/EC2"`
 	payload := `{"expression":"SELECT AVG(CPUUtilization) FROM \"AWS/EC2\"","start":"2026-06-30T09:00:00Z","end":"2026-06-30T11:00:00Z"}`
 	if _, err := newTestTask(api).Execute(context.Background(), json.RawMessage(payload)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,6 +81,9 @@ func TestExecute_MetricsInsightsExpression(t *testing.T) {
 	q := api.in.MetricDataQueries[0]
 	if q.Expression == nil {
 		t.Fatal("expected Expression query for Metrics Insights")
+	}
+	if aws.ToString(q.Expression) != expectedExpr {
+		t.Fatalf("expected Expression=%q, got %q", expectedExpr, aws.ToString(q.Expression))
 	}
 }
 
@@ -70,5 +94,16 @@ func TestExecute_MissingBoth(t *testing.T) {
 	}
 	if res.Success {
 		t.Fatal("expected success=false when neither metric_name nor expression provided")
+	}
+}
+
+func TestExecute_BothProvided(t *testing.T) {
+	payload := `{"metric_name":"CPUUtilization","expression":"SELECT AVG(CPUUtilization)","start":"2026-06-30T09:00:00Z","end":"2026-06-30T11:00:00Z"}`
+	res, err := newTestTask(&fakeGMD{}).Execute(context.Background(), json.RawMessage(payload))
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if res.Success {
+		t.Fatal("expected success=false when both metric_name and expression provided")
 	}
 }
