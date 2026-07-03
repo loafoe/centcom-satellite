@@ -126,7 +126,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			} `json:"newState"`
 		}
 		if h.HistoryData != nil {
-			_ = json.Unmarshal([]byte(*h.HistoryData), &hd)
+			if err := json.Unmarshal([]byte(*h.HistoryData), &hd); err != nil {
+				// Skip items whose HistoryData can't be parsed rather than emitting
+				// an ambiguous empty-state row.
+				continue
+			}
 		}
 		item.OldState = hd.OldState.StateValue
 		item.NewState = hd.NewState.StateValue

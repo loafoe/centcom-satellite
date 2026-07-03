@@ -80,3 +80,32 @@ func TestExecute_ChronologicalSorting(t *testing.T) {
 		t.Fatalf("items not sorted chronologically: %v", items)
 	}
 }
+
+func TestExecute_SkipsMalformedHistoryData(t *testing.T) {
+	ts1 := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2026, 7, 3, 11, 0, 0, 0, time.UTC)
+	validHist := `{"oldState":{"stateValue":"OK"},"newState":{"stateValue":"ALARM","stateReason":"breached"}}`
+	malformedHist := `{not json`
+
+	api := &fakeAPI{out: &cloudwatch.DescribeAlarmHistoryOutput{
+		AlarmHistoryItems: []cwtypes.AlarmHistoryItem{
+			{Timestamp: &ts1, HistoryData: aws.String(validHist)},
+			{Timestamp: &ts2, HistoryData: aws.String(malformedHist)},
+		},
+	}}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"alarm_name":"test"}`))
+	if err != nil {
+		t.Fatalf("expected nil error for best-effort processing, got %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success=true, got false")
+	}
+	items := res.Details.(HistoryList).Items
+	// Only the valid item should be present; malformed one skipped
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item (malformed skipped), got %d", len(items))
+	}
+	if items[0].NewState != "ALARM" || items[0].Reason != "breached" {
+		t.Fatalf("unexpected item: %+v", items[0])
+	}
+}
