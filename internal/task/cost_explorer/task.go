@@ -30,6 +30,19 @@ var namespaceToService = map[string]string{
 	"AWS/ECS":            "Amazon Elastic Container Service",
 }
 
+// allowedGroupDimensions are the Cost Explorer DIMENSION keys we accept for
+// group_by. Cost Explorer permits at most two GroupBy entries per request.
+var allowedGroupDimensions = map[string]cetypes.Dimension{
+	"SERVICE":        cetypes.DimensionService,
+	"REGION":         cetypes.DimensionRegion,
+	"LINKED_ACCOUNT": cetypes.DimensionLinkedAccount,
+	"INSTANCE_TYPE":  cetypes.DimensionInstanceType,
+	"USAGE_TYPE":     cetypes.DimensionUsageType,
+	"AZ":             cetypes.DimensionAz,
+}
+
+const maxGroupBy = 2
+
 type getCostAndUsageAPI interface {
 	GetCostAndUsage(context.Context, *costexplorer.GetCostAndUsageInput, ...func(*costexplorer.Options)) (*costexplorer.GetCostAndUsageOutput, error)
 }
@@ -40,19 +53,35 @@ type Payload struct {
 	Start       string `json:"start,omitempty"`       // YYYY-MM-DD; default now-30d
 	End         string `json:"end,omitempty"`         // YYYY-MM-DD; default today
 	Granularity string `json:"granularity,omitempty"` // default MONTHLY
+	// GroupBy holds up to two Cost Explorer DIMENSION keys (e.g. "SERVICE",
+	// "REGION"). When set, each period's cost is broken down by these dimensions.
+	GroupBy []string `json:"group_by,omitempty"`
 }
 
-// PeriodCost is cost for one time period.
+// GroupCost is cost for one group (dimension-value combination) within a period.
+type GroupCost struct {
+	// Keys are the dimension values in the same order as the request's group_by,
+	// e.g. ["Amazon Elastic Compute Cloud - Compute", "eu-west-2"].
+	Keys   []string `json:"keys"`
+	Amount string   `json:"amount"`
+	Unit   string   `json:"unit"`
+}
+
+// PeriodCost is cost for one time period. When group_by is set, Groups holds the
+// per-group breakdown and Amount/Unit are empty (Cost Explorer returns no period
+// total for grouped queries).
 type PeriodCost struct {
-	Start  string `json:"start"`
-	End    string `json:"end"`
-	Amount string `json:"amount"`
-	Unit   string `json:"unit"`
+	Start  string      `json:"start"`
+	End    string      `json:"end"`
+	Amount string      `json:"amount,omitempty"`
+	Unit   string      `json:"unit,omitempty"`
+	Groups []GroupCost `json:"groups,omitempty"`
 }
 
 // CostReport is the result payload.
 type CostReport struct {
 	Service string       `json:"service,omitempty"`
+	GroupBy []string     `json:"group_by,omitempty"`
 	Periods []PeriodCost `json:"periods"`
 }
 
@@ -108,6 +137,28 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	report := CostReport{Periods: []PeriodCost{}}
+
+	// GroupBy: validate against allowed dimensions (Cost Explorer permits ≤2).
+	if len(payload.GroupBy) > 0 {
+		if len(payload.GroupBy) > maxGroupBy {
+			return task.NewErrorResult(fmt.Sprintf("group_by supports at most %d dimensions, got %d", maxGroupBy, len(payload.GroupBy))), nil
+		}
+		groups := make([]cetypes.GroupDefinition, 0, len(payload.GroupBy))
+		normalized := make([]string, 0, len(payload.GroupBy))
+		for _, g := range payload.GroupBy {
+			dim, ok := allowedGroupDimensions[g]
+			if !ok {
+				return task.NewErrorResult(fmt.Sprintf("unsupported group_by dimension %q (allowed: SERVICE, REGION, LINKED_ACCOUNT, INSTANCE_TYPE, USAGE_TYPE, AZ)", g)), nil
+			}
+			groups = append(groups, cetypes.GroupDefinition{
+				Type: cetypes.GroupDefinitionTypeDimension,
+				Key:  aws.String(string(dim)),
+			})
+			normalized = append(normalized, g)
+		}
+		input.GroupBy = groups
+		report.GroupBy = normalized
+	}
 	if payload.Namespace != "" {
 		service, ok := namespaceToService[payload.Namespace]
 		if !ok {
@@ -138,12 +189,27 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			p.Start = aws.ToString(r.TimePeriod.Start)
 			p.End = aws.ToString(r.TimePeriod.End)
 		}
-		if mv, ok := r.Total["UnblendedCost"]; ok {
+		// Grouped queries return per-group amounts in Groups (Total is empty);
+		// ungrouped queries return the period aggregate in Total.
+		if len(r.Groups) > 0 {
+			for _, g := range r.Groups {
+				gc := GroupCost{Keys: g.Keys}
+				if mv, ok := g.Metrics["UnblendedCost"]; ok {
+					gc.Amount = aws.ToString(mv.Amount)
+					gc.Unit = aws.ToString(mv.Unit)
+				}
+				p.Groups = append(p.Groups, gc)
+			}
+		} else if mv, ok := r.Total["UnblendedCost"]; ok {
 			p.Amount = aws.ToString(mv.Amount)
 			p.Unit = aws.ToString(mv.Unit)
 		}
 		report.Periods = append(report.Periods, p)
 	}
 
-	return task.NewSuccessResultWithDetails(fmt.Sprintf("cost report: %d periods", len(report.Periods)), report), nil
+	summary := fmt.Sprintf("cost report: %d periods", len(report.Periods))
+	if len(report.GroupBy) > 0 {
+		summary = fmt.Sprintf("cost report: %d periods grouped by %v", len(report.Periods), report.GroupBy)
+	}
+	return task.NewSuccessResultWithDetails(summary, report), nil
 }
