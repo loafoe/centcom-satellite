@@ -14,10 +14,10 @@ func TestLoad(t *testing.T) {
 		{
 			name: "valid with SPIRE enabled",
 			envVars: map[string]string{
-				"SPIRE_ENABLED":      "true",
+				"SPIRE_ENABLED":       "true",
 				"SPIRE_TRUST_DOMAINS": "example.org",
-				"PORT":               "8080",
-				"METRICS_PORT":       "9090",
+				"PORT":                "8080",
+				"METRICS_PORT":        "9090",
 			},
 			wantErr: false,
 		},
@@ -147,5 +147,17 @@ func TestGetEnvInt(t *testing.T) {
 	_ = os.Setenv("TEST_INT", "notanumber")
 	if got := getEnvInt("TEST_INT", 42); got != 42 {
 		t.Errorf("expected 42, got %d", got)
+	}
+}
+
+func TestLoad_CloudWatchRCAFlag(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	t.Setenv("CLOUDWATCH_RCA_ENABLED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Features.CloudWatchRCAEnabled {
+		t.Fatal("CloudWatchRCAEnabled = false, want true")
 	}
 }

@@ -18,6 +18,13 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_health"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 	"github.com/loafoe/centcom-satellite/internal/task/connectivity_test"
+	"github.com/loafoe/centcom-satellite/internal/task/cost_explorer"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_alarm_history"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_describe_log_groups"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_get_metrics"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_list_alarms"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_list_metrics"
+	"github.com/loafoe/centcom-satellite/internal/task/cw_logs_query"
 	"github.com/loafoe/centcom-satellite/internal/task/dns_check"
 	"github.com/loafoe/centcom-satellite/internal/task/get_configmap"
 	"github.com/loafoe/centcom-satellite/internal/task/get_events"
@@ -114,6 +121,7 @@ func main() {
 		AutoRemediate:   cfg.Features.AutoRemediateEnabled,
 		HttpRequest:     cfg.Features.HTTPRequestEnabled,
 		ConfigmapRead:   cfg.Features.ConfigmapReadEnabled,
+		CloudWatchRCA:   cfg.Features.CloudWatchRCAEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -198,6 +206,19 @@ func main() {
 		registry.Register(pv_resize.New(k8sClient.Clientset))
 		registry.Register(pv_resize_status.New(k8sClient.Clientset))
 		slog.Info("pv_resize task enabled")
+	}
+
+	// Optional: CloudWatch RCA data-retrieval tasks (require AWS credentials + IAM)
+	if cfg.Features.CloudWatchRCAEnabled {
+		registry.Register(cw_list_alarms.New())
+		registry.Register(cw_alarm_history.New())
+		registry.Register(cw_get_metrics.New())
+		registry.Register(cw_list_metrics.New())
+		registry.Register(cw_describe_log_groups.New())
+		registry.Register(cw_logs_query.New())
+		registry.Register(cost_explorer.New())
+		slog.Info("cloudwatch RCA tasks enabled",
+			"tasks", "cw_list_alarms,cw_alarm_history,cw_get_metrics,cw_list_metrics,cw_describe_log_groups,cw_logs_query,cost_explorer")
 	}
 
 	// Setup SPIRE client if enabled

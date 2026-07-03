@@ -92,6 +92,12 @@ type FeaturesConfig struct {
 	// orchestrated by pico-mcp (e.g., PV usage alerting and automatic resize).
 	// Disabled by default.
 	AutoRemediateEnabled bool
+
+	// CloudWatchRCAEnabled enables the CloudWatch/Cost-Explorer data-retrieval
+	// tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics,
+	// cw_describe_log_groups, cw_logs_query, cost_explorer). Disabled by default
+	// as it requires AWS credentials (IRSA) and IAM permissions.
+	CloudWatchRCAEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -142,6 +148,7 @@ func Load() (*Config, error) {
 			HTTPRequestEnabled:     getEnvBool("HTTP_REQUEST_ENABLED", false),
 			PvResizeEnabled:        getEnvBool("PV_RESIZE_ENABLED", false),
 			AutoRemediateEnabled:   getEnvBool("AUTO_REMEDIATE_ENABLED", false),
+			CloudWatchRCAEnabled:   getEnvBool("CLOUDWATCH_RCA_ENABLED", false),
 		},
 	}
 
