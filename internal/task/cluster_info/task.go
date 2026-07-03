@@ -41,6 +41,7 @@ type Capabilities struct {
 	AutoRemediate   bool `json:"auto_remediate"`
 	HttpRequest     bool `json:"http_request"`
 	ConfigmapRead   bool `json:"configmap_read"`
+	CloudWatchRCA   bool `json:"cloudwatch_rca"`
 }
 
 // VersionInfo contains Kubernetes version details.

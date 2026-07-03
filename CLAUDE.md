@@ -123,6 +123,7 @@ Environment variables:
 - `OTEL_EXPORTER_OTLP_INSECURE` / `OTEL_EXPORTER_OTLP_TRACES_INSECURE` - set to `false` to use TLS for the OTLP exporter (default: insecure/plaintext)
 - `OTEL_SERVICE_NAME` (default: centcom-satellite) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
+- `CLOUDWATCH_RCA_ENABLED` (default: false) - Enable CloudWatch/Cost-Explorer data-retrieval tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics, cw_describe_log_groups, cw_logs_query, cost_explorer). Requires AWS credentials via IRSA and the IAM policy in `deploy/iam-policy-cloudwatch-rca.json`.
 
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication
