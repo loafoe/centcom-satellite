@@ -85,6 +85,14 @@ func TestExecute_MetricsInsightsExpression(t *testing.T) {
 	if aws.ToString(q.Expression) != expectedExpr {
 		t.Fatalf("expected Expression=%q, got %q", expectedExpr, aws.ToString(q.Expression))
 	}
+	// CloudWatch rejects an expression query without Period ("Period is a
+	// required field when using query within an expression"). Default to 300.
+	if q.Period == nil {
+		t.Fatal("expected Period to be set on the expression query")
+	}
+	if aws.ToInt32(q.Period) != 300 {
+		t.Fatalf("expected default Period=300, got %d", aws.ToInt32(q.Period))
+	}
 }
 
 func TestExecute_MissingBoth(t *testing.T) {
