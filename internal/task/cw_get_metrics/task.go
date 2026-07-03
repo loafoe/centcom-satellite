@@ -95,6 +95,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	query := cwtypes.MetricDataQuery{Id: aws.String("m0"), ReturnData: aws.Bool(true)}
 	if payload.Expression != "" {
 		query.Expression = aws.String(payload.Expression)
+		// CloudWatch requires Period on the query itself for a Metrics Insights
+		// expression (there is no MetricStat to carry it). Default when unset.
+		period := payload.Period
+		if period <= 0 {
+			period = defaultPeriod
+		}
+		query.Period = aws.Int32(period)
 	} else {
 		period := payload.Period
 		if period <= 0 {
