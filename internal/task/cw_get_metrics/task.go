@@ -26,6 +26,7 @@ type getMetricDataAPI interface {
 
 // Payload for cw_get_metrics. Provide either a metric query (namespace +
 // metric_name [+ dimensions, stat, period]) or a Metrics Insights expression.
+// The two modes are mutually exclusive.
 type Payload struct {
 	Namespace  string            `json:"namespace,omitempty"`
 	MetricName string            `json:"metric_name,omitempty"`
@@ -78,6 +79,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	if payload.MetricName == "" && payload.Expression == "" {
 		return task.NewErrorResult("either metric_name or expression is required"), nil
+	}
+	if payload.MetricName != "" && payload.Expression != "" {
+		return task.NewErrorResult("provide either metric_name or expression, not both"), nil
 	}
 	start, err := time.Parse(time.RFC3339, payload.Start)
 	if err != nil {
