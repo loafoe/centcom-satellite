@@ -5,6 +5,7 @@ package cw_logs_query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,6 +73,12 @@ func NewWithClientFactory(f func(ctx context.Context, region string) (logsInsigh
 
 func (t *Task) Name() string { return TaskName }
 
+func stopQuery(ctx context.Context, client logsInsightsAPI, queryID string) {
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = client.StopQuery(stopCtx, &cloudwatchlogs.StopQueryInput{QueryId: aws.String(queryID)})
+}
+
 func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.Result, error) {
 	var payload Payload
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
@@ -122,8 +129,19 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	deadline := time.Now().Add(timeout)
 	for {
-		out, err := client.GetQueryResults(ctx, &cloudwatchlogs.GetQueryResultsInput{QueryId: aws.String(queryID)})
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			stopQuery(ctx, client, queryID)
+			return task.NewErrorResult(fmt.Sprintf("query timed out after %s", timeout)), nil
+		}
+		pollCtx, cancel := context.WithTimeout(ctx, remaining)
+		out, err := client.GetQueryResults(pollCtx, &cloudwatchlogs.GetQueryResultsInput{QueryId: aws.String(queryID)})
+		cancel()
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				stopQuery(ctx, client, queryID)
+				return task.NewErrorResult(fmt.Sprintf("query timed out after %s", timeout)), nil
+			}
 			return nil, fmt.Errorf("get query results: %w", err)
 		}
 
@@ -137,16 +155,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			return task.NewErrorResult(fmt.Sprintf("query ended with status %s", out.Status)), nil
 		}
 
-		if time.Now().After(deadline) {
-			_, _ = client.StopQuery(ctx, &cloudwatchlogs.StopQueryInput{QueryId: aws.String(queryID)})
-			return task.NewErrorResult(fmt.Sprintf("query timed out after %s (last status %s)", timeout, out.Status)), nil
-		}
-
+		timer := time.NewTimer(t.pollInterval)
 		select {
 		case <-ctx.Done():
-			_, _ = client.StopQuery(ctx, &cloudwatchlogs.StopQueryInput{QueryId: aws.String(queryID)})
+			timer.Stop()
+			stopQuery(ctx, client, queryID)
 			return nil, ctx.Err()
-		case <-time.After(t.pollInterval):
+		case <-timer.C:
 		}
 	}
 }
