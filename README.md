@@ -19,6 +19,13 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `cluster_health` | Get cluster health status |
 | `cluster_info` | Get cluster information (version, nodes) |
 | `connectivity_test` | Test TCP/HTTP connectivity to endpoints |
+| `cost_explorer` | Get AWS cost & usage, optionally by service |
+| `cw_alarm_history` | Get CloudWatch alarm state-change history |
+| `cw_describe_log_groups` | List CloudWatch Logs log groups |
+| `cw_get_metrics` | Get CloudWatch metric data (query or Metrics Insights) |
+| `cw_list_alarms` | List CloudWatch alarms by state |
+| `cw_list_metrics` | Discover available CloudWatch metrics |
+| `cw_logs_query` | Run a CloudWatch Logs Insights query |
 | `dns_check` | Test DNS resolution for hostnames |
 | `get_events` | Get Kubernetes events with filtering |
 | `get_logs` | Retrieve pod container logs |
@@ -107,6 +114,7 @@ kubectl apply -k deploy/
 | `LOG_LEVEL` | info | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | json | Log format (json, text) |
 | `ALLOW_UNAUTHENTICATED` | false | Allow unauthenticated requests (dev mode only) |
+| `CLOUDWATCH_RCA_ENABLED` | false | Enable CloudWatch/Cost-Explorer data-retrieval tasks (needs AWS IRSA + IAM) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | centcom-satellite | Service name for tracing |
 
