@@ -42,6 +42,7 @@ type Capabilities struct {
 	HttpRequest     bool `json:"http_request"`
 	ConfigmapRead   bool `json:"configmap_read"`
 	CloudWatchRCA   bool `json:"cloudwatch_rca"`
+	GuardDuty       bool `json:"guardduty"`
 }
 
 // VersionInfo contains Kubernetes version details.

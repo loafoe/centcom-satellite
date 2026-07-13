@@ -98,6 +98,13 @@ type FeaturesConfig struct {
 	// cw_describe_log_groups, cw_logs_query, cost_explorer). Disabled by default
 	// as it requires AWS credentials (IRSA) and IAM permissions.
 	CloudWatchRCAEnabled bool
+
+	// GuardDutyEnabled enables the GuardDuty data-retrieval tasks
+	// (guardduty_list_detectors, guardduty_get_findings_statistics,
+	// guardduty_list_findings, guardduty_get_findings, guardduty_findings).
+	// Disabled by default as it requires AWS credentials (IRSA) and read-only
+	// GuardDuty IAM permissions (see deploy/iam-policy-guardduty.json).
+	GuardDutyEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -149,6 +156,7 @@ func Load() (*Config, error) {
 			PvResizeEnabled:        getEnvBool("PV_RESIZE_ENABLED", false),
 			AutoRemediateEnabled:   getEnvBool("AUTO_REMEDIATE_ENABLED", false),
 			CloudWatchRCAEnabled:   getEnvBool("CLOUDWATCH_RCA_ENABLED", false),
+			GuardDutyEnabled:       getEnvBool("GUARDDUTY_ENABLED", false),
 		},
 	}
 

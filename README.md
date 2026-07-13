@@ -30,6 +30,11 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `get_events` | Get Kubernetes events with filtering |
 | `get_logs` | Retrieve pod container logs |
 | `get_resource` | Get a specific Kubernetes resource |
+| `guardduty_findings` | List + hydrate GuardDuty findings in one call (dashboard table) |
+| `guardduty_get_findings` | Retrieve full detail for a batch of GuardDuty finding IDs |
+| `guardduty_get_findings_statistics` | Aggregate GuardDuty finding counts (by severity/type/date/resource/account) |
+| `guardduty_list_detectors` | List GuardDuty detectors and their status |
+| `guardduty_list_findings` | List GuardDuty finding IDs matching a filter |
 | `list_endpoints` | List service endpoints |
 | `list_gateways` | List Gateway API gateways |
 | `list_ingresses` | List ingress resources |
@@ -115,6 +120,7 @@ kubectl apply -k deploy/
 | `LOG_FORMAT` | json | Log format (json, text) |
 | `ALLOW_UNAUTHENTICATED` | false | Allow unauthenticated requests (dev mode only) |
 | `CLOUDWATCH_RCA_ENABLED` | false | Enable CloudWatch/Cost-Explorer data-retrieval tasks (needs AWS IRSA + IAM) |
+| `GUARDDUTY_ENABLED` | false | Enable GuardDuty data-retrieval tasks (needs AWS IRSA + read-only GuardDuty IAM; see `deploy/iam-policy-guardduty.json`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | centcom-satellite | Service name for tracing |
 
