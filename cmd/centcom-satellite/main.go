@@ -30,6 +30,11 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/get_events"
 	"github.com/loafoe/centcom-satellite/internal/task/get_logs"
 	"github.com/loafoe/centcom-satellite/internal/task/get_resource"
+	"github.com/loafoe/centcom-satellite/internal/task/guardduty_findings"
+	"github.com/loafoe/centcom-satellite/internal/task/guardduty_get_findings"
+	"github.com/loafoe/centcom-satellite/internal/task/guardduty_get_findings_statistics"
+	"github.com/loafoe/centcom-satellite/internal/task/guardduty_list_detectors"
+	"github.com/loafoe/centcom-satellite/internal/task/guardduty_list_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/http_request"
 	"github.com/loafoe/centcom-satellite/internal/task/list_argocd_applications"
 	"github.com/loafoe/centcom-satellite/internal/task/list_configmaps"
@@ -122,6 +127,7 @@ func main() {
 		HttpRequest:     cfg.Features.HTTPRequestEnabled,
 		ConfigmapRead:   cfg.Features.ConfigmapReadEnabled,
 		CloudWatchRCA:   cfg.Features.CloudWatchRCAEnabled,
+		GuardDuty:       cfg.Features.GuardDutyEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -219,6 +225,19 @@ func main() {
 		registry.Register(cost_explorer.New())
 		slog.Info("cloudwatch RCA tasks enabled",
 			"tasks", "cw_list_alarms,cw_alarm_history,cw_get_metrics,cw_list_metrics,cw_describe_log_groups,cw_logs_query,cost_explorer")
+	}
+
+	// Optional: GuardDuty data-retrieval tasks (require AWS credentials + read-only
+	// GuardDuty IAM; see deploy/iam-policy-guardduty.json). Independently toggleable
+	// from CloudWatch RCA so a cluster can enable GuardDuty without CloudWatch access.
+	if cfg.Features.GuardDutyEnabled {
+		registry.Register(guardduty_list_detectors.New())
+		registry.Register(guardduty_get_findings_statistics.New())
+		registry.Register(guardduty_list_findings.New())
+		registry.Register(guardduty_get_findings.New())
+		registry.Register(guardduty_findings.New())
+		slog.Info("guardduty tasks enabled",
+			"tasks", "guardduty_list_detectors,guardduty_get_findings_statistics,guardduty_list_findings,guardduty_get_findings,guardduty_findings")
 	}
 
 	// Setup SPIRE client if enabled

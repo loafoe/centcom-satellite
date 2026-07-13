@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CentcomGuardDutyRead",
+      "Effect": "Allow",
+      "Action": [
+        "guardduty:ListDetectors",
+        "guardduty:GetDetector",
+        "guardduty:ListFindings",
+        "guardduty:GetFindings",
+        "guardduty:GetFindingsStatistics"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

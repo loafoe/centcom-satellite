@@ -124,6 +124,7 @@ Environment variables:
 - `OTEL_SERVICE_NAME` (default: centcom-satellite) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 - `CLOUDWATCH_RCA_ENABLED` (default: false) - Enable CloudWatch/Cost-Explorer data-retrieval tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics, cw_describe_log_groups, cw_logs_query, cost_explorer). Requires AWS credentials via IRSA and the IAM policy in `deploy/iam-policy-cloudwatch-rca.json`.
+- `GUARDDUTY_ENABLED` (default: false) - Enable GuardDuty data-retrieval tasks (guardduty_list_detectors, guardduty_get_findings_statistics, guardduty_list_findings, guardduty_get_findings, guardduty_findings). Independently toggleable from CloudWatch RCA. Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-guardduty.json`.
 
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication
