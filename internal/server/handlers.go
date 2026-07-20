@@ -163,6 +163,16 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 
 // HandleHealthz handles liveness probe requests.
 func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	if h.spireClient != nil {
+		if err := h.spireClient.HealthCheck(r.Context()); err != nil {
+			slog.Warn("healthz probe failed", "error", err)
+			h.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "unhealthy",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
@@ -182,7 +192,16 @@ func (h *Handlers) HandleInfo(w http.ResponseWriter, r *http.Request) {
 
 // HandleReadyz handles readiness probe requests.
 func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
-	// Could add additional checks here (e.g., k8s connectivity)
+	if h.spireClient != nil {
+		if err := h.spireClient.HealthCheck(r.Context()); err != nil {
+			slog.Warn("readyz probe failed", "error", err)
+			h.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "unhealthy",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }

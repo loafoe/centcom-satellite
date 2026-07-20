@@ -279,8 +279,14 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		if jwtSource == nil {
 			return fmt.Errorf("SPIRE JWT source not initialized")
 		}
-		if _, err := jwtSource.GetJWTBundleSet(); err != nil {
-			return fmt.Errorf("SPIRE JWT bundle error: %w", err)
+		for _, tdStr := range c.config.TrustDomains {
+			td, err := spiffeid.TrustDomainFromString(tdStr)
+			if err != nil {
+				return fmt.Errorf("invalid trust domain %q: %w", tdStr, err)
+			}
+			if _, err := jwtSource.GetJWTBundleForTrustDomain(td); err != nil {
+				return fmt.Errorf("SPIRE JWT bundle error: %w", err)
+			}
 		}
 	}
 
