@@ -252,6 +252,42 @@ func (c *Client) ValidateJWTToken(ctx context.Context, token string) (spiffeid.I
 	return svid.ID, nil
 }
 
+// HealthCheck checks if SPIRE is healthy (workload API connected and SVID/bundles fetched).
+func (c *Client) HealthCheck(ctx context.Context) error {
+	if c == nil || c.config == nil || !c.config.Enabled {
+		return nil
+	}
+
+	c.mu.RLock()
+	source := c.source
+	jwtSource := c.jwtSource
+	c.mu.RUnlock()
+
+	if source == nil {
+		return fmt.Errorf("SPIRE X509 source not initialized")
+	}
+
+	svid, err := source.GetX509SVID()
+	if err != nil {
+		return fmt.Errorf("SPIRE X509 SVID error: %w", err)
+	}
+	if svid == nil {
+		return fmt.Errorf("SPIRE X509 SVID is nil")
+	}
+
+	if c.config.JWT.Enabled {
+		if jwtSource == nil {
+			return fmt.Errorf("SPIRE JWT source not initialized")
+		}
+		if _, err := jwtSource.GetJWTBundleSet(); err != nil {
+			return fmt.Errorf("SPIRE JWT bundle error: %w", err)
+		}
+	}
+
+	return nil
+}
+
+
 // authorizeMemberOfAny returns an Authorizer that accepts SVIDs from any of the
 // specified trust domains. This supports federated SPIFFE deployments.
 func authorizeMemberOfAny(trustDomains []spiffeid.TrustDomain) tlsconfig.Authorizer {
