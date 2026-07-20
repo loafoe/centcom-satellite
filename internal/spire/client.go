@@ -279,7 +279,11 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		if jwtSource == nil {
 			return fmt.Errorf("SPIRE JWT source not initialized")
 		}
-		for _, tdStr := range c.config.TrustDomains {
+		trustDomains := c.config.TrustDomains
+		if len(trustDomains) == 0 {
+			trustDomains = []string{svid.ID.TrustDomain().String()}
+		}
+		for _, tdStr := range trustDomains {
 			td, err := spiffeid.TrustDomainFromString(tdStr)
 			if err != nil {
 				return fmt.Errorf("invalid trust domain %q: %w", tdStr, err)
@@ -292,7 +296,6 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 
 	return nil
 }
-
 
 // authorizeMemberOfAny returns an Authorizer that accepts SVIDs from any of the
 // specified trust domains. This supports federated SPIFFE deployments.
