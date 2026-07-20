@@ -81,6 +81,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Metrics server
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/healthz", s.handlers.HandleHealthz)
+	metricsMux.HandleFunc("/readyz", s.handlers.HandleReadyz)
 
 	s.mux = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.config.MetricsPort),

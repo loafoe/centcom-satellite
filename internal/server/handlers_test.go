@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/spire"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -166,6 +167,58 @@ func TestHandleReadyz(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+}
+
+func TestHandleHealthz_SPIREFailure(t *testing.T) {
+	registry := task.NewRegistry()
+	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
+	spireClient := spire.NewClient(&spire.Config{Enabled: true})
+	h := NewHandlers(registry, spireClient, metrics, "v1.0.0", true)
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleHealthz(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503, got %d", rr.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "unhealthy" {
+		t.Errorf("expected status 'unhealthy', got %q", resp["status"])
+	}
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestHandleReadyz_SPIREFailure(t *testing.T) {
+	registry := task.NewRegistry()
+	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
+	spireClient := spire.NewClient(&spire.Config{Enabled: true})
+	h := NewHandlers(registry, spireClient, metrics, "v1.0.0", true)
+
+	req := httptest.NewRequest("GET", "/readyz", nil)
+	rr := httptest.NewRecorder()
+
+	h.HandleReadyz(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503, got %d", rr.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "unhealthy" {
+		t.Errorf("expected status 'unhealthy', got %q", resp["status"])
+	}
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
 	}
 }
 
