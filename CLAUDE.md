@@ -319,7 +319,7 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **centcom-satellite**: v0.41.0
+- **centcom-satellite**: v0.55.0
 - **Helm chart**: 0.42.0
 
 ## Key Dependencies
