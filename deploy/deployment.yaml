@@ -57,6 +57,12 @@ spec:
             # Optional: OTEL endpoint
             # - name: OTEL_EXPORTER_OTLP_ENDPOINT
             #   value: "otel-collector:4318"
+            # Optional: Security Hub read tasks
+            # - name: SECURITYHUB_ENABLED
+            #   value: "true"
+            # Optional: Security Hub write task (BatchUpdateFindings)
+            # - name: SECURITYHUB_WRITE_ENABLED
+            #   value: "true"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

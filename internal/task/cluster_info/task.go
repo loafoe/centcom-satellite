@@ -30,19 +30,21 @@ type ClusterInfo struct {
 
 // Capabilities advertises which optional features are enabled on this agent.
 type Capabilities struct {
-	WorkloadRestart bool `json:"workload_restart"`
-	WorkloadScale   bool `json:"workload_scale"`
-	PodEvict        bool `json:"pod_evict"`
-	PodResize       bool `json:"pod_resize"`
-	GetResource     bool `json:"get_resource"`
-	NodeclaimDelete bool `json:"nodeclaim_delete"`
-	Argocd          bool `json:"argocd"`
-	PvResize        bool `json:"pv_resize"`
-	AutoRemediate   bool `json:"auto_remediate"`
-	HttpRequest     bool `json:"http_request"`
-	ConfigmapRead   bool `json:"configmap_read"`
-	CloudWatchRCA   bool `json:"cloudwatch_rca"`
-	GuardDuty       bool `json:"guardduty"`
+	WorkloadRestart  bool `json:"workload_restart"`
+	WorkloadScale    bool `json:"workload_scale"`
+	PodEvict         bool `json:"pod_evict"`
+	PodResize        bool `json:"pod_resize"`
+	GetResource      bool `json:"get_resource"`
+	NodeclaimDelete  bool `json:"nodeclaim_delete"`
+	Argocd           bool `json:"argocd"`
+	PvResize         bool `json:"pv_resize"`
+	AutoRemediate    bool `json:"auto_remediate"`
+	HttpRequest      bool `json:"http_request"`
+	ConfigmapRead    bool `json:"configmap_read"`
+	CloudWatchRCA    bool `json:"cloudwatch_rca"`
+	GuardDuty        bool `json:"guardduty"`
+	SecurityHub      bool `json:"securityhub"`
+	SecurityHubWrite bool `json:"securityhub_write"`
 }
 
 // VersionInfo contains Kubernetes version details.

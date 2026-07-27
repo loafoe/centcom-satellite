@@ -111,6 +111,44 @@ Deletes Karpenter NodeClaims for safe node recycling.
 
 **Safety**: Blocks deletion if `karpenter.sh/do-not-disrupt=true` annotation present (use `force=true` to override).
 
+### Implemented: Security Hub tasks
+
+Read tasks (`securityhub_list_standards`, `securityhub_get_findings`,
+`securityhub_get_findings_statistics`) retrieve Security Hub findings and
+compliance-standard status. Unlike GuardDuty, Security Hub aggregates findings
+from many products (GuardDuty, Inspector, Macie, IAM Access Analyzer, Config
+compliance checks, custom integrations) and supports a write task,
+`securityhub_update_findings`, for setting a finding's triage state.
+
+**Request** (`securityhub_update_findings`):
+```json
+{
+  "type": "securityhub_update_findings",
+  "payload": {
+    "findings": [
+      {"id": "finding-id-1", "product_arn": "arn:aws:securityhub:us-east-1:123456789012:product/aws/guardduty"}
+    ],
+    "workflow_status": "RESOLVED",
+    "note": "Remediated via automation",
+    "note_updated_by": "centcom-satellite"
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "updated 1 findings (0 unprocessed)",
+  "details": {
+    "processed": [
+      {"id": "finding-id-1", "product_arn": "arn:aws:securityhub:us-east-1:123456789012:product/aws/guardduty"}
+    ],
+    "unprocessed": []
+  }
+}
+```
+
 ## Configuration
 
 Environment variables:
@@ -125,6 +163,8 @@ Environment variables:
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 - `CLOUDWATCH_RCA_ENABLED` (default: false) - Enable CloudWatch/Cost-Explorer data-retrieval tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics, cw_describe_log_groups, cw_logs_query, cost_explorer). Requires AWS credentials via IRSA and the IAM policy in `deploy/iam-policy-cloudwatch-rca.json`.
 - `GUARDDUTY_ENABLED` (default: false) - Enable GuardDuty data-retrieval tasks (guardduty_list_detectors, guardduty_get_findings_statistics, guardduty_list_findings, guardduty_get_findings, guardduty_findings). Independently toggleable from CloudWatch RCA. Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-guardduty.json`.
+- `SECURITYHUB_ENABLED` (default: false) - Enable Security Hub data-retrieval tasks (securityhub_list_standards, securityhub_get_findings, securityhub_get_findings_statistics). Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-securityhub.json`.
+- `SECURITYHUB_WRITE_ENABLED` (default: false) - Enable securityhub_update_findings (BatchUpdateFindings — sets Workflow.Status/Note). Independently toggleable from SECURITYHUB_ENABLED. Requires the write IAM policy in `deploy/iam-policy-securityhub-write.json`.
 
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication

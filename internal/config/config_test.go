@@ -161,3 +161,33 @@ func TestLoad_CloudWatchRCAFlag(t *testing.T) {
 		t.Fatal("CloudWatchRCAEnabled = false, want true")
 	}
 }
+
+func TestLoad_SecurityHubFlags(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	t.Setenv("SECURITYHUB_ENABLED", "true")
+	t.Setenv("SECURITYHUB_WRITE_ENABLED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Features.SecurityHubEnabled {
+		t.Fatal("SecurityHubEnabled = false, want true")
+	}
+	if !cfg.Features.SecurityHubWriteEnabled {
+		t.Fatal("SecurityHubWriteEnabled = false, want true")
+	}
+}
+
+func TestLoad_SecurityHubFlagsDefaultFalse(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Features.SecurityHubEnabled {
+		t.Fatal("SecurityHubEnabled = true, want false by default")
+	}
+	if cfg.Features.SecurityHubWriteEnabled {
+		t.Fatal("SecurityHubWriteEnabled = true, want false by default")
+	}
+}
