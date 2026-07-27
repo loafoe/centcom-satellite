@@ -51,6 +51,10 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `pv_resize_status` | Check PVC resize operation status |
 | `pv_usage` | Get PersistentVolume usage statistics |
 | `resource_pressure` | Check node resource pressure conditions |
+| `securityhub_get_findings` | Retrieve Security Hub findings matching a filter (product-agnostic) |
+| `securityhub_get_findings_statistics` | Aggregate Security Hub finding counts (by severity/type/workflow-status/product) |
+| `securityhub_list_standards` | List Security Hub subscription status and enabled compliance standards |
+| `securityhub_update_findings` | Update a finding's Workflow.Status and/or Note via BatchUpdateFindings |
 | `storage_status` | Get storage class and PV/PVC status |
 | `workload_restart` | Restart a deployment/statefulset/daemonset |
 | `workload_scale` | Scale workload replicas |
@@ -121,6 +125,8 @@ kubectl apply -k deploy/
 | `ALLOW_UNAUTHENTICATED` | false | Allow unauthenticated requests (dev mode only) |
 | `CLOUDWATCH_RCA_ENABLED` | false | Enable CloudWatch/Cost-Explorer data-retrieval tasks (needs AWS IRSA + IAM) |
 | `GUARDDUTY_ENABLED` | false | Enable GuardDuty data-retrieval tasks (needs AWS IRSA + read-only GuardDuty IAM; see `deploy/iam-policy-guardduty.json`) |
+| `SECURITYHUB_ENABLED` | false | Enable Security Hub data-retrieval tasks (needs AWS IRSA + read-only Security Hub IAM; see `deploy/iam-policy-securityhub.json`) |
+| `SECURITYHUB_WRITE_ENABLED` | false | Enable `securityhub_update_findings` (needs AWS IRSA + write IAM; see `deploy/iam-policy-securityhub-write.json`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (disabled) | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | centcom-satellite | Service name for tracing |
 
