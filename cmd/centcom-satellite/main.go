@@ -59,6 +59,10 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/pv_resize_status"
 	"github.com/loafoe/centcom-satellite/internal/task/pv_usage"
 	"github.com/loafoe/centcom-satellite/internal/task/resource_pressure"
+	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings"
+	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings_statistics"
+	"github.com/loafoe/centcom-satellite/internal/task/securityhub_list_standards"
+	"github.com/loafoe/centcom-satellite/internal/task/securityhub_update_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/storage_status"
 	"github.com/loafoe/centcom-satellite/internal/task/workload_restart"
 	"github.com/loafoe/centcom-satellite/internal/task/workload_scale"
@@ -115,19 +119,21 @@ func main() {
 	// Setup task registry
 	registry := task.NewRegistry()
 	registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
-		WorkloadRestart: cfg.Features.WorkloadRestartEnabled,
-		WorkloadScale:   cfg.Features.WorkloadScaleEnabled,
-		PodEvict:        cfg.Features.PodEvictEnabled,
-		PodResize:       cfg.Features.PodResizeEnabled,
-		GetResource:     cfg.Features.GetResourceEnabled,
-		NodeclaimDelete: cfg.Features.NodeclaimDeleteEnabled,
-		Argocd:          cfg.Features.ArgocdEnabled,
-		PvResize:        cfg.Features.PvResizeEnabled,
-		AutoRemediate:   cfg.Features.AutoRemediateEnabled,
-		HttpRequest:     cfg.Features.HTTPRequestEnabled,
-		ConfigmapRead:   cfg.Features.ConfigmapReadEnabled,
-		CloudWatchRCA:   cfg.Features.CloudWatchRCAEnabled,
-		GuardDuty:       cfg.Features.GuardDutyEnabled,
+		WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
+		WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
+		PodEvict:         cfg.Features.PodEvictEnabled,
+		PodResize:        cfg.Features.PodResizeEnabled,
+		GetResource:      cfg.Features.GetResourceEnabled,
+		NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
+		Argocd:           cfg.Features.ArgocdEnabled,
+		PvResize:         cfg.Features.PvResizeEnabled,
+		AutoRemediate:    cfg.Features.AutoRemediateEnabled,
+		HttpRequest:      cfg.Features.HTTPRequestEnabled,
+		ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
+		CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
+		GuardDuty:        cfg.Features.GuardDutyEnabled,
+		SecurityHub:      cfg.Features.SecurityHubEnabled,
+		SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
 	}))
 	registry.Register(cluster_health.New(k8sClient.Clientset))
 	registry.Register(resource_pressure.New(k8sClient.Clientset))
@@ -238,6 +244,28 @@ func main() {
 		registry.Register(guardduty_findings.New())
 		slog.Info("guardduty tasks enabled",
 			"tasks", "guardduty_list_detectors,guardduty_get_findings_statistics,guardduty_list_findings,guardduty_get_findings,guardduty_findings")
+	}
+
+	// Optional: Security Hub data-retrieval tasks (require AWS credentials +
+	// read-only Security Hub IAM; see deploy/iam-policy-securityhub.json).
+	// Independently toggleable from GuardDuty/CloudWatch RCA — Security Hub
+	// aggregates findings from more products and, unlike GuardDuty, supports
+	// updating a finding's Workflow.Status via the separate write flag below.
+	if cfg.Features.SecurityHubEnabled {
+		registry.Register(securityhub_list_standards.New())
+		registry.Register(securityhub_get_findings.New())
+		registry.Register(securityhub_get_findings_statistics.New())
+		slog.Info("securityhub tasks enabled",
+			"tasks", "securityhub_list_standards,securityhub_get_findings,securityhub_get_findings_statistics")
+	}
+
+	// Optional: Security Hub write task (BatchUpdateFindings). Gated
+	// separately from SecurityHubEnabled so a cluster can grant read-only
+	// triage visibility without write access; see
+	// deploy/iam-policy-securityhub-write.json.
+	if cfg.Features.SecurityHubWriteEnabled {
+		registry.Register(securityhub_update_findings.New())
+		slog.Info("securityhub_update_findings task enabled")
 	}
 
 	// Setup SPIRE client if enabled
