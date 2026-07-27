@@ -2,13 +2,19 @@
 // counts (by severity/type/workflow-status/product) for dashboard summary
 // widgets. Security Hub has no server-side groupBy/statistics API (unlike
 // GuardDuty's GetFindingsStatistics), so this task pages through GetFindings
-// and aggregates client-side, capped to bound cost and latency.
+// and aggregates client-side, exhaustively — every matching finding is
+// counted, never a capped subset. A small inter-page delay keeps this safe
+// against AWS's per-account GetFindings rate limit even on accounts with
+// thousands of findings (dozens of pages): unlike CloudWatch/GuardDuty tasks
+// that make one or a handful of calls per invocation, this one is genuinely
+// call-heavy, so pacing is load-bearing here, not optional.
 package securityhub_get_findings_statistics
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub"
@@ -21,13 +27,15 @@ import (
 
 const TaskName = "securityhub_get_findings_statistics"
 
-// maxPages caps how many GetFindings pages are aggregated per call (10 pages
-// x 100 findings/page = up to 1,000 findings), bounding latency/cost. Hitting
-// the cap sets Statistics.Truncated so callers know the counts are a lower
-// bound, not silently partial data presented as complete.
-const maxPages = 10
-
 const pageSize int32 = 100
+
+// interPageDelay is a fixed pause between successive GetFindings calls within
+// one statistics scan. Empirically, AWS's GetFindings throttling limit sits
+// somewhere around 40-50 back-to-back requests (observed via the AWS CLI
+// against a real account with ~4,700 findings / ~47 pages); this delay keeps
+// a full scan of an account that size well under that threshold without
+// relying solely on the SDK's default retry-after-throttle behavior.
+const interPageDelay = 200 * time.Millisecond
 
 var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 	"SEVERITY": func(f types.AwsSecurityFinding) string {
@@ -64,31 +72,54 @@ type Payload struct {
 	GroupBy string     `json:"group_by,omitempty"` // default SEVERITY
 }
 
-// Statistics is the task result payload.
+// Statistics is the task result payload. Counts are always exhaustive over
+// every finding matching the filter — there is no truncation or partial-scan
+// case to represent.
 type Statistics struct {
-	GroupBy   string          `json:"group_by"`
-	Total     int32           `json:"total"`
-	Counts    []shc.StatCount `json:"counts"`
-	Truncated bool            `json:"truncated,omitempty"`
-	NextToken string          `json:"next_token,omitempty"`
+	GroupBy string          `json:"group_by"`
+	Total   int32           `json:"total"`
+	Counts  []shc.StatCount `json:"counts"`
 }
 
 type Task struct {
 	clientFactory func(ctx context.Context, region string) (api, error)
+	sleep         func(ctx context.Context, d time.Duration)
 }
 
 func New() *Task {
-	return &Task{clientFactory: func(ctx context.Context, region string) (api, error) {
-		cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{Region: region})
-		if err != nil {
-			return nil, err
-		}
-		return securityhub.NewFromConfig(cfg), nil
-	}}
+	return &Task{
+		clientFactory: func(ctx context.Context, region string) (api, error) {
+			cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{Region: region})
+			if err != nil {
+				return nil, err
+			}
+			return securityhub.NewFromConfig(cfg), nil
+		},
+		sleep: ctxSleep,
+	}
 }
 
 func NewWithClientFactory(f func(ctx context.Context, region string) (api, error)) *Task {
-	return &Task{clientFactory: f}
+	return &Task{clientFactory: f, sleep: ctxSleep}
+}
+
+// NewWithClientFactoryAndSleep is the test seam: injects a no-op or
+// instrumented sleep so pagination tests don't actually wait interPageDelay
+// per page.
+func NewWithClientFactoryAndSleep(f func(ctx context.Context, region string) (api, error), sleep func(ctx context.Context, d time.Duration)) *Task {
+	return &Task{clientFactory: f, sleep: sleep}
+}
+
+// ctxSleep pauses for d or until ctx is cancelled, whichever comes first —
+// so a cancelled request doesn't sit through the remainder of a long scan's
+// inter-page delays.
+func ctxSleep(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
 }
 
 func (t *Task) Name() string { return TaskName }
@@ -119,7 +150,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	result := Statistics{GroupBy: groupByStr, Counts: []shc.StatCount{}}
 
 	var nextToken *string
-	for page := 0; page < maxPages; page++ {
+	for page := 0; ; page++ {
+		if page > 0 {
+			t.sleep(ctx, interPageDelay)
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("get findings: %w", ctx.Err())
+			}
+		}
+
 		input := &securityhub.GetFindingsInput{
 			Filters:    payload.Filter.BuildFilters(),
 			MaxResults: aws.Int32(pageSize),
@@ -142,11 +180,6 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			break
 		}
 		nextToken = out.NextToken
-
-		if page == maxPages-1 {
-			result.Truncated = true
-			result.NextToken = aws.ToString(nextToken)
-		}
 	}
 
 	for key, count := range counts {
