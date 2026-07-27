@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CentcomSecurityHubRead",
+      "Effect": "Allow",
+      "Action": [
+        "securityhub:DescribeHub",
+        "securityhub:GetEnabledStandards",
+        "securityhub:DescribeStandards",
+        "securityhub:GetFindings"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
