@@ -35,10 +35,6 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `guardduty_get_findings_statistics` | Aggregate GuardDuty finding counts (by severity/type/date/resource/account) |
 | `guardduty_list_detectors` | List GuardDuty detectors and their status |
 | `guardduty_list_findings` | List GuardDuty finding IDs matching a filter |
-| `securityhub_get_findings` | Retrieve Security Hub findings matching a filter (product-agnostic) |
-| `securityhub_get_findings_statistics` | Aggregate Security Hub finding counts (by severity/type/workflow-status/product) |
-| `securityhub_list_standards` | List Security Hub subscription status and enabled compliance standards |
-| `securityhub_update_findings` | Update a finding's Workflow.Status and/or Note via BatchUpdateFindings |
 | `list_endpoints` | List service endpoints |
 | `list_gateways` | List Gateway API gateways |
 | `list_ingresses` | List ingress resources |
@@ -55,6 +51,10 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `pv_resize_status` | Check PVC resize operation status |
 | `pv_usage` | Get PersistentVolume usage statistics |
 | `resource_pressure` | Check node resource pressure conditions |
+| `securityhub_get_findings` | Retrieve Security Hub findings matching a filter (product-agnostic) |
+| `securityhub_get_findings_statistics` | Aggregate Security Hub finding counts (by severity/type/workflow-status/product) |
+| `securityhub_list_standards` | List Security Hub subscription status and enabled compliance standards |
+| `securityhub_update_findings` | Update a finding's Workflow.Status and/or Note via BatchUpdateFindings |
 | `storage_status` | Get storage class and PV/PVC status |
 | `workload_restart` | Restart a deployment/statefulset/daemonset |
 | `workload_scale` | Scale workload replicas |
