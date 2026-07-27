@@ -139,7 +139,6 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 
 		if out.NextToken == nil || aws.ToString(out.NextToken) == "" {
-			nextToken = nil
 			break
 		}
 		nextToken = out.NextToken
