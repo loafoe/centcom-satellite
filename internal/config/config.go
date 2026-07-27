@@ -105,6 +105,20 @@ type FeaturesConfig struct {
 	// Disabled by default as it requires AWS credentials (IRSA) and read-only
 	// GuardDuty IAM permissions (see deploy/iam-policy-guardduty.json).
 	GuardDutyEnabled bool
+
+	// SecurityHubEnabled enables the Security Hub data-retrieval tasks
+	// (securityhub_list_standards, securityhub_get_findings,
+	// securityhub_get_findings_statistics). Disabled by default as it requires
+	// AWS credentials (IRSA) and read-only Security Hub IAM permissions (see
+	// deploy/iam-policy-securityhub.json).
+	SecurityHubEnabled bool
+
+	// SecurityHubWriteEnabled enables the securityhub_update_findings task,
+	// which calls BatchUpdateFindings to set a finding's Workflow.Status and/or
+	// Note. Independently toggleable from SecurityHubEnabled. Disabled by
+	// default; requires the write IAM policy in
+	// deploy/iam-policy-securityhub-write.json.
+	SecurityHubWriteEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -157,6 +171,8 @@ func Load() (*Config, error) {
 			AutoRemediateEnabled:   getEnvBool("AUTO_REMEDIATE_ENABLED", false),
 			CloudWatchRCAEnabled:   getEnvBool("CLOUDWATCH_RCA_ENABLED", false),
 			GuardDutyEnabled:       getEnvBool("GUARDDUTY_ENABLED", false),
+			SecurityHubEnabled:      getEnvBool("SECURITYHUB_ENABLED", false),
+			SecurityHubWriteEnabled: getEnvBool("SECURITYHUB_WRITE_ENABLED", false),
 		},
 	}
 
