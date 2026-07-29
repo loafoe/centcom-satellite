@@ -29,6 +29,23 @@ type Filter struct {
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
 	UpdatedAfter  string `json:"updated_after,omitempty"`
 	UpdatedBefore string `json:"updated_before,omitempty"`
+	// Region constrains findings to Security Hub's Region field (the region a
+	// finding was generated in), NOT exposed on the task payload — callers
+	// set it from the AWS client's own resolved region after LoadConfig, via
+	// WithResolvedRegion. Security Hub's cross-region finding aggregation
+	// (finding aggregators) means a GetFindings/CreateInsight call against
+	// one region's API endpoint can silently return findings merged in from
+	// every linked region if this filter is omitted; every task in this
+	// package must set it so results reflect only the satellite's own region.
+	Region string `json:"-"`
+}
+
+// WithResolvedRegion returns a copy of f with Region set, for constraining
+// results to the AWS region a task actually resolved and dialed — see the
+// Region field's doc comment for why this is required, not optional.
+func (f Filter) WithResolvedRegion(region string) Filter {
+	f.Region = region
+	return f
 }
 
 // BuildFilters translates the Filter into Security Hub's AwsSecurityFindingFilters.
@@ -68,6 +85,9 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 			df.End = aws.String(f.UpdatedBefore)
 		}
 		out.UpdatedAt = []types.DateFilter{df}
+	}
+	if f.Region != "" {
+		out.Region = []types.StringFilter{equalsFilter(f.Region)}
 	}
 
 	return out

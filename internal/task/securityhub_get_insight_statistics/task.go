@@ -9,16 +9,24 @@
 // a small, fixed number of calls per request thereafter.
 //
 // The Insight is found-or-created by a deterministic name
-// ("centcom-satellite-stats-<group_by>", lowercased) and reused across
-// calls/regions/accounts rather than recreated every time — AWS does not
-// enforce unique Insight names (verified empirically: calling CreateInsight
-// twice with the same name creates two distinct Insights), so on a name
-// collision this task uses the first match by list order and leaves any
-// extras alone rather than erroring or attempting cleanup. DeleteInsight is
-// commonly blocked by account/org policy (verified empirically via an
-// explicit SCP deny even under AdministratorAccess), so this task never
-// deletes an Insight — Insights it creates are meant to be permanent,
-// reused infrastructure, not scoped to one request's lifetime.
+// ("centcom-satellite-stats-<group_by>-<region>", lowercased, where <region>
+// is the AWS region the client factory actually resolved to — see
+// insightName) and reused across calls to the same (group_by, region) rather
+// than recreated every time. The region is baked into both the name and the
+// Insight's Filters (see securityhub_common.Filter.Region): Security Hub's
+// cross-region finding aggregation means an Insight's GetInsightResults can
+// otherwise silently include findings from every linked region, not just
+// the one this satellite runs in — and since matching is by name alone, an
+// older Insight created before this region-scoping existed must never be
+// matched and reused with its stale, unregioned filter. AWS does not enforce
+// unique Insight names (verified empirically: calling CreateInsight twice
+// with the same name creates two distinct Insights), so on a name collision
+// this task uses the first match by list order and leaves any extras alone
+// rather than erroring or attempting cleanup. DeleteInsight is commonly
+// blocked by account/org policy (verified empirically via an explicit SCP
+// deny even under AdministratorAccess), so this task never deletes an
+// Insight — Insights it creates are meant to be permanent, reused
+// infrastructure, not scoped to one request's lifetime.
 package securityhub_get_insight_statistics
 
 import (
@@ -42,6 +50,17 @@ const TaskName = "securityhub_get_insight_statistics"
 // insightNamePrefix identifies Insights this task owns, distinguishing them
 // from a user's own custom Insights of the same account/region.
 const insightNamePrefix = "centcom-satellite-stats-"
+
+// insightName returns the deterministic name for a (group_by, region) pair.
+// The region is part of the name — not just the Filters — because
+// findOrCreateInsight matches by name alone: an Insight created before this
+// task applied a Region filter (or one created against a different resolved
+// region) must never be matched and reused with the wrong scope. Baking the
+// region into the name guarantees a stale, unregioned Insight is left
+// untouched and a fresh, correctly-filtered one is created instead.
+func insightName(groupBy, region string) string {
+	return insightNamePrefix + strings.ToLower(groupBy) + "-" + strings.ToLower(region)
+}
 
 // groupByAttributes maps the same group_by vocabulary used by
 // securityhub_get_findings_statistics to the Insight GroupByAttribute string
@@ -77,20 +96,26 @@ type Statistics struct {
 }
 
 type Task struct {
-	clientFactory func(ctx context.Context, region string) (api, error)
+	// clientFactory returns the securityhub client plus the AWS region it
+	// actually resolved to — Execute both constrains the Insight's Filters to
+	// that region (see securityhub_common.Filter.Region) and folds it into
+	// the Insight's name (see insightName), so a Security Hub cross-region
+	// finding aggregator can't leak other regions' findings into these
+	// counts.
+	clientFactory func(ctx context.Context, region string) (api, string, error)
 }
 
 func New() *Task {
-	return &Task{clientFactory: func(ctx context.Context, region string) (api, error) {
+	return &Task{clientFactory: func(ctx context.Context, region string) (api, string, error) {
 		cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{Region: region})
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return securityhub.NewFromConfig(cfg), nil
+		return securityhub.NewFromConfig(cfg), cfg.Region, nil
 	}}
 }
 
-func NewWithClientFactory(f func(ctx context.Context, region string) (api, error)) *Task {
+func NewWithClientFactory(f func(ctx context.Context, region string) (api, string, error)) *Task {
 	return &Task{clientFactory: f}
 }
 
@@ -113,13 +138,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT)", groupByStr)), nil
 	}
 
-	client, err := t.clientFactory(ctx, payload.Region)
+	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build securityhub client: %w", err)
 	}
 
-	name := insightNamePrefix + strings.ToLower(groupByStr)
-	insightArn, err := findOrCreateInsight(ctx, client, name, attribute, payload.Filter.BuildFilters())
+	name := insightName(groupByStr, resolvedRegion)
+	filters := payload.Filter.WithResolvedRegion(resolvedRegion).BuildFilters()
+	insightArn, err := findOrCreateInsight(ctx, client, name, attribute, filters)
 	if err != nil {
 		var limitExceeded *types.LimitExceededException
 		if errors.As(err, &limitExceeded) {

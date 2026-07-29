@@ -65,7 +65,7 @@ func (f *fakeAPI) GetInsightResults(_ context.Context, in *securityhub.GetInsigh
 }
 
 func newTestTask(a api) *Task {
-	return NewWithClientFactory(func(_ context.Context, _ string) (api, error) { return a, nil })
+	return NewWithClientFactory(func(_ context.Context, _ string) (api, string, error) { return a, "us-east-1", nil })
 }
 
 func insight(name, arn string) types.Insight {
@@ -80,7 +80,7 @@ func TestExecute_ReusesExistingInsightByName(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{{
 			insight("some-other-insight", "arn:other"),
-			insight("centcom-satellite-stats-severity", "arn:existing"),
+			insight("centcom-satellite-stats-severity-us-east-1", "arn:existing"),
 		}},
 		resultValues: []types.InsightResultValue{
 			resultValue("CRITICAL", 3521), resultValue("HIGH", 19837), resultValue("MEDIUM", 34010),
@@ -138,8 +138,8 @@ func TestExecute_CreatesInsightWhenMissing(t *testing.T) {
 	if fake.createCalled != 1 {
 		t.Fatalf("CreateInsight called %d times, want 1", fake.createCalled)
 	}
-	if got := aws.ToString(fake.created.Name); got != "centcom-satellite-stats-severity" {
-		t.Errorf("insight name = %q, want centcom-satellite-stats-severity", got)
+	if got := aws.ToString(fake.created.Name); got != "centcom-satellite-stats-severity-us-east-1" {
+		t.Errorf("insight name = %q, want centcom-satellite-stats-severity-us-east-1", got)
 	}
 	if got := aws.ToString(fake.created.GroupByAttribute); got != "SeverityLabel" {
 		t.Errorf("group by attribute = %q, want SeverityLabel", got)
@@ -155,8 +155,8 @@ func TestExecute_CreatesInsightWhenMissing(t *testing.T) {
 func TestExecute_MultipleNameMatchesUsesFirst(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{{
-			insight("centcom-satellite-stats-severity", "arn:first-match"),
-			insight("centcom-satellite-stats-severity", "arn:second-match"),
+			insight("centcom-satellite-stats-severity-us-east-1", "arn:first-match"),
+			insight("centcom-satellite-stats-severity-us-east-1", "arn:second-match"),
 		}},
 		resultValues: []types.InsightResultValue{resultValue("HIGH", 1)},
 	}
@@ -178,7 +178,7 @@ func TestExecute_PaginatesInsightLookupAcrossPages(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{
 			{insight("page1-a", "arn:p1a")},
-			{insight("centcom-satellite-stats-severity", "arn:p2-match")},
+			{insight("centcom-satellite-stats-severity-us-east-1", "arn:p2-match")},
 		},
 		insightTokens: []string{"more", ""},
 		resultValues:  []types.InsightResultValue{resultValue("HIGH", 1)},
@@ -212,6 +212,58 @@ func TestExecute_QuotaExceededReturnsClearError(t *testing.T) {
 	}
 	if fake.getResultsCalled != 0 {
 		t.Errorf("GetInsightResults called %d times, want 0 (should never be reached after create failure)", fake.getResultsCalled)
+	}
+}
+
+// TestExecute_CreatedInsightConstrainedToResolvedRegion verifies a newly
+// created Insight's Filters include a Region filter for the client
+// factory's resolved region — required because Security Hub cross-region
+// finding aggregators can otherwise let GetInsightResults return findings
+// from every linked region, not just the one this satellite runs in.
+func TestExecute_CreatedInsightConstrainedToResolvedRegion(t *testing.T) {
+	fake := &fakeAPI{
+		insightPages: [][]types.Insight{{}},
+		resultValues: []types.InsightResultValue{resultValue("HIGH", 1)},
+	}
+	_, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.created == nil {
+		t.Fatal("expected CreateInsight to be called")
+	}
+	region := fake.created.Filters.Region
+	if len(region) != 1 || aws.ToString(region[0].Value) != "us-east-1" {
+		t.Errorf("created insight Region filter = %+v, want [us-east-1]", region)
+	}
+}
+
+// TestExecute_StaleUnregionedNameNotReused verifies an Insight named without
+// the region suffix (as this task named Insights before region-scoping was
+// added) is never matched by name and reused — it would carry a stale,
+// unregioned filter. A fresh, correctly-named-and-filtered Insight must be
+// created instead.
+func TestExecute_StaleUnregionedNameNotReused(t *testing.T) {
+	fake := &fakeAPI{
+		insightPages: [][]types.Insight{{
+			insight("centcom-satellite-stats-severity", "arn:stale-unregioned"),
+		}},
+		createdArn:   "arn:new-regioned",
+		resultValues: []types.InsightResultValue{resultValue("HIGH", 1)},
+	}
+	res, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.createCalled != 1 {
+		t.Fatalf("CreateInsight called %d times, want 1 (stale unregioned insight must not be reused)", fake.createCalled)
+	}
+	if fake.lastResultsArn != "arn:new-regioned" {
+		t.Errorf("used arn %q, want the newly created arn:new-regioned", fake.lastResultsArn)
+	}
+	stats := res.Details.(Statistics)
+	if stats.InsightArn == "arn:stale-unregioned" {
+		t.Error("result used the stale unregioned insight")
 	}
 }
 

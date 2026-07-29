@@ -102,31 +102,36 @@ type Statistics struct {
 }
 
 type Task struct {
-	clientFactory func(ctx context.Context, region string) (api, error)
+	// clientFactory returns the securityhub client plus the AWS region it
+	// actually resolved to — Execute uses that to constrain results via
+	// Filter.Region so a Security Hub cross-region finding aggregator can't
+	// silently leak other regions' findings into these buckets. See
+	// securityhub_common.Filter.Region's doc comment.
+	clientFactory func(ctx context.Context, region string) (api, string, error)
 	sleep         func(ctx context.Context, d time.Duration)
 }
 
 func New() *Task {
 	return &Task{
-		clientFactory: func(ctx context.Context, region string) (api, error) {
+		clientFactory: func(ctx context.Context, region string) (api, string, error) {
 			cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{Region: region})
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
-			return securityhub.NewFromConfig(cfg), nil
+			return securityhub.NewFromConfig(cfg), cfg.Region, nil
 		},
 		sleep: ctxSleep,
 	}
 }
 
-func NewWithClientFactory(f func(ctx context.Context, region string) (api, error)) *Task {
+func NewWithClientFactory(f func(ctx context.Context, region string) (api, string, error)) *Task {
 	return &Task{clientFactory: f, sleep: ctxSleep}
 }
 
 // NewWithClientFactoryAndSleep is the test seam: injects a no-op or
 // instrumented sleep so pagination tests don't actually wait interPageDelay
 // per page.
-func NewWithClientFactoryAndSleep(f func(ctx context.Context, region string) (api, error), sleep func(ctx context.Context, d time.Duration)) *Task {
+func NewWithClientFactoryAndSleep(f func(ctx context.Context, region string) (api, string, error), sleep func(ctx context.Context, d time.Duration)) *Task {
 	return &Task{clientFactory: f, sleep: sleep}
 }
 
@@ -157,23 +162,24 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		groupByStr = "SEVERITY"
 	}
 
-	client, err := t.clientFactory(ctx, payload.Region)
+	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build securityhub client: %w", err)
 	}
+	filter := payload.Filter.WithResolvedRegion(resolvedRegion)
 
 	var result Statistics
 	switch groupByStr {
 	case "SEVERITY":
-		result, err = t.cappedBucketStats(ctx, client, payload.Filter, groupByStr, severityBuckets, addSeverityLabelFilter)
+		result, err = t.cappedBucketStats(ctx, client, filter, groupByStr, severityBuckets, addSeverityLabelFilter)
 	case "WORKFLOW_STATUS":
-		result, err = t.cappedBucketStats(ctx, client, payload.Filter, groupByStr, workflowStatusBuckets, addWorkflowStatusFilter)
+		result, err = t.cappedBucketStats(ctx, client, filter, groupByStr, workflowStatusBuckets, addWorkflowStatusFilter)
 	default:
 		extract, ok := groupByExtractors[groupByStr]
 		if !ok {
 			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT)", groupByStr)), nil
 		}
-		result, err = t.exhaustiveStats(ctx, client, payload.Filter, groupByStr, extract)
+		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract)
 	}
 	if err != nil {
 		return nil, err

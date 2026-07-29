@@ -65,8 +65,50 @@ func TestBuildFilters_FullFilter(t *testing.T) {
 
 func TestBuildFilters_EmptyFiltersOmitted(t *testing.T) {
 	f := Filter{}.BuildFilters()
-	if len(f.Type) != 0 || len(f.ProductName) != 0 || len(f.WorkflowStatus) != 0 || len(f.ResourceType) != 0 || len(f.AwsAccountId) != 0 || len(f.UpdatedAt) != 0 {
+	if len(f.Type) != 0 || len(f.ProductName) != 0 || len(f.WorkflowStatus) != 0 || len(f.ResourceType) != 0 || len(f.AwsAccountId) != 0 || len(f.UpdatedAt) != 0 || len(f.Region) != 0 {
 		t.Errorf("expected all unset filters to be empty, got %+v", f)
+	}
+}
+
+// TestBuildFilters_RegionOmittedUnlessSet verifies BuildFilters never emits a
+// Region filter unless WithResolvedRegion set one — Region is not a
+// caller-supplied payload field (it has no json tag), only ever populated by
+// a task's own resolved AWS region.
+func TestBuildFilters_RegionOmittedUnlessSet(t *testing.T) {
+	f := Filter{}.BuildFilters()
+	if len(f.Region) != 0 {
+		t.Errorf("Region = %+v, want empty when WithResolvedRegion was never called", f.Region)
+	}
+}
+
+// TestWithResolvedRegion_SetsRegionFilter verifies WithResolvedRegion is the
+// only way Filter.Region gets populated, and BuildFilters translates it into
+// an equals StringFilter — this is the mechanism every securityhub_* task
+// uses to keep Security Hub's cross-region finding aggregation from leaking
+// other regions' findings into results scoped to one satellite's region.
+func TestWithResolvedRegion_SetsRegionFilter(t *testing.T) {
+	f := Filter{}.WithResolvedRegion("eu-west-1").BuildFilters()
+	if len(f.Region) != 1 {
+		t.Fatalf("Region = %+v, want exactly one filter", f.Region)
+	}
+	if *f.Region[0].Value != "eu-west-1" {
+		t.Errorf("Region value = %q, want eu-west-1", *f.Region[0].Value)
+	}
+	if f.Region[0].Comparison != types.StringFilterComparisonEquals {
+		t.Errorf("Region comparison = %v, want EQUALS", f.Region[0].Comparison)
+	}
+}
+
+// TestWithResolvedRegion_DoesNotMutateReceiver verifies WithResolvedRegion
+// returns a modified copy rather than mutating the original Filter value —
+// callers build a Filter once from a JSON payload and must be able to reuse
+// it (e.g. across cappedBucketStats' per-bucket loop) without one call's
+// WithResolvedRegion leaking into another's base filter.
+func TestWithResolvedRegion_DoesNotMutateReceiver(t *testing.T) {
+	base := Filter{SeverityLabels: []string{"HIGH"}}
+	_ = base.WithResolvedRegion("eu-west-1")
+	if base.Region != "" {
+		t.Errorf("base.Region = %q, want unchanged empty string", base.Region)
 	}
 }
 
