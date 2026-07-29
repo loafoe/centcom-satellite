@@ -61,6 +61,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/resource_pressure"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings_statistics"
+	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_insight_statistics"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_list_standards"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_update_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/storage_status"
@@ -255,8 +256,9 @@ func main() {
 		registry.Register(securityhub_list_standards.New())
 		registry.Register(securityhub_get_findings.New())
 		registry.Register(securityhub_get_findings_statistics.New())
+		registry.Register(securityhub_get_insight_statistics.New())
 		slog.Info("securityhub tasks enabled",
-			"tasks", "securityhub_list_standards,securityhub_get_findings,securityhub_get_findings_statistics")
+			"tasks", "securityhub_list_standards,securityhub_get_findings,securityhub_get_findings_statistics,securityhub_get_insight_statistics")
 	}
 
 	// Optional: Security Hub write task (BatchUpdateFindings). Gated

@@ -163,7 +163,7 @@ Environment variables:
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
 - `CLOUDWATCH_RCA_ENABLED` (default: false) - Enable CloudWatch/Cost-Explorer data-retrieval tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics, cw_describe_log_groups, cw_logs_query, cost_explorer). Requires AWS credentials via IRSA and the IAM policy in `deploy/iam-policy-cloudwatch-rca.json`.
 - `GUARDDUTY_ENABLED` (default: false) - Enable GuardDuty data-retrieval tasks (guardduty_list_detectors, guardduty_get_findings_statistics, guardduty_list_findings, guardduty_get_findings, guardduty_findings). Independently toggleable from CloudWatch RCA. Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-guardduty.json`.
-- `SECURITYHUB_ENABLED` (default: false) - Enable Security Hub data-retrieval tasks (securityhub_list_standards, securityhub_get_findings, securityhub_get_findings_statistics). Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-securityhub.json`.
+- `SECURITYHUB_ENABLED` (default: false) - Enable Security Hub data-retrieval tasks (securityhub_list_standards, securityhub_get_findings, securityhub_get_findings_statistics, securityhub_get_insight_statistics). Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-securityhub.json`.
 - `SECURITYHUB_WRITE_ENABLED` (default: false) - Enable securityhub_update_findings (BatchUpdateFindings — sets Workflow.Status/Note). Independently toggleable from SECURITYHUB_ENABLED. Requires the write IAM policy in `deploy/iam-policy-securityhub-write.json`.
 
 SPIRE configuration:
