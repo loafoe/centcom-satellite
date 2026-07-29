@@ -87,8 +87,11 @@ type HubStatus struct {
 	ControlFindingGenerator string `json:"control_finding_generator,omitempty"`
 }
 
-// StatCount is one bucket in a findings-statistics breakdown.
+// StatCount is one bucket in a findings-statistics breakdown. Capped is true
+// when Count was capped at a per-bucket query limit rather than an exhaustive
+// scan — in that case Count is a lower bound, not an exact total.
 type StatCount struct {
-	Key   string `json:"key"`
-	Count int32  `json:"count"`
+	Key    string `json:"key"`
+	Count  int32  `json:"count"`
+	Capped bool   `json:"capped,omitempty"`
 }
