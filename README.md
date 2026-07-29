@@ -53,6 +53,7 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `resource_pressure` | Check node resource pressure conditions |
 | `securityhub_get_findings` | Retrieve Security Hub findings matching a filter (product-agnostic) |
 | `securityhub_get_findings_statistics` | Aggregate Security Hub finding counts (by severity/type/workflow-status/product) |
+| `securityhub_get_insight_statistics` | Exact Security Hub finding counts via a reused AWS Insight (CreateInsight/GetInsightResults) |
 | `securityhub_list_standards` | List Security Hub subscription status and enabled compliance standards |
 | `securityhub_update_findings` | Update a finding's Workflow.Status and/or Note via BatchUpdateFindings |
 | `storage_status` | Get storage class and PV/PVC status |
