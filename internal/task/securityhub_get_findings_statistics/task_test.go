@@ -76,7 +76,7 @@ func (f *pagedFakeAPI) GetFindings(_ context.Context, in *securityhub.GetFinding
 func noSleep(context.Context, time.Duration) {}
 
 func newTestTask(a api) *Task {
-	return NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, error) { return a, nil }, noSleep)
+	return NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, string, error) { return a, "eu-west-1", nil }, noSleep)
 }
 
 // statCounts re-keys a Statistics' Counts by bucket key, dropping Key from
@@ -170,6 +170,28 @@ func TestExecute_EmptyBucketsOmittedFromCounts(t *testing.T) {
 	}
 }
 
+// TestExecute_SeverityBucketsConstrainedToResolvedRegion verifies every
+// per-bucket GetFindings call carries a Region filter for the client
+// factory's resolved region — required because Security Hub cross-region
+// finding aggregators can otherwise return findings from every linked
+// region, not just the one this satellite runs in. See
+// securityhub_common.Filter.Region's doc comment.
+func TestExecute_SeverityBucketsConstrainedToResolvedRegion(t *testing.T) {
+	api := &bucketFakeAPI{severityCounts: map[string]int32{"HIGH": 1}}
+	_, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(api.calls) == 0 {
+		t.Fatal("expected at least one GetFindings call")
+	}
+	for _, call := range api.calls {
+		if len(call.Filters.Region) != 1 || aws.ToString(call.Filters.Region[0].Value) != "eu-west-1" {
+			t.Errorf("call Region filter = %+v, want [eu-west-1]", call.Filters.Region)
+		}
+	}
+}
+
 func typeFinding(typ string) types.AwsSecurityFinding {
 	return types.AwsSecurityFinding{Id: aws.String("f"), ProductArn: aws.String("arn"), Types: []string{typ}}
 }
@@ -247,7 +269,7 @@ func TestExecute_Product_SleepsBetweenPagesButNotBeforeFirst(t *testing.T) {
 		tokens: []string{"p2", "p3", ""},
 	}
 	var sleepCalls int
-	task := NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, error) { return fake, nil }, func(context.Context, time.Duration) {
+	task := NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, string, error) { return fake, "eu-west-1", nil }, func(context.Context, time.Duration) {
 		sleepCalls++
 	})
 	_, err := task.Execute(context.Background(), json.RawMessage(`{"group_by":"PRODUCT"}`))
@@ -291,7 +313,7 @@ func TestExecute_Product_ContextCancelledDuringPagination(t *testing.T) {
 		tokens: []string{"more", ""},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	task := NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, error) { return fake, nil }, func(context.Context, time.Duration) {
+	task := NewWithClientFactoryAndSleep(func(_ context.Context, _ string) (api, string, error) { return fake, "eu-west-1", nil }, func(context.Context, time.Duration) {
 		cancel() // simulate cancellation arriving during the inter-page wait
 	})
 	_, err := task.Execute(ctx, json.RawMessage(`{"group_by":"PRODUCT"}`))

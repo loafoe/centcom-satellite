@@ -48,20 +48,27 @@ type FindingList struct {
 }
 
 type Task struct {
-	clientFactory func(ctx context.Context, region string) (api, error)
+	// clientFactory returns the securityhub client plus the AWS region it
+	// actually resolved to (payload.Region if non-empty, otherwise whatever
+	// the default credential chain / AWS_REGION resolved) — Execute uses
+	// that resolved region to constrain results via Filter.Region, so a
+	// Security Hub cross-region finding aggregator can't silently leak
+	// other regions' findings into this satellite's results (see
+	// securityhub_common.Filter.Region's doc comment).
+	clientFactory func(ctx context.Context, region string) (api, string, error)
 }
 
 func New() *Task {
-	return &Task{clientFactory: func(ctx context.Context, region string) (api, error) {
+	return &Task{clientFactory: func(ctx context.Context, region string) (api, string, error) {
 		cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{Region: region})
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return securityhub.NewFromConfig(cfg), nil
+		return securityhub.NewFromConfig(cfg), cfg.Region, nil
 	}}
 }
 
-func NewWithClientFactory(f func(ctx context.Context, region string) (api, error)) *Task {
+func NewWithClientFactory(f func(ctx context.Context, region string) (api, string, error)) *Task {
 	return &Task{clientFactory: f}
 }
 
@@ -75,7 +82,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	client, err := t.clientFactory(ctx, payload.Region)
+	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build securityhub client: %w", err)
 	}
@@ -86,7 +93,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	input := &securityhub.GetFindingsInput{
-		Filters:      payload.Filter.BuildFilters(),
+		Filters:      payload.Filter.WithResolvedRegion(resolvedRegion).BuildFilters(),
 		SortCriteria: shc.SortCriteria(payload.SortField, !payload.SortAsc),
 		MaxResults:   aws.Int32(maxResults),
 	}

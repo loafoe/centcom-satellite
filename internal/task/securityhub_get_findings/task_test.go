@@ -21,7 +21,7 @@ func (f *fakeAPI) GetFindings(_ context.Context, in *securityhub.GetFindingsInpu
 }
 
 func newTestTask(a api) *Task {
-	return NewWithClientFactory(func(_ context.Context, _ string) (api, error) { return a, nil })
+	return NewWithClientFactory(func(_ context.Context, _ string) (api, string, error) { return a, "eu-west-1", nil })
 }
 
 func TestExecute_ReturnsNormalizedFindings(t *testing.T) {
@@ -75,6 +75,20 @@ func TestExecute_EmptyResultsAreNonNil(t *testing.T) {
 	list := res.Details.(FindingList)
 	if list.Findings == nil {
 		t.Fatal("expected non-nil findings slice")
+	}
+}
+
+// TestExecute_ConstrainsToResolvedRegion verifies the region the client
+// factory resolved to (not the raw payload.Region, which may be empty and
+// fall back to AWS_REGION) is applied as a Region filter — required because
+// Security Hub cross-region finding aggregators can otherwise return
+// findings from every linked region, not just the one this satellite runs
+// in. See securityhub_common.Filter.Region's doc comment.
+func TestExecute_ConstrainsToResolvedRegion(t *testing.T) {
+	api := &fakeAPI{getFindingsOut: &securityhub.GetFindingsOutput{}}
+	_, _ = newTestTask(api).Execute(context.Background(), json.RawMessage(`{}`))
+	if len(api.lastInput.Filters.Region) != 1 || aws.ToString(api.lastInput.Filters.Region[0].Value) != "eu-west-1" {
+		t.Errorf("Region filter = %+v, want [eu-west-1]", api.lastInput.Filters.Region)
 	}
 }
 
