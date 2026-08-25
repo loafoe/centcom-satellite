@@ -15,6 +15,7 @@ import (
 
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 )
 
 const TaskName = "account_info"
@@ -25,16 +26,23 @@ type api interface {
 
 // Info is the task result payload.
 type Info struct {
-	AWSAccountID  string `json:"aws_account_id,omitempty"`
-	AWSCallerArn  string `json:"aws_caller_arn,omitempty"`
-	AssumeRoleARN string `json:"assume_role_arn,omitempty"`
-	Region        string `json:"region,omitempty"`
+	AWSAccountID  string                    `json:"aws_account_id,omitempty"`
+	AWSCallerArn  string                    `json:"aws_caller_arn,omitempty"`
+	AssumeRoleARN string                    `json:"assume_role_arn,omitempty"`
+	Region        string                    `json:"region,omitempty"`
+	Capabilities  cluster_info.Capabilities `json:"capabilities"`
 }
 
 type Task struct {
 	// assumeRoleARN is echoed into the result so callers can see whether
 	// AssumeRole is configured, without needing a second round-trip.
 	assumeRoleARN string
+	// capabilities advertises which optional task groups are enabled on
+	// this agent — the same config-derived flags cluster_info reports, but
+	// account_info has no Kubernetes dependency, so this is the only
+	// capabilities source available on a cluster-less (AWS-only
+	// AssumeRole) satellite, where cluster_info isn't registered at all.
+	capabilities cluster_info.Capabilities
 	// clientFactory returns the STS client plus the AWS region it resolved
 	// to. It goes through awshelper.LoadConfig, which already transparently
 	// applies the shared cross-account AssumeRole credentials when
@@ -59,6 +67,13 @@ func NewWithClientFactory(assumeRoleARN string, f func(ctx context.Context) (api
 	return &Task{assumeRoleARN: assumeRoleARN, clientFactory: f}
 }
 
+// WithCapabilities sets the capabilities to advertise, mirroring
+// cluster_info's WithCapabilities.
+func (t *Task) WithCapabilities(caps cluster_info.Capabilities) *Task {
+	t.capabilities = caps
+	return t
+}
+
 func (t *Task) Name() string { return TaskName }
 
 func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, error) {
@@ -77,6 +92,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 		AWSCallerArn:  aws.ToString(out.Arn),
 		AssumeRoleARN: t.assumeRoleARN,
 		Region:        region,
+		Capabilities:  t.capabilities,
 	}
 
 	return task.NewSuccessResultWithDetails(fmt.Sprintf("resolved AWS account %s", info.AWSAccountID), info), nil
