@@ -191,3 +191,45 @@ func TestLoad_SecurityHubFlagsDefaultFalse(t *testing.T) {
 		t.Fatal("SecurityHubWriteEnabled = true, want false by default")
 	}
 }
+
+func TestLoad_AWSAssumeRoleDefaultsEmpty(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AWSAssumeRole.ARN != "" {
+		t.Fatalf("AWSAssumeRole.ARN = %q, want empty by default", cfg.AWSAssumeRole.ARN)
+	}
+	if cfg.AWSAssumeRole.SessionName != "centcom-satellite" {
+		t.Fatalf("AWSAssumeRole.SessionName = %q, want default centcom-satellite", cfg.AWSAssumeRole.SessionName)
+	}
+}
+
+func TestLoad_AWSAssumeRoleFromEnv(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	t.Setenv("AWS_ASSUME_ROLE_ARN", "arn:aws:iam::123456789012:role/centcom-satellite-remote")
+	t.Setenv("AWS_ASSUME_ROLE_EXTERNAL_ID", "shared-secret-id")
+	t.Setenv("AWS_ASSUME_ROLE_SESSION_NAME", "custom-session")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AWSAssumeRole.ARN != "arn:aws:iam::123456789012:role/centcom-satellite-remote" {
+		t.Fatalf("AWSAssumeRole.ARN = %q, want the configured ARN", cfg.AWSAssumeRole.ARN)
+	}
+	if cfg.AWSAssumeRole.ExternalID != "shared-secret-id" {
+		t.Fatalf("AWSAssumeRole.ExternalID = %q, want shared-secret-id", cfg.AWSAssumeRole.ExternalID)
+	}
+	if cfg.AWSAssumeRole.SessionName != "custom-session" {
+		t.Fatalf("AWSAssumeRole.SessionName = %q, want custom-session", cfg.AWSAssumeRole.SessionName)
+	}
+}
+
+func TestLoad_AWSAssumeRoleARNMustLookLikeIAMRoleARN(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	t.Setenv("AWS_ASSUME_ROLE_ARN", "not-an-arn")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for malformed AWS_ASSUME_ROLE_ARN, got nil")
+	}
+}
