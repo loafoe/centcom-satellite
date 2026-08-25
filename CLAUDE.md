@@ -149,6 +149,58 @@ compliance checks, custom integrations) and supports a write task,
 }
 ```
 
+### Implemented: `account_info`
+
+Reports which AWS account this satellite's AWS credentials currently resolve
+to — the cross-account AssumeRole target when `AWS_ASSUME_ROLE_ARN` is set,
+otherwise the base IRSA/local account. Has no Kubernetes dependency, so it
+works even when this satellite isn't running inside (or connected to) a
+Kubernetes cluster at all. Always registered, in both AWS-only and
+Kubernetes modes (see "AWS-only mode" below).
+
+**Request**:
+```json
+{"type": "account_info", "payload": {}}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "resolved AWS account 009160061746",
+  "details": {
+    "aws_account_id": "009160061746",
+    "aws_caller_arn": "arn:aws:sts::009160061746:assumed-role/centcom-satellite-dip-ce-k3s-eu/centcom-satellite-obs-ct",
+    "assume_role_arn": "arn:aws:iam::009160061746:role/centcom-satellite-dip-ce-k3s-eu",
+    "region": "eu-west-2"
+  }
+}
+```
+
+### AWS-only mode
+
+When `AWS_ASSUME_ROLE_ARN` is set, the satellite assumes it may not be
+running inside (or connected to) a Kubernetes cluster at all, and switches
+to **AWS-only mode**:
+
+- No Kubernetes client is created at startup (skips both in-cluster config
+  and kubeconfig fallback), and no Kubernetes control-plane task is
+  registered (`list_pods`, `pv_resize`, `workload_restart`, `get_resource`,
+  etc., and the `/logs/stream` endpoint, which returns `503`).
+- `account_info`, `dns_check`, `connectivity_test`, `http_request` (no
+  Kubernetes dependency), and the AWS data-retrieval tasks (`cw_*`,
+  `cost_explorer`, `guardduty_*`, `securityhub_*`) remain available, exactly
+  as controlled by their usual feature flags.
+- **Caller authentication via SPIFFE/SPIRE is unaffected** — AWS-only mode
+  only disables Kubernetes control-plane tasks, not authentication. SPIRE
+  setup, `/readyz`, and the auth middleware run identically in both modes.
+
+This is a one-way switch driven entirely by `AWS_ASSUME_ROLE_ARN`: unset
+(default) keeps the original Kubernetes-attached behavior; set means this
+deployment monitors a remote AWS account and nothing else. There is no
+"mixed mode" — a deployment is either attached to a local Kubernetes cluster
+or dedicated to one remote AWS account, never both.
+
 ## Configuration
 
 Environment variables:
@@ -165,7 +217,7 @@ Environment variables:
 - `GUARDDUTY_ENABLED` (default: false) - Enable GuardDuty data-retrieval tasks (guardduty_list_detectors, guardduty_get_findings_statistics, guardduty_list_findings, guardduty_get_findings, guardduty_findings). Independently toggleable from CloudWatch RCA. Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-guardduty.json`.
 - `SECURITYHUB_ENABLED` (default: false) - Enable Security Hub data-retrieval tasks (securityhub_list_standards, securityhub_get_findings, securityhub_get_findings_statistics, securityhub_get_insight_statistics). Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-securityhub.json`.
 - `SECURITYHUB_WRITE_ENABLED` (default: false) - Enable securityhub_update_findings (BatchUpdateFindings — sets Workflow.Status/Note). Independently toggleable from SECURITYHUB_ENABLED. Requires the write IAM policy in `deploy/iam-policy-securityhub-write.json`.
-- `AWS_ASSUME_ROLE_ARN` (default: unset) - Target IAM role ARN in a different AWS account. When set, all AWS data-retrieval/write tasks (`cw_*`, `cost_explorer`, `guardduty_*`, `securityhub_*`) operate against that remote account via STS AssumeRole, while Kubernetes tasks continue using the local in-cluster identity. Unset (default) preserves the original single-account behavior exactly. See `deploy/iam-policy-assumerole.json` for the source-account permission the satellite's own IRSA role needs. See `deploy/iam-trust-policy-assumerole-target-example.json` for the trust policy the *target* account's role needs (outside this repo's deploy scope, but documented here to save a round trip). Misconfiguration (bad trust policy, wrong ExternalId) is caught at startup — the process exits before serving traffic rather than failing on the first task call.
+- `AWS_ASSUME_ROLE_ARN` (default: unset) - Target IAM role ARN in a different AWS account. When set, all AWS data-retrieval/write tasks (`cw_*`, `cost_explorer`, `guardduty_*`, `securityhub_*`) operate against that remote account via STS AssumeRole, and the satellite switches to **AWS-only mode** (see "AWS-only mode" above): no Kubernetes client, no Kubernetes control-plane tasks, but SPIFFE/SPIRE authentication still applies. Unset (default) preserves the original Kubernetes-attached behavior exactly. See `deploy/iam-policy-assumerole.json` for the source-account permission the satellite's own IRSA role needs. See `deploy/iam-trust-policy-assumerole-target-example.json` for the trust policy the *target* account's role needs (outside this repo's deploy scope, but documented here to save a round trip). Misconfiguration (bad trust policy, wrong ExternalId) is caught at startup — the process exits before serving traffic rather than failing on the first task call.
 - `AWS_ASSUME_ROLE_EXTERNAL_ID` (default: unset) - Optional STS ExternalId, passed to AssumeRole. Only needed if the target role's trust policy requires one.
 - `AWS_ASSUME_ROLE_SESSION_NAME` (default: `centcom-satellite`) - STS RoleSessionName, visible in the target account's CloudTrail.
 

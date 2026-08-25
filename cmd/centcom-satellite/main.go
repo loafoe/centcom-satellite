@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/config"
 	"github.com/loafoe/centcom-satellite/internal/k8s"
@@ -16,6 +18,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/server"
 	"github.com/loafoe/centcom-satellite/internal/spire"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/account_info"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_health"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 	"github.com/loafoe/centcom-satellite/internal/task/connectivity_test"
@@ -111,19 +114,16 @@ func main() {
 	metrics := observability.NewMetrics()
 	metrics.SetBuildInfo(Version)
 
-	// Setup Kubernetes client (instrumented with Prometheus metrics)
-	k8sClient, err := k8s.NewClient(metrics)
-	if err != nil {
-		slog.Error("failed to create kubernetes client", "error", err)
-		os.Exit(1)
-	}
-
-	// Setup cross-account AWS AssumeRole credentials, if configured. This is
-	// independent of the Kubernetes client above: AWS tasks below will use
-	// the assumed-role identity for the remote account, while Kubernetes
-	// tasks keep using k8sClient for the local cluster. A no-op when
-	// AWS_ASSUME_ROLE_ARN is unset. Fails fast — misconfigured trust
-	// policies/ExternalId must not surface only on the first task call.
+	// Setup cross-account AWS AssumeRole credentials, if configured. A
+	// no-op when AWS_ASSUME_ROLE_ARN is unset. Fails fast — misconfigured
+	// trust policies/ExternalId must not surface only on the first task
+	// call. Determined before the Kubernetes client below: when AssumeRole
+	// is configured, this satellite runs in AWS-only mode — it may not be
+	// running inside (or connected to) a Kubernetes cluster at all, so no
+	// Kubernetes client is created and no control-plane task is
+	// registered. SPIFFE/SPIRE caller authentication (further below) is
+	// unaffected either way — AWS-only mode disables Kubernetes
+	// control-plane tasks, not authentication.
 	if err := awshelper.Init(ctx, awshelper.AssumeRoleOptions{
 		ARN:         cfg.AWSAssumeRole.ARN,
 		ExternalID:  cfg.AWSAssumeRole.ExternalID,
@@ -132,109 +132,128 @@ func main() {
 		slog.Error("failed to configure cross-account AWS AssumeRole", "error", err)
 		os.Exit(1)
 	}
+	awsOnlyMode := cfg.AWSAssumeRole.ARN != ""
+
+	// Setup Kubernetes client (instrumented with Prometheus metrics), unless
+	// AssumeRole put this satellite in AWS-only mode.
+	var k8sClient *k8s.Client
+	if !awsOnlyMode {
+		k8sClient, err = k8s.NewClient(metrics)
+		if err != nil {
+			slog.Error("failed to create kubernetes client", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("AWS-only mode (AWS_ASSUME_ROLE_ARN set): skipping Kubernetes client and control-plane tasks")
+	}
 
 	// Setup task registry
 	registry := task.NewRegistry()
-	registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
-		WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
-		WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
-		PodEvict:         cfg.Features.PodEvictEnabled,
-		PodResize:        cfg.Features.PodResizeEnabled,
-		GetResource:      cfg.Features.GetResourceEnabled,
-		NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
-		Argocd:           cfg.Features.ArgocdEnabled,
-		PvResize:         cfg.Features.PvResizeEnabled,
-		AutoRemediate:    cfg.Features.AutoRemediateEnabled,
-		HttpRequest:      cfg.Features.HTTPRequestEnabled,
-		ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
-		CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
-		GuardDuty:        cfg.Features.GuardDutyEnabled,
-		SecurityHub:      cfg.Features.SecurityHubEnabled,
-		SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
-	}))
-	registry.Register(cluster_health.New(k8sClient.Clientset))
-	registry.Register(resource_pressure.New(k8sClient.Clientset))
-	registry.Register(storage_status.New(k8sClient.Clientset))
-	registry.Register(list_namespaces.New(k8sClient.Clientset))
-	registry.Register(pv_usage.New(k8sClient.Clientset))
-	registry.Register(list_pods.New(k8sClient.Clientset))
-	registry.Register(list_pvcs.New(k8sClient.Clientset))
-	registry.Register(get_logs.New(k8sClient.Clientset))
-	registry.Register(list_workloads.New(k8sClient.Clientset))
-	registry.Register(get_events.New(k8sClient.Clientset))
-	registry.Register(pod_resource_usage.New(k8sClient.Clientset))
-	registry.Register(list_services.New(k8sClient.Clientset))
-	registry.Register(list_ingresses.New(k8sClient.Clientset))
-	registry.Register(list_gateways.New(k8sClient.DynamicClient))
-	registry.Register(list_routes.New(k8sClient.DynamicClient))
-	registry.Register(list_endpoints.New(k8sClient.Clientset))
-	registry.Register(list_network_policies.New(k8sClient.Clientset))
+	registry.Register(account_info.New(cfg.AWSAssumeRole.ARN))
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())
-	registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
-	registry.Register(list_nodepools.New(k8sClient.DynamicClient))
-	registry.Register(list_vpas.New(k8sClient.Clientset, k8sClient.DynamicClient))
 
-	// Optional: get_resource task (requires expanded RBAC)
-	if cfg.Features.GetResourceEnabled {
-		registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
-		slog.Info("get_resource task enabled")
+	if !awsOnlyMode {
+		registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
+			WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
+			WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
+			PodEvict:         cfg.Features.PodEvictEnabled,
+			PodResize:        cfg.Features.PodResizeEnabled,
+			GetResource:      cfg.Features.GetResourceEnabled,
+			NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
+			Argocd:           cfg.Features.ArgocdEnabled,
+			PvResize:         cfg.Features.PvResizeEnabled,
+			AutoRemediate:    cfg.Features.AutoRemediateEnabled,
+			HttpRequest:      cfg.Features.HTTPRequestEnabled,
+			ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
+			CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
+			GuardDuty:        cfg.Features.GuardDutyEnabled,
+			SecurityHub:      cfg.Features.SecurityHubEnabled,
+			SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
+		}))
+		registry.Register(cluster_health.New(k8sClient.Clientset))
+		registry.Register(resource_pressure.New(k8sClient.Clientset))
+		registry.Register(storage_status.New(k8sClient.Clientset))
+		registry.Register(list_namespaces.New(k8sClient.Clientset))
+		registry.Register(pv_usage.New(k8sClient.Clientset))
+		registry.Register(list_pods.New(k8sClient.Clientset))
+		registry.Register(list_pvcs.New(k8sClient.Clientset))
+		registry.Register(get_logs.New(k8sClient.Clientset))
+		registry.Register(list_workloads.New(k8sClient.Clientset))
+		registry.Register(get_events.New(k8sClient.Clientset))
+		registry.Register(pod_resource_usage.New(k8sClient.Clientset))
+		registry.Register(list_services.New(k8sClient.Clientset))
+		registry.Register(list_ingresses.New(k8sClient.Clientset))
+		registry.Register(list_gateways.New(k8sClient.DynamicClient))
+		registry.Register(list_routes.New(k8sClient.DynamicClient))
+		registry.Register(list_endpoints.New(k8sClient.Clientset))
+		registry.Register(list_network_policies.New(k8sClient.Clientset))
+		registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
+		registry.Register(list_nodepools.New(k8sClient.DynamicClient))
+		registry.Register(list_vpas.New(k8sClient.Clientset, k8sClient.DynamicClient))
+
+		// Optional: get_resource task (requires expanded RBAC)
+		if cfg.Features.GetResourceEnabled {
+			registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
+			slog.Info("get_resource task enabled")
+		}
+
+		// Optional: workload_restart task (write operation)
+		if cfg.Features.WorkloadRestartEnabled {
+			registry.Register(workload_restart.New(k8sClient.Clientset))
+			slog.Info("workload_restart task enabled")
+		}
+
+		// Optional: workload_scale task (write operation)
+		if cfg.Features.WorkloadScaleEnabled {
+			registry.Register(workload_scale.New(k8sClient.Clientset))
+			slog.Info("workload_scale task enabled")
+		}
+
+		// Optional: pod_evict task (write operation)
+		if cfg.Features.PodEvictEnabled {
+			registry.Register(pod_evict.New(k8sClient.Clientset))
+			slog.Info("pod_evict task enabled")
+		}
+
+		// Optional: pod_resize task (write operation, requires K8s 1.27+)
+		if cfg.Features.PodResizeEnabled {
+			registry.Register(pod_resize.New(k8sClient.Clientset, cfg.Features.PodResizeConfig))
+			slog.Info("pod_resize task enabled")
+		}
+
+		// Optional: nodeclaim_delete task (Karpenter node management)
+		if cfg.Features.NodeclaimDeleteEnabled {
+			registry.Register(nodeclaim_delete.New(k8sClient.DynamicClient))
+			slog.Info("nodeclaim_delete task enabled")
+		}
+
+		// Optional: list_argocd_applications task (Argo CD introspection)
+		if cfg.Features.ArgocdEnabled {
+			registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
+			slog.Info("list_argocd_applications task enabled")
+		}
+
+		// Optional: ConfigMap introspection tasks (list metadata + read redacted values)
+		if cfg.Features.ConfigmapReadEnabled {
+			registry.Register(list_configmaps.New(k8sClient.Clientset))
+			registry.Register(get_configmap.New(k8sClient.Clientset))
+			slog.Info("list_configmaps and get_configmap tasks enabled")
+		}
+
+		// Optional: pv_resize task (storage write operation)
+		if cfg.Features.PvResizeEnabled {
+			registry.Register(pv_resize.New(k8sClient.Clientset))
+			registry.Register(pv_resize_status.New(k8sClient.Clientset))
+			slog.Info("pv_resize task enabled")
+		}
 	}
 
-	// Optional: workload_restart task (write operation)
-	if cfg.Features.WorkloadRestartEnabled {
-		registry.Register(workload_restart.New(k8sClient.Clientset))
-		slog.Info("workload_restart task enabled")
-	}
-
-	// Optional: workload_scale task (write operation)
-	if cfg.Features.WorkloadScaleEnabled {
-		registry.Register(workload_scale.New(k8sClient.Clientset))
-		slog.Info("workload_scale task enabled")
-	}
-
-	// Optional: pod_evict task (write operation)
-	if cfg.Features.PodEvictEnabled {
-		registry.Register(pod_evict.New(k8sClient.Clientset))
-		slog.Info("pod_evict task enabled")
-	}
-
-	// Optional: pod_resize task (write operation, requires K8s 1.27+)
-	if cfg.Features.PodResizeEnabled {
-		registry.Register(pod_resize.New(k8sClient.Clientset, cfg.Features.PodResizeConfig))
-		slog.Info("pod_resize task enabled")
-	}
-
-	// Optional: nodeclaim_delete task (Karpenter node management)
-	if cfg.Features.NodeclaimDeleteEnabled {
-		registry.Register(nodeclaim_delete.New(k8sClient.DynamicClient))
-		slog.Info("nodeclaim_delete task enabled")
-	}
-
-	// Optional: list_argocd_applications task (Argo CD introspection)
-	if cfg.Features.ArgocdEnabled {
-		registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
-		slog.Info("list_argocd_applications task enabled")
-	}
-
-	// Optional: ConfigMap introspection tasks (list metadata + read redacted values)
-	if cfg.Features.ConfigmapReadEnabled {
-		registry.Register(list_configmaps.New(k8sClient.Clientset))
-		registry.Register(get_configmap.New(k8sClient.Clientset))
-		slog.Info("list_configmaps and get_configmap tasks enabled")
-	}
-
-	// Optional: http_request task (cluster-internal HTTP requests)
+	// Optional: http_request task (arbitrary HTTP requests). No Kubernetes
+	// dependency — available in both modes.
 	if cfg.Features.HTTPRequestEnabled {
 		registry.Register(http_request.New())
 		slog.Info("http_request task enabled")
-	}
-
-	// Optional: pv_resize task (storage write operation)
-	if cfg.Features.PvResizeEnabled {
-		registry.Register(pv_resize.New(k8sClient.Clientset))
-		registry.Register(pv_resize_status.New(k8sClient.Clientset))
-		slog.Info("pv_resize task enabled")
 	}
 
 	// Optional: CloudWatch RCA data-retrieval tasks (require AWS credentials + IAM)
@@ -302,6 +321,10 @@ func main() {
 	}
 
 	// Create and start server
+	var k8sClientset kubernetes.Interface
+	if k8sClient != nil {
+		k8sClientset = k8sClient.Clientset
+	}
 	srv := server.New(
 		server.Config{
 			Port:        cfg.Port,
@@ -312,7 +335,7 @@ func main() {
 		spireClient,
 		Version,
 		cfg.AllowUnauthenticated,
-		k8sClient.Clientset,
+		k8sClientset,
 	)
 
 	// Start server in goroutine
