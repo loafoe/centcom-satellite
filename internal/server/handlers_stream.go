@@ -98,6 +98,13 @@ func (h *StreamHandlers) HandleLogStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// No Kubernetes client configured (e.g. AWS-only/cross-account mode) —
+	// there is no cluster to stream logs from.
+	if h.clientset == nil {
+		http.Error(w, "log streaming unavailable: no Kubernetes cluster configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Parse query parameters
 	namespace := r.URL.Query().Get("namespace")
 	podName := r.URL.Query().Get("pod")
