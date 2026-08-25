@@ -39,6 +39,23 @@ type Config struct {
 
 	// Features holds feature flags for optional functionality.
 	Features FeaturesConfig
+
+	// AWSAssumeRole holds cross-account AWS access configuration.
+	AWSAssumeRole AWSAssumeRoleConfig
+}
+
+// AWSAssumeRoleConfig configures cross-account AWS access via STS AssumeRole.
+// When ARN is empty (the default), AWS tasks use the pod's own IRSA identity
+// exactly as before — this feature is entirely additive and opt-in.
+type AWSAssumeRoleConfig struct {
+	// ARN is the target IAM role in the remote AWS account.
+	ARN string
+	// ExternalID is passed to AssumeRole for confused-deputy protection.
+	// Optional — only required if the target role's trust policy demands it.
+	ExternalID string
+	// SessionName is the STS RoleSessionName, visible in the target
+	// account's CloudTrail.
+	SessionName string
 }
 
 // FeaturesConfig holds feature flags.
@@ -174,6 +191,11 @@ func Load() (*Config, error) {
 			SecurityHubEnabled:      getEnvBool("SECURITYHUB_ENABLED", false),
 			SecurityHubWriteEnabled: getEnvBool("SECURITYHUB_WRITE_ENABLED", false),
 		},
+		AWSAssumeRole: AWSAssumeRoleConfig{
+			ARN:         os.Getenv("AWS_ASSUME_ROLE_ARN"),
+			ExternalID:  os.Getenv("AWS_ASSUME_ROLE_EXTERNAL_ID"),
+			SessionName: getEnvString("AWS_ASSUME_ROLE_SESSION_NAME", "centcom-satellite"),
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -217,6 +239,10 @@ func (c *Config) Validate() error {
 	// Validate SPIRE config
 	if err := c.SPIRE.Validate(); err != nil {
 		errs = append(errs, err.Error())
+	}
+
+	if c.AWSAssumeRole.ARN != "" && !strings.HasPrefix(c.AWSAssumeRole.ARN, "arn:aws:iam::") {
+		errs = append(errs, "AWS_ASSUME_ROLE_ARN must be a valid IAM role ARN (arn:aws:iam::<account>:role/<name>)")
 	}
 
 	if len(errs) > 0 {
