@@ -8,6 +8,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 )
 
 type fakeAPI struct {
@@ -72,5 +74,30 @@ func TestExecute_PropagatesSTSError(t *testing.T) {
 	_, err := newTestTask("", api).Execute(context.Background(), json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected error to propagate, got nil")
+	}
+}
+
+func TestExecute_ReportsCapabilities(t *testing.T) {
+	// Capabilities must flow through even without a Kubernetes client —
+	// this is the only capabilities source on a cluster-less satellite,
+	// where cluster_info isn't registered at all.
+	api := &fakeAPI{out: &sts.GetCallerIdentityOutput{Account: aws.String("009160061746")}}
+	tsk := newTestTask("", api).WithCapabilities(cluster_info.Capabilities{
+		SecurityHub: true,
+		GuardDuty:   true,
+	})
+	res, err := tsk.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info := res.Details.(Info)
+	if !info.Capabilities.SecurityHub {
+		t.Error("expected Capabilities.SecurityHub = true")
+	}
+	if !info.Capabilities.GuardDuty {
+		t.Error("expected Capabilities.GuardDuty = true")
+	}
+	if info.Capabilities.CloudWatchRCA {
+		t.Error("expected Capabilities.CloudWatchRCA = false (not set)")
 	}
 }

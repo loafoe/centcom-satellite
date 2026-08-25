@@ -153,10 +153,13 @@ compliance checks, custom integrations) and supports a write task,
 
 Reports which AWS account this satellite's AWS credentials currently resolve
 to — the cross-account AssumeRole target when `AWS_ASSUME_ROLE_ARN` is set,
-otherwise the base IRSA/local account. Has no Kubernetes dependency, so it
-works even when this satellite isn't running inside (or connected to) a
-Kubernetes cluster at all. Always registered, in both AWS-only and
-Kubernetes modes (see "AWS-only mode" below).
+otherwise the base IRSA/local account — plus the same `capabilities` block
+`cluster_info` reports (which optional task groups are enabled). Has no
+Kubernetes dependency, so it works even when this satellite isn't running
+inside (or connected to) a Kubernetes cluster at all, and is the *only*
+capabilities source on such a satellite — `cluster_info` isn't registered in
+AWS-only mode. Always registered, in both AWS-only and Kubernetes modes (see
+"AWS-only mode" below).
 
 **Request**:
 ```json
@@ -172,7 +175,13 @@ Kubernetes modes (see "AWS-only mode" below).
     "aws_account_id": "009160061746",
     "aws_caller_arn": "arn:aws:sts::009160061746:assumed-role/centcom-satellite-dip-ce-k3s-eu/centcom-satellite-obs-ct",
     "assume_role_arn": "arn:aws:iam::009160061746:role/centcom-satellite-dip-ce-k3s-eu",
-    "region": "eu-west-2"
+    "region": "eu-west-2",
+    "capabilities": {
+      "cloudwatch_rca": true,
+      "guardduty": true,
+      "securityhub": true,
+      "securityhub_write": false
+    }
   }
 }
 ```

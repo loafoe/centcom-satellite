@@ -147,30 +147,37 @@ func main() {
 		slog.Info("AWS-only mode (AWS_ASSUME_ROLE_ARN set): skipping Kubernetes client and control-plane tasks")
 	}
 
+	// capabilities advertises which optional task groups are enabled on this
+	// agent. Purely config-derived (no Kubernetes dependency), so it's
+	// computed once and reported by both account_info (always registered)
+	// and cluster_info (Kubernetes mode only) — account_info is the only
+	// capabilities source on a cluster-less (AWS-only AssumeRole) satellite.
+	capabilities := cluster_info.Capabilities{
+		WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
+		WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
+		PodEvict:         cfg.Features.PodEvictEnabled,
+		PodResize:        cfg.Features.PodResizeEnabled,
+		GetResource:      cfg.Features.GetResourceEnabled,
+		NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
+		Argocd:           cfg.Features.ArgocdEnabled,
+		PvResize:         cfg.Features.PvResizeEnabled,
+		AutoRemediate:    cfg.Features.AutoRemediateEnabled,
+		HttpRequest:      cfg.Features.HTTPRequestEnabled,
+		ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
+		CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
+		GuardDuty:        cfg.Features.GuardDutyEnabled,
+		SecurityHub:      cfg.Features.SecurityHubEnabled,
+		SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
+	}
+
 	// Setup task registry
 	registry := task.NewRegistry()
-	registry.Register(account_info.New(cfg.AWSAssumeRole.ARN))
+	registry.Register(account_info.New(cfg.AWSAssumeRole.ARN).WithCapabilities(capabilities))
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())
 
 	if !awsOnlyMode {
-		registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(cluster_info.Capabilities{
-			WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
-			WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
-			PodEvict:         cfg.Features.PodEvictEnabled,
-			PodResize:        cfg.Features.PodResizeEnabled,
-			GetResource:      cfg.Features.GetResourceEnabled,
-			NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
-			Argocd:           cfg.Features.ArgocdEnabled,
-			PvResize:         cfg.Features.PvResizeEnabled,
-			AutoRemediate:    cfg.Features.AutoRemediateEnabled,
-			HttpRequest:      cfg.Features.HTTPRequestEnabled,
-			ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
-			CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
-			GuardDuty:        cfg.Features.GuardDutyEnabled,
-			SecurityHub:      cfg.Features.SecurityHubEnabled,
-			SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
-		}))
+		registry.Register(cluster_info.New(k8sClient.Clientset).WithCapabilities(capabilities))
 		registry.Register(cluster_health.New(k8sClient.Clientset))
 		registry.Register(resource_pressure.New(k8sClient.Clientset))
 		registry.Register(storage_status.New(k8sClient.Clientset))
