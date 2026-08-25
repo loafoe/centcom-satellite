@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/config"
 	"github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/observability"
@@ -114,6 +115,21 @@ func main() {
 	k8sClient, err := k8s.NewClient(metrics)
 	if err != nil {
 		slog.Error("failed to create kubernetes client", "error", err)
+		os.Exit(1)
+	}
+
+	// Setup cross-account AWS AssumeRole credentials, if configured. This is
+	// independent of the Kubernetes client above: AWS tasks below will use
+	// the assumed-role identity for the remote account, while Kubernetes
+	// tasks keep using k8sClient for the local cluster. A no-op when
+	// AWS_ASSUME_ROLE_ARN is unset. Fails fast — misconfigured trust
+	// policies/ExternalId must not surface only on the first task call.
+	if err := awshelper.Init(ctx, awshelper.AssumeRoleOptions{
+		ARN:         cfg.AWSAssumeRole.ARN,
+		ExternalID:  cfg.AWSAssumeRole.ExternalID,
+		SessionName: cfg.AWSAssumeRole.SessionName,
+	}); err != nil {
+		slog.Error("failed to configure cross-account AWS AssumeRole", "error", err)
 		os.Exit(1)
 	}
 
