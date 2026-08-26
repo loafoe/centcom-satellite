@@ -53,11 +53,18 @@ func (c *Client) Start(ctx context.Context) error {
 		return nil
 	}
 
-	slog.Info("connecting to SPIRE workload API",
-		"socket", c.config.AgentSocket,
-		"trust_domains", c.config.TrustDomains,
-		"jwt_enabled", c.config.JWT.Enabled,
-	)
+	if c.config.JWT.BundleSource == "federation" {
+		slog.Info("starting SPIRE client in federation mode (no local Workload API socket required)",
+			"trust_domains", c.config.TrustDomains,
+			"jwt_enabled", c.config.JWT.Enabled,
+		)
+	} else {
+		slog.Info("connecting to SPIRE workload API",
+			"socket", c.config.AgentSocket,
+			"trust_domains", c.config.TrustDomains,
+			"jwt_enabled", c.config.JWT.Enabled,
+		)
+	}
 
 	if c.config.MTLSEnabled {
 		source, err := workloadapi.NewX509Source(ctx,
