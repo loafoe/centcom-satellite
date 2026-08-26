@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
@@ -18,9 +19,15 @@ import (
 
 // Client manages the connection to the SPIRE workload API.
 type Client struct {
-	config    *Config
-	source    *workloadapi.X509Source
-	jwtSource *workloadapi.JWTSource
+	config *Config
+	source *workloadapi.X509Source
+	// jwtSource is a jwtbundle.Source rather than the concrete
+	// *workloadapi.JWTSource — either that (BundleSource="workload_api",
+	// default) or *federationJWTSource (BundleSource="federation") gets
+	// assigned here by Start(). jwtsvid.ParseAndValidate (called from
+	// ValidateJWTToken) only needs the interface, so this widening
+	// requires no change to validation logic.
+	jwtSource jwtbundle.Source
 	mu        sync.RWMutex
 }
 
@@ -80,22 +87,36 @@ func (c *Client) Start(ctx context.Context) error {
 
 	// Initialize JWT source if JWT auth is enabled
 	if c.config.JWT.Enabled {
-		jwtSource, err := workloadapi.NewJWTSource(ctx,
-			workloadapi.WithClientOptions(
-				workloadapi.WithAddr(c.config.AgentSocket),
-			),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create JWT source: %w", err)
+		var jwtSource jwtbundle.Source
+		switch c.config.JWT.BundleSource {
+		case "federation":
+			source, err := startFederationJWTSource(ctx, c.config.JWT)
+			if err != nil {
+				return fmt.Errorf("failed to start federation JWT source: %w", err)
+			}
+			jwtSource = source
+			slog.Info("JWT-SVID validation enabled (federation bundle source, no local SPIRE Agent required)",
+				"audiences", c.config.JWT.Audiences,
+				"trust_domains", c.config.JWT.FederationBundleEndpoints,
+			)
+		default: // "" or "workload_api"
+			source, err := workloadapi.NewJWTSource(ctx,
+				workloadapi.WithClientOptions(
+					workloadapi.WithAddr(c.config.AgentSocket),
+				),
+			)
+			if err != nil {
+				return fmt.Errorf("failed to create JWT source: %w", err)
+			}
+			jwtSource = source
+			slog.Info("JWT-SVID validation enabled",
+				"audiences", c.config.JWT.Audiences,
+			)
 		}
 
 		c.mu.Lock()
 		c.jwtSource = jwtSource
 		c.mu.Unlock()
-
-		slog.Info("JWT-SVID validation enabled",
-			"audiences", c.config.JWT.Audiences,
-		)
 	}
 
 	return nil
@@ -112,8 +133,8 @@ func (c *Client) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if c.jwtSource != nil {
-		if err := c.jwtSource.Close(); err != nil {
+	if closer, ok := c.jwtSource.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
