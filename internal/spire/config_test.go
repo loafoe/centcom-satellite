@@ -85,6 +85,116 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "federation bundle source - valid, mtls disabled, endpoint covers trust domain",
+			config: Config{
+				Enabled:      true,
+				TrustDomains: []string{"example.org"},
+				MTLSEnabled:  false,
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "federation",
+					FederationBundleEndpoints: map[string]string{
+						"example.org": "https://spire-server.example.org/bundle",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "federation bundle source - does not require AgentSocket",
+			config: Config{
+				Enabled:      true,
+				TrustDomains: []string{"example.org"},
+				MTLSEnabled:  false,
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "federation",
+					FederationBundleEndpoints: map[string]string{
+						"example.org": "https://spire-server.example.org/bundle",
+					},
+				},
+			},
+			wantErr: false, // AgentSocket is empty here and must NOT trigger a validation error
+		},
+		{
+			name: "federation bundle source - rejected when MTLS also enabled",
+			config: Config{
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"example.org"},
+				MTLSEnabled:  true,
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "federation",
+					FederationBundleEndpoints: map[string]string{
+						"example.org": "https://spire-server.example.org/bundle",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "federation bundle source - missing endpoints map entirely",
+			config: Config{
+				Enabled:      true,
+				TrustDomains: []string{"example.org"},
+				MTLSEnabled:  false,
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "federation",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "federation bundle source - endpoints map missing one trust domain",
+			config: Config{
+				Enabled:      true,
+				TrustDomains: []string{"example.org", "partner.com"},
+				MTLSEnabled:  false,
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "federation",
+					FederationBundleEndpoints: map[string]string{
+						"example.org": "https://spire-server.example.org/bundle",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unrecognized bundle source value",
+			config: Config{
+				Enabled:      true,
+				AgentSocket:  "unix:///run/spire/agent.sock",
+				TrustDomains: []string{"example.org"},
+				JWT: JWTConfig{
+					Enabled:      true,
+					Audiences:    []string{"centcom-satellite"},
+					BundleSource: "nonsense",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty bundle source defaults to workload_api behavior (socket still required)",
+			config: Config{
+				Enabled:      true,
+				TrustDomains: []string{"example.org"},
+				JWT: JWTConfig{
+					Enabled:   true,
+					Audiences: []string{"centcom-satellite"},
+					// BundleSource left empty — must behave exactly like "workload_api".
+				},
+			},
+			wantErr: true, // AgentSocket is empty, and workload_api mode requires it
+		},
 	}
 
 	for _, tt := range tests {
@@ -97,6 +207,17 @@ func TestConfig_Validate(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestConfig_Validate_WorkloadAPIStillRequiresSocket(t *testing.T) {
+	cfg := Config{
+		Enabled:      true,
+		TrustDomains: []string{"example.org"},
+		JWT:          JWTConfig{Enabled: true, Audiences: []string{"x"}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error: workload_api (default) bundle source still requires AgentSocket")
 	}
 }
 
