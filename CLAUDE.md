@@ -239,6 +239,9 @@ SPIRE configuration:
 - `SPIRE_ALLOWED_SPIFFE_IDS` - Comma-separated list of allowed SPIFFE IDs
 - `SPIRE_JWT_ENABLED` (default: false) - Enable JWT-SVID authentication
 - `SPIRE_JWT_AUDIENCES` - Comma-separated list of expected JWT audiences (required when JWT enabled)
+- `SPIRE_JWT_BUNDLE_SOURCE` (default: `workload_api`) - `workload_api` fetches the JWT trust bundle from the local SPIRE Workload API (requires a local SPIRE Agent). `federation` fetches it from a SPIFFE Federation Bundle Endpoint instead — no local SPIRE Agent required, enabling agent-less deployment targets (e.g. ECS/Fargate) for JWT-SVID auth. Incompatible with `SPIRE_MTLS_ENABLED=true` — mTLS always requires a local agent to issue this workload its own identity, which federation mode has no way to do.
+- `SPIRE_FEDERATION_BUNDLE_ENDPOINTS` (default: unset) - Comma-separated `trustdomain=https://url` pairs, e.g. `example.org=https://spire-server.example.org/bundle`. Required, with one entry per configured trust domain, when `SPIRE_JWT_BUNDLE_SOURCE=federation`.
+- `SPIRE_FEDERATION_CA_BUNDLE_PATH` (default: unset) - Optional PEM file of root CAs to trust when fetching from `SPIRE_FEDERATION_BUNDLE_ENDPOINTS`. Unset uses the system trust store — the common case for an endpoint behind a normal ALB/ingress with a publicly-trusted certificate.
 
 ## Metrics
 

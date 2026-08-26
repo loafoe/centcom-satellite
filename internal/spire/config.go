@@ -46,6 +46,25 @@ type JWTConfig struct {
 	// The JWT must contain at least one of these audiences.
 	// Example: ["centcom-satellite", "https://centcom-satellite.example.org"]
 	Audiences []string
+
+	// BundleSource selects how the JWT trust bundle is obtained.
+	// "workload_api" (default, used when empty) fetches it from the local
+	// SPIRE Workload API, exactly as before this field existed. "federation"
+	// fetches it from a SPIFFE Federation Bundle Endpoint instead — no
+	// local SPIRE Agent required. Explicit, no auto-detection between them.
+	BundleSource string
+
+	// FederationBundleEndpoints maps trust domain -> federation bundle
+	// endpoint URL (e.g. "example.org" -> "https://spire-server.example.org/bundle").
+	// Required, with one entry per trust domain in TrustDomains, when
+	// BundleSource is "federation".
+	FederationBundleEndpoints map[string]string
+
+	// FederationCABundlePath is an optional PEM file of root CAs to trust
+	// when fetching from FederationBundleEndpoints. Empty (default) uses
+	// the system trust store — the common case for an endpoint behind a
+	// normal ALB/ingress with a publicly-trusted certificate.
+	FederationCABundlePath string
 }
 
 // Validate checks that the configuration is valid when SPIRE is enabled.
@@ -54,8 +73,10 @@ func (c *Config) Validate() error {
 		return nil
 	}
 
-	if c.AgentSocket == "" {
-		return fmt.Errorf("SPIRE_AGENT_SOCKET is required when SPIRE is enabled")
+	usesFederation := c.JWT.Enabled && c.JWT.BundleSource == "federation"
+
+	if !usesFederation && c.AgentSocket == "" {
+		return fmt.Errorf("SPIRE_AGENT_SOCKET is required when SPIRE is enabled (unless SPIRE_JWT_BUNDLE_SOURCE=federation)")
 	}
 
 	if len(c.TrustDomains) == 0 {
@@ -80,8 +101,30 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate JWT config
-	if c.JWT.Enabled && len(c.JWT.Audiences) == 0 {
-		return fmt.Errorf("SPIRE_JWT_AUDIENCES is required when JWT-SVID auth is enabled")
+	if c.JWT.Enabled {
+		if len(c.JWT.Audiences) == 0 {
+			return fmt.Errorf("SPIRE_JWT_AUDIENCES is required when JWT-SVID auth is enabled")
+		}
+
+		switch c.JWT.BundleSource {
+		case "", "workload_api":
+			// Default; nothing further to validate — AgentSocket already
+			// checked above.
+		case "federation":
+			if c.MTLSEnabled {
+				return fmt.Errorf("SPIRE_MTLS_ENABLED must be false when SPIRE_JWT_BUNDLE_SOURCE=federation (federation mode has no X.509 identity source)")
+			}
+			if len(c.JWT.FederationBundleEndpoints) == 0 {
+				return fmt.Errorf("SPIRE_FEDERATION_BUNDLE_ENDPOINTS is required when SPIRE_JWT_BUNDLE_SOURCE=federation")
+			}
+			for _, td := range c.TrustDomains {
+				if _, ok := c.JWT.FederationBundleEndpoints[td]; !ok {
+					return fmt.Errorf("SPIRE_FEDERATION_BUNDLE_ENDPOINTS is missing an entry for trust domain %q", td)
+				}
+			}
+		default:
+			return fmt.Errorf(`SPIRE_JWT_BUNDLE_SOURCE must be "workload_api" or "federation", got %q`, c.JWT.BundleSource)
+		}
 	}
 
 	return nil

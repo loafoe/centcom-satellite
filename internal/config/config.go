@@ -171,8 +171,11 @@ func Load() (*Config, error) {
 			AllowedSPIFFEIDs: getEnvStringSlice("SPIRE_ALLOWED_SPIFFE_IDS"),
 			MTLSEnabled:      getEnvBool("SPIRE_MTLS_ENABLED", false),
 			JWT: spire.JWTConfig{
-				Enabled:   getEnvBool("SPIRE_JWT_ENABLED", false),
-				Audiences: getEnvStringSlice("SPIRE_JWT_AUDIENCES"),
+				Enabled:                   getEnvBool("SPIRE_JWT_ENABLED", false),
+				Audiences:                 getEnvStringSlice("SPIRE_JWT_AUDIENCES"),
+				BundleSource:              getEnvString("SPIRE_JWT_BUNDLE_SOURCE", "workload_api"),
+				FederationBundleEndpoints: getEnvStringMap("SPIRE_FEDERATION_BUNDLE_ENDPOINTS"),
+				FederationCABundlePath:    os.Getenv("SPIRE_FEDERATION_CA_BUNDLE_PATH"),
 			},
 		},
 		Features: FeaturesConfig{
@@ -300,6 +303,33 @@ func getEnvStringSlice(key string) []string {
 		if trimmed != "" {
 			result = append(result, trimmed)
 		}
+	}
+	return result
+}
+
+// getEnvStringMap parses a comma-separated "key=value,key2=value2" env var
+// into a map. Returns nil if the env var is unset or empty. Malformed pairs
+// (no "=") are skipped — Validate() is responsible for catching a resulting
+// missing-entry error, not this parser.
+func getEnvStringMap(key string) map[string]string {
+	value := os.Getenv(key)
+	if value == "" {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, pair := range strings.Split(value, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		result[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }
