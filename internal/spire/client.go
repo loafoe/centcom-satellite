@@ -52,29 +52,31 @@ func (c *Client) Start(ctx context.Context) error {
 		"jwt_enabled", c.config.JWT.Enabled,
 	)
 
-	source, err := workloadapi.NewX509Source(ctx,
-		workloadapi.WithClientOptions(
-			workloadapi.WithAddr(c.config.AgentSocket),
-		),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create X509 source: %w", err)
+	if c.config.MTLSEnabled {
+		source, err := workloadapi.NewX509Source(ctx,
+			workloadapi.WithClientOptions(
+				workloadapi.WithAddr(c.config.AgentSocket),
+			),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create X509 source: %w", err)
+		}
+
+		c.mu.Lock()
+		c.source = source
+		c.mu.Unlock()
+
+		// Log our SPIFFE ID
+		svid, err := source.GetX509SVID()
+		if err != nil {
+			return fmt.Errorf("failed to get initial SVID: %w", err)
+		}
+
+		slog.Info("acquired SPIFFE identity",
+			"spiffe_id", svid.ID.String(),
+			"expires", svid.Certificates[0].NotAfter,
+		)
 	}
-
-	c.mu.Lock()
-	c.source = source
-	c.mu.Unlock()
-
-	// Log our SPIFFE ID
-	svid, err := source.GetX509SVID()
-	if err != nil {
-		return fmt.Errorf("failed to get initial SVID: %w", err)
-	}
-
-	slog.Info("acquired SPIFFE identity",
-		"spiffe_id", svid.ID.String(),
-		"expires", svid.Certificates[0].NotAfter,
-	)
 
 	// Initialize JWT source if JWT auth is enabled
 	if c.config.JWT.Enabled {
@@ -263,16 +265,20 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	jwtSource := c.jwtSource
 	c.mu.RUnlock()
 
-	if source == nil {
-		return fmt.Errorf("SPIRE X509 source not initialized")
-	}
+	var svidTrustDomain string
+	if c.config.MTLSEnabled {
+		if source == nil {
+			return fmt.Errorf("SPIRE X509 source not initialized")
+		}
 
-	svid, err := source.GetX509SVID()
-	if err != nil {
-		return fmt.Errorf("SPIRE X509 SVID error: %w", err)
-	}
-	if svid == nil {
-		return fmt.Errorf("SPIRE X509 SVID is nil")
+		svid, err := source.GetX509SVID()
+		if err != nil {
+			return fmt.Errorf("SPIRE X509 SVID error: %w", err)
+		}
+		if svid == nil {
+			return fmt.Errorf("SPIRE X509 SVID is nil")
+		}
+		svidTrustDomain = svid.ID.TrustDomain().String()
 	}
 
 	if c.config.JWT.Enabled {
@@ -281,7 +287,10 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 		}
 		trustDomains := c.config.TrustDomains
 		if len(trustDomains) == 0 {
-			trustDomains = []string{svid.ID.TrustDomain().String()}
+			if svidTrustDomain == "" {
+				return fmt.Errorf("no trust domain configured to health-check JWT bundle")
+			}
+			trustDomains = []string{svidTrustDomain}
 		}
 		for _, tdStr := range trustDomains {
 			td, err := spiffeid.TrustDomainFromString(tdStr)

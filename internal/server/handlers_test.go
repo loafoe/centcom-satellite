@@ -173,7 +173,7 @@ func TestHandleReadyz(t *testing.T) {
 func TestHandleHealthz_SPIREFailure(t *testing.T) {
 	registry := task.NewRegistry()
 	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
-	spireClient := spire.NewClient(&spire.Config{Enabled: true})
+	spireClient := spire.NewClient(&spire.Config{Enabled: true, MTLSEnabled: true})
 	h := NewHandlers(registry, spireClient, metrics, "v1.0.0", true)
 
 	req := httptest.NewRequest("GET", "/healthz", nil)
@@ -199,7 +199,7 @@ func TestHandleHealthz_SPIREFailure(t *testing.T) {
 func TestHandleReadyz_SPIREFailure(t *testing.T) {
 	registry := task.NewRegistry()
 	metrics := observability.NewMetricsWithRegistry(prometheus.NewRegistry())
-	spireClient := spire.NewClient(&spire.Config{Enabled: true})
+	spireClient := spire.NewClient(&spire.Config{Enabled: true, MTLSEnabled: true})
 	h := NewHandlers(registry, spireClient, metrics, "v1.0.0", true)
 
 	req := httptest.NewRequest("GET", "/readyz", nil)
