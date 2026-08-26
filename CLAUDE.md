@@ -41,6 +41,20 @@ The agent uses SPIFFE/SPIRE for workload identity authentication:
 
 Authentication is checked in order: mTLS → JWT-SVID. For local development, set `ALLOW_UNAUTHENTICATED=true`.
 
+### Agent-less JWT-SVID validation (no local SPIRE Agent)
+
+JWT-SVID validation only needs the issuing trust domain's JWT signing
+public keys — it does not need this satellite to have its own issued
+identity, unlike mTLS (which requires a local SPIRE Agent to attest this
+workload and issue it a rotating X.509 SVID; there's no way around that).
+Setting `SPIRE_JWT_BUNDLE_SOURCE=federation` fetches those public keys
+directly from a SPIFFE Federation Bundle Endpoint over HTTPS instead of
+the local SPIRE Workload API socket, removing the local-agent dependency
+entirely for JWT-SVID-only deployments — this is what makes ECS/Fargate
+(or any target that can't run a SPIRE Agent sidecar) viable. Requires
+`SPIRE_MTLS_ENABLED=false`; mTLS mode is unaffected either way and
+continues to require a local agent when used.
+
 ## Current Tasks
 
 ### Implemented: `pv_resize`
