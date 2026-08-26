@@ -211,6 +211,7 @@ func TestLoad_AWSAssumeRoleFromEnv(t *testing.T) {
 	t.Setenv("AWS_ASSUME_ROLE_ARN", "arn:aws:iam::123456789012:role/centcom-satellite-remote")
 	t.Setenv("AWS_ASSUME_ROLE_EXTERNAL_ID", "shared-secret-id")
 	t.Setenv("AWS_ASSUME_ROLE_SESSION_NAME", "custom-session")
+	t.Setenv("AWS_ASSUME_ROLE_REGION", "us-east-1")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -223,6 +224,20 @@ func TestLoad_AWSAssumeRoleFromEnv(t *testing.T) {
 	}
 	if cfg.AWSAssumeRole.SessionName != "custom-session" {
 		t.Fatalf("AWSAssumeRole.SessionName = %q, want custom-session", cfg.AWSAssumeRole.SessionName)
+	}
+	if cfg.AWSAssumeRole.Region != "us-east-1" {
+		t.Fatalf("AWSAssumeRole.Region = %q, want us-east-1", cfg.AWSAssumeRole.Region)
+	}
+}
+
+func TestLoad_AWSAssumeRoleRegionDefaultsEmpty(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AWSAssumeRole.Region != "" {
+		t.Fatalf("AWSAssumeRole.Region = %q, want empty by default", cfg.AWSAssumeRole.Region)
 	}
 }
 

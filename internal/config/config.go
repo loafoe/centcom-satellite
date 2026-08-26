@@ -56,6 +56,12 @@ type AWSAssumeRoleConfig struct {
 	// SessionName is the STS RoleSessionName, visible in the target
 	// account's CloudTrail.
 	SessionName string
+	// Region overrides the AWS region used for AssumeRole'd API calls.
+	// Optional — only applies when ARN is set. A cluster-less satellite's
+	// pod region (wherever it happens to run) has no necessary relationship
+	// to the target account's region, so this cannot fall back to the
+	// ambient AWS_REGION the pod might have.
+	Region string
 }
 
 // FeaturesConfig holds feature flags.
@@ -195,6 +201,7 @@ func Load() (*Config, error) {
 			ARN:         os.Getenv("AWS_ASSUME_ROLE_ARN"),
 			ExternalID:  os.Getenv("AWS_ASSUME_ROLE_EXTERNAL_ID"),
 			SessionName: getEnvString("AWS_ASSUME_ROLE_SESSION_NAME", "centcom-satellite"),
+			Region:      os.Getenv("AWS_ASSUME_ROLE_REGION"),
 		},
 	}
 

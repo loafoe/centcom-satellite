@@ -128,6 +128,7 @@ func main() {
 		ARN:         cfg.AWSAssumeRole.ARN,
 		ExternalID:  cfg.AWSAssumeRole.ExternalID,
 		SessionName: cfg.AWSAssumeRole.SessionName,
+		Region:      cfg.AWSAssumeRole.Region,
 	}); err != nil {
 		slog.Error("failed to configure cross-account AWS AssumeRole", "error", err)
 		os.Exit(1)

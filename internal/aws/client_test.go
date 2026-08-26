@@ -68,6 +68,60 @@ func TestLoadConfig_RepeatedCallsReuseSameCredentialsInstance(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_UsesAssumeRoleRegionWhenNoPerCallOverride(t *testing.T) {
+	fake := &fakeCredentialsProvider{}
+	prevCreds, prevRegion := assumeRoleCredentials, assumeRoleRegion
+	assumeRoleCredentials = fake
+	assumeRoleRegion = "us-east-1"
+	defer func() { assumeRoleCredentials, assumeRoleRegion = prevCreds, prevRegion }()
+
+	cfg, err := LoadConfig(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Region != "us-east-1" {
+		t.Fatalf("region = %q, want us-east-1 (the AssumeRole region default)", cfg.Region)
+	}
+}
+
+func TestLoadConfig_PerCallRegionOverridesAssumeRoleRegion(t *testing.T) {
+	fake := &fakeCredentialsProvider{}
+	prevCreds, prevRegion := assumeRoleCredentials, assumeRoleRegion
+	assumeRoleCredentials = fake
+	assumeRoleRegion = "us-east-1"
+	defer func() { assumeRoleCredentials, assumeRoleRegion = prevCreds, prevRegion }()
+
+	cfg, err := LoadConfig(context.Background(), Options{Region: "eu-west-2"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Region != "eu-west-2" {
+		t.Fatalf("region = %q, want eu-west-2 (explicit per-call Region must win)", cfg.Region)
+	}
+}
+
+func TestLoadConfig_AssumeRoleRegionHasNoEffectOutsideAssumeRoleMode(t *testing.T) {
+	// assumeRoleRegion must never apply when AssumeRole isn't configured
+	// (assumeRoleCredentials nil) — this is the "only for cluster-less
+	// mode" requirement: without it, a stray assumeRoleRegion value could
+	// leak into the base-account code path. Pins the ambient region
+	// explicitly via env var (rather than assuming it's unset) since the
+	// SDK also consults ~/.aws/config, which varies by machine.
+	t.Setenv("AWS_REGION", "ap-southeast-2")
+	prevCreds, prevRegion := assumeRoleCredentials, assumeRoleRegion
+	assumeRoleCredentials = nil
+	assumeRoleRegion = "us-east-1"
+	defer func() { assumeRoleCredentials, assumeRoleRegion = prevCreds, prevRegion }()
+
+	cfg, err := LoadConfig(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Region != "ap-southeast-2" {
+		t.Fatalf("region = %q, want ap-southeast-2 (ambient) — assumeRoleRegion must not apply when assumeRoleCredentials is nil", cfg.Region)
+	}
+}
+
 func TestInit_NoopWhenARNEmpty(t *testing.T) {
 	prev := assumeRoleCredentials
 	defer func() { assumeRoleCredentials = prev }()

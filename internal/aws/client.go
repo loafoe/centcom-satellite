@@ -32,6 +32,13 @@ type AssumeRoleOptions struct {
 	// SessionName is the STS RoleSessionName. Defaults to
 	// "centcom-satellite" when empty.
 	SessionName string
+	// Region overrides the region LoadConfig defaults to while AssumeRole is
+	// active. Optional. A cluster-less satellite's pod region has no
+	// necessary relationship to the target account's region, so this can't
+	// just fall back to the ambient AWS_REGION the pod happens to have.
+	// Never applied outside AssumeRole mode, and never overrides a
+	// per-request Options.Region.
+	Region string
 }
 
 // assumeRoleCredentials holds the process-wide cached cross-account
@@ -40,6 +47,12 @@ type AssumeRoleOptions struct {
 // configured, in which case LoadConfig behaves exactly as it did before this
 // feature existed.
 var assumeRoleCredentials aws.CredentialsProvider
+
+// assumeRoleRegion is the region default LoadConfig applies while
+// assumeRoleCredentials is set, when the caller didn't specify its own
+// Options.Region. Only ever read alongside assumeRoleCredentials, so it has
+// no effect unless AssumeRole is actually configured.
+var assumeRoleRegion string
 
 type stsAPI interface {
 	GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
@@ -82,7 +95,8 @@ func Init(ctx context.Context, opts AssumeRoleOptions) error {
 	}
 
 	assumeRoleCredentials = cached
-	slog.Info("cross-account AssumeRole configured", "role_arn", opts.ARN, "account_id", accountID)
+	assumeRoleRegion = opts.Region
+	slog.Info("cross-account AssumeRole configured", "role_arn", opts.ARN, "account_id", accountID, "region", opts.Region)
 	return nil
 }
 
@@ -101,11 +115,20 @@ func verifyCallerIdentity(ctx context.Context, api stsAPI) (string, error) {
 // (IRSA / Pod Identity in EKS), applying the per-request Region from opts.
 // When Init has configured process-wide cross-account credentials, those
 // override the default chain's credentials — every AWS task calling
-// LoadConfig then transparently operates against the remote account.
+// LoadConfig then transparently operates against the remote account. If
+// AssumeRole is active and opts.Region is empty, Init's configured region
+// override (if any) is applied instead of the ambient AWS_REGION default —
+// a cluster-less satellite's own region has no necessary relationship to the
+// target account's, so it can't be assumed as the right default here.
 func LoadConfig(ctx context.Context, opts Options) (aws.Config, error) {
+	region := opts.Region
+	if region == "" && assumeRoleCredentials != nil {
+		region = assumeRoleRegion
+	}
+
 	loadOpts := []func(*config.LoadOptions) error{}
-	if opts.Region != "" {
-		loadOpts = append(loadOpts, config.WithRegion(opts.Region))
+	if region != "" {
+		loadOpts = append(loadOpts, config.WithRegion(region))
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
