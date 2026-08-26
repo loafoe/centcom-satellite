@@ -129,7 +129,12 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
-// Close shuts down the SPIRE client.
+// Close shuts down the SPIRE client. Note: in federation bundle-source mode,
+// the background bundle-watcher goroutines started by Start() are scoped to
+// the ctx passed into Start(), not to Close() — Close() only releases the
+// Workload API sources, which do have their own Close() methods. Callers
+// must cancel that same ctx (as main.go does, immediately after Close()) for
+// the watchers to actually stop; Close() alone will not stop them.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
