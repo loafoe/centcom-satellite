@@ -248,3 +248,82 @@ func TestLoad_AWSAssumeRoleARNMustLookLikeIAMRoleARN(t *testing.T) {
 		t.Fatal("expected error for malformed AWS_ASSUME_ROLE_ARN, got nil")
 	}
 }
+
+func TestLoad_SPIREFederationDefaultsEmpty(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SPIRE.JWT.BundleSource != "workload_api" {
+		t.Fatalf("SPIRE.JWT.BundleSource = %q, want default workload_api", cfg.SPIRE.JWT.BundleSource)
+	}
+	if cfg.SPIRE.JWT.FederationBundleEndpoints != nil {
+		t.Fatalf("SPIRE.JWT.FederationBundleEndpoints = %v, want nil by default", cfg.SPIRE.JWT.FederationBundleEndpoints)
+	}
+	if cfg.SPIRE.JWT.FederationCABundlePath != "" {
+		t.Fatalf("SPIRE.JWT.FederationCABundlePath = %q, want empty by default", cfg.SPIRE.JWT.FederationCABundlePath)
+	}
+}
+
+func TestLoad_SPIREFederationFromEnv(t *testing.T) {
+	t.Setenv("SPIRE_ENABLED", "true")
+	t.Setenv("SPIRE_TRUST_DOMAINS", "example.org")
+	t.Setenv("SPIRE_MTLS_ENABLED", "false")
+	t.Setenv("SPIRE_JWT_ENABLED", "true")
+	t.Setenv("SPIRE_JWT_AUDIENCES", "centcom-satellite")
+	t.Setenv("SPIRE_JWT_BUNDLE_SOURCE", "federation")
+	t.Setenv("SPIRE_FEDERATION_BUNDLE_ENDPOINTS", "example.org=https://spire.example.org/bundle")
+	t.Setenv("SPIRE_FEDERATION_CA_BUNDLE_PATH", "/etc/centcom-satellite/federation-ca.pem")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SPIRE.JWT.BundleSource != "federation" {
+		t.Fatalf("SPIRE.JWT.BundleSource = %q, want federation", cfg.SPIRE.JWT.BundleSource)
+	}
+	want := map[string]string{"example.org": "https://spire.example.org/bundle"}
+	if got := cfg.SPIRE.JWT.FederationBundleEndpoints; len(got) != len(want) || got["example.org"] != want["example.org"] {
+		t.Fatalf("SPIRE.JWT.FederationBundleEndpoints = %v, want %v", got, want)
+	}
+	if cfg.SPIRE.JWT.FederationCABundlePath != "/etc/centcom-satellite/federation-ca.pem" {
+		t.Fatalf("SPIRE.JWT.FederationCABundlePath = %q, want /etc/centcom-satellite/federation-ca.pem", cfg.SPIRE.JWT.FederationCABundlePath)
+	}
+}
+
+func TestLoad_SPIREFederationInvalidBundleSourceRejected(t *testing.T) {
+	t.Setenv("SPIRE_ENABLED", "true")
+	t.Setenv("SPIRE_TRUST_DOMAINS", "example.org")
+	t.Setenv("SPIRE_JWT_ENABLED", "true")
+	t.Setenv("SPIRE_JWT_AUDIENCES", "centcom-satellite")
+	t.Setenv("SPIRE_JWT_BUNDLE_SOURCE", "bogus")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid SPIRE_JWT_BUNDLE_SOURCE, got nil")
+	}
+}
+
+func TestLoad_SPIREFederationRejectsMTLS(t *testing.T) {
+	t.Setenv("SPIRE_ENABLED", "true")
+	t.Setenv("SPIRE_TRUST_DOMAINS", "example.org")
+	t.Setenv("SPIRE_MTLS_ENABLED", "true")
+	t.Setenv("SPIRE_JWT_ENABLED", "true")
+	t.Setenv("SPIRE_JWT_AUDIENCES", "centcom-satellite")
+	t.Setenv("SPIRE_JWT_BUNDLE_SOURCE", "federation")
+	t.Setenv("SPIRE_FEDERATION_BUNDLE_ENDPOINTS", "example.org=https://spire.example.org/bundle")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when SPIRE_MTLS_ENABLED=true with SPIRE_JWT_BUNDLE_SOURCE=federation, got nil")
+	}
+}
+
+func TestLoad_SPIREFederationRequiresEndpointPerTrustDomain(t *testing.T) {
+	t.Setenv("SPIRE_ENABLED", "true")
+	t.Setenv("SPIRE_TRUST_DOMAINS", "example.org,partner.com")
+	t.Setenv("SPIRE_MTLS_ENABLED", "false")
+	t.Setenv("SPIRE_JWT_ENABLED", "true")
+	t.Setenv("SPIRE_JWT_AUDIENCES", "centcom-satellite")
+	t.Setenv("SPIRE_JWT_BUNDLE_SOURCE", "federation")
+	t.Setenv("SPIRE_FEDERATION_BUNDLE_ENDPOINTS", "example.org=https://spire.example.org/bundle")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when SPIRE_FEDERATION_BUNDLE_ENDPOINTS is missing an entry for partner.com, got nil")
+	}
+}
