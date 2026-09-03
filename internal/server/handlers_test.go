@@ -127,6 +127,10 @@ func TestHandleTask_InvalidJSON(t *testing.T) {
 	}
 }
 
+// An unknown/unregistered task type (e.g. a Kubernetes task called against
+// an AWS-only satellite with no cluster attached) is not a server failure -
+// it must come back as a distinct non-5xx status so callers can tell "not
+// available here" apart from a genuine transient execution error.
 func TestHandleTask_UnknownTaskType(t *testing.T) {
 	handlers := setupTestHandlers(t, true)
 
@@ -137,8 +141,8 @@ func TestHandleTask_UnknownTaskType(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handlers.HandleTask(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
 }
 
