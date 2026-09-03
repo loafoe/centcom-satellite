@@ -3,6 +3,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -138,8 +140,20 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start).Seconds()
 
 	if err != nil {
-		observability.RecordError(span, err)
 		span.End()
+		if errors.Is(err, task.ErrTaskNotFound) {
+			// Not a failure - this task type simply isn't registered on this
+			// satellite (the most common case: a Kubernetes task on an
+			// AWS-only deployment with no cluster attached). A distinct,
+			// non-5xx status lets callers (centcom's agent.Client) report
+			// this as "not available" rather than a real error, instead of
+			// it looking identical to a genuine transient failure.
+			slog.InfoContext(ctx, "task not available on this satellite", "type", req.Type, "duration", duration)
+			h.metrics.RecordTask(req.Type, "not_available", duration)
+			h.writeError(w, http.StatusNotFound, fmt.Sprintf("task %q is not available on this satellite", req.Type))
+			return
+		}
+		observability.RecordError(span, err)
 		slog.ErrorContext(ctx, "task execution failed", "type", req.Type, "error", err, "duration", duration)
 		h.metrics.RecordTask(req.Type, "error", duration)
 		h.writeError(w, http.StatusInternalServerError, "task execution failed")
