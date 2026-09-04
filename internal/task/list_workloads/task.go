@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +25,7 @@ const TaskName = "list_workloads"
 // Payload for list_workloads task.
 type Payload struct {
 	Namespace       string `json:"namespace"`               // required
-	Kind            string `json:"kind,omitempty"`          // deployment/statefulset/daemonset/all (default: all)
+	Kind            string `json:"kind,omitempty"`          // deployment/statefulset/daemonset/cronjob/job/all (default: all; job is never included in "all")
 	IncludeMetadata bool   `json:"include_metadata"`        // include labels and annotations
 	IncludeHPAs     bool   `json:"include_hpas,omitempty"`  // include HorizontalPodAutoscaler info
 	IncludeProbes   bool   `json:"include_probes,omitempty"` // include container probe configuration
@@ -56,6 +57,22 @@ type WorkloadInfo struct {
 	HPA                        *HPAInfo                     `json:"hpa,omitempty"`
 	CreationTime               string                       `json:"creation_time"`
 	Age                        string                       `json:"age"`
+
+	// CronJob-specific fields, empty for other kinds.
+	Schedule           string `json:"schedule,omitempty"`
+	Suspended          bool   `json:"suspended,omitempty"`
+	LastScheduleTime   string `json:"last_schedule_time,omitempty"`
+	LastSuccessfulTime string `json:"last_successful_time,omitempty"`
+	ActiveJobs         int32  `json:"active_jobs,omitempty"`
+
+	// Job-specific fields, empty for other kinds.
+	JobCompletions    int32  `json:"job_completions,omitempty"`
+	JobSucceeded      int32  `json:"job_succeeded,omitempty"`
+	JobFailed         int32  `json:"job_failed,omitempty"`
+	JobActive         int32  `json:"job_active,omitempty"`
+	JobStartTime      string `json:"job_start_time,omitempty"`
+	JobCompletionTime string `json:"job_completion_time,omitempty"`
+	OwnerCronJob      string `json:"owner_cronjob,omitempty"`
 }
 
 // ContainerInfo contains container details including probes and resources.
@@ -291,6 +308,34 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
+	// List CronJobs. They have no stable pod selector of their own (each
+	// triggered Job gets its own pods), so they never match a PDB - append a
+	// nil placeholder to keep podTemplateLabels index-aligned with workloads.
+	if payload.Kind == "cronjob" || payload.Kind == "all" {
+		cronjobs, err := t.clientset.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list cronjobs: %w", err)
+		}
+		for i := range cronjobs.Items {
+			workloads = append(workloads, t.buildCronJobInfo(&cronjobs.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
+			podTemplateLabels = append(podTemplateLabels, nil)
+		}
+	}
+
+	// List Jobs. Deliberately excluded from kind="all" (unlike CronJobs):
+	// clusters can accumulate a large number of completed Jobs, so callers
+	// must ask for kind=job explicitly. No PDB/HPA matching applies.
+	if payload.Kind == "job" {
+		jobs, err := t.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list jobs: %w", err)
+		}
+		for i := range jobs.Items {
+			workloads = append(workloads, t.buildJobInfo(&jobs.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
+			podTemplateLabels = append(podTemplateLabels, nil)
+		}
+	}
+
 	// Fetch PDBs and match to workloads by pod template labels
 	var unmatchedPDBs []PDBInfo
 	pdbList, err := t.clientset.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
@@ -428,6 +473,99 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata, 
 
 	if includeProbes {
 		info.Containers = extractContainerInfo(daemonset.Spec.Template.Spec.Containers)
+	}
+
+	return info
+}
+
+func (t *Task) buildCronJobInfo(cronjob *batchv1.CronJob, includeMetadata, includeProbes bool) WorkloadInfo {
+	podSpec := cronjob.Spec.JobTemplate.Spec.Template.Spec
+	images := extractImages(podSpec.Containers)
+
+	info := WorkloadInfo{
+		Name:                      cronjob.Name,
+		Namespace:                 cronjob.Namespace,
+		Kind:                      "CronJob",
+		Images:                    images,
+		NodeSelector:              extractNodeSelector(podSpec.NodeSelector),
+		Affinity:                  extractAffinity(podSpec.Affinity),
+		TopologySpreadConstraints: extractTopologySpreadConstraints(podSpec.TopologySpreadConstraints),
+		Tolerations:               extractTolerations(podSpec.Tolerations),
+		CreationTime:              cronjob.CreationTimestamp.Format(time.RFC3339),
+		Age:                       formatAge(cronjob.CreationTimestamp.Time),
+		Schedule:                  cronjob.Spec.Schedule,
+		Suspended:                 cronjob.Spec.Suspend != nil && *cronjob.Spec.Suspend,
+		ActiveJobs:                int32(len(cronjob.Status.Active)),
+	}
+
+	if cronjob.Status.LastScheduleTime != nil {
+		info.LastScheduleTime = cronjob.Status.LastScheduleTime.Format(time.RFC3339)
+	}
+	if cronjob.Status.LastSuccessfulTime != nil {
+		info.LastSuccessfulTime = cronjob.Status.LastSuccessfulTime.Format(time.RFC3339)
+	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(cronjob.Labels)
+		info.Annotations = filterAnnotations(cronjob.Annotations)
+	}
+
+	if includeProbes {
+		info.Containers = extractContainerInfo(podSpec.Containers)
+	}
+
+	return info
+}
+
+func (t *Task) buildJobInfo(job *batchv1.Job, includeMetadata, includeProbes bool) WorkloadInfo {
+	podSpec := job.Spec.Template.Spec
+	images := extractImages(podSpec.Containers)
+
+	var completions int32 = 1
+	if job.Spec.Completions != nil {
+		completions = *job.Spec.Completions
+	}
+
+	var ownerCronJob string
+	for _, ref := range job.OwnerReferences {
+		if ref.Kind == "CronJob" {
+			ownerCronJob = ref.Name
+			break
+		}
+	}
+
+	info := WorkloadInfo{
+		Name:                      job.Name,
+		Namespace:                 job.Namespace,
+		Kind:                      "Job",
+		Images:                    images,
+		NodeSelector:              extractNodeSelector(podSpec.NodeSelector),
+		Affinity:                  extractAffinity(podSpec.Affinity),
+		TopologySpreadConstraints: extractTopologySpreadConstraints(podSpec.TopologySpreadConstraints),
+		Tolerations:               extractTolerations(podSpec.Tolerations),
+		CreationTime:              job.CreationTimestamp.Format(time.RFC3339),
+		Age:                       formatAge(job.CreationTimestamp.Time),
+		JobCompletions:            completions,
+		JobSucceeded:              job.Status.Succeeded,
+		JobFailed:                 job.Status.Failed,
+		JobActive:                 job.Status.Active,
+		OwnerCronJob:              ownerCronJob,
+	}
+
+	if job.Status.StartTime != nil {
+		info.JobStartTime = job.Status.StartTime.Format(time.RFC3339)
+	}
+	if job.Status.CompletionTime != nil {
+		info.JobCompletionTime = job.Status.CompletionTime.Format(time.RFC3339)
+	}
+
+	if includeMetadata {
+		info.Labels = copyLabels(job.Labels)
+		info.Annotations = filterAnnotations(job.Annotations)
+	}
+
+	if includeProbes {
+		info.Containers = extractContainerInfo(podSpec.Containers)
 	}
 
 	return info
