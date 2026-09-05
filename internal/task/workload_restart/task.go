@@ -19,20 +19,30 @@ import (
 )
 
 const (
-	TaskName           = "workload_restart"
-	NoRestartAnnotation = "picoclaw.io/no-restart"
-	RestartedAtAnnotation = "kubectl.kubernetes.io/restartedAt"
+	TaskName            = "workload_restart"
+	NoRestartAnnotation = "centcom.io/no-restart"
+	// LegacyNoRestartAnnotation is the pre-rename annotation key. Checked
+	// alongside NoRestartAnnotation so workloads annotated before the
+	// centcom.io rename keep their opt-out.
+	LegacyNoRestartAnnotation = "picoclaw.io/no-restart"
+	RestartedAtAnnotation     = "kubectl.kubernetes.io/restartedAt"
 )
 
+// hasNoRestartAnnotation reports whether either the current or legacy
+// no-restart annotation is set to "true".
+func hasNoRestartAnnotation(annotations map[string]string) bool {
+	return annotations[NoRestartAnnotation] == "true" || annotations[LegacyNoRestartAnnotation] == "true"
+}
+
 var (
-	ErrInvalidPayload     = errors.New("invalid payload")
-	ErrMissingNamespace   = errors.New("namespace is required")
-	ErrMissingName        = errors.New("name is required")
-	ErrMissingKind        = errors.New("kind is required")
-	ErrInvalidKind        = errors.New("kind must be deployment, statefulset, or daemonset")
-	ErrRestartNotAllowed  = errors.New("restart not allowed by annotation")
-	ErrWorkloadNotFound   = errors.New("workload not found")
-	ErrPDBBlocked         = errors.New("restart blocked by PodDisruptionBudget with disruptionsAllowed=0")
+	ErrInvalidPayload    = errors.New("invalid payload")
+	ErrMissingNamespace  = errors.New("namespace is required")
+	ErrMissingName       = errors.New("name is required")
+	ErrMissingKind       = errors.New("kind is required")
+	ErrInvalidKind       = errors.New("kind must be deployment, statefulset, or daemonset")
+	ErrRestartNotAllowed = errors.New("restart not allowed by annotation")
+	ErrWorkloadNotFound  = errors.New("workload not found")
+	ErrPDBBlocked        = errors.New("restart blocked by PodDisruptionBudget with disruptionsAllowed=0")
 )
 
 // Payload represents the input for a workload restart operation.
@@ -86,7 +96,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return nil, fmt.Errorf("failed to get namespace: %w", err)
 	}
 
-	if ns.Annotations[NoRestartAnnotation] == "true" {
+	if hasNoRestartAnnotation(ns.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("%s: namespace %s has %s=true", ErrRestartNotAllowed, payload.Namespace, NoRestartAnnotation)), nil
 	}
 
@@ -148,7 +158,7 @@ func (t *Task) restartDeployment(ctx context.Context, payload *Payload) (*task.R
 	}
 
 	// Check workload annotation for no-restart
-	if deployment.Annotations[NoRestartAnnotation] == "true" {
+	if hasNoRestartAnnotation(deployment.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("%s: deployment %s/%s has %s=true", ErrRestartNotAllowed, payload.Namespace, payload.Name, NoRestartAnnotation)), nil
 	}
 
@@ -222,7 +232,7 @@ func (t *Task) restartStatefulSet(ctx context.Context, payload *Payload) (*task.
 	}
 
 	// Check workload annotation for no-restart
-	if statefulset.Annotations[NoRestartAnnotation] == "true" {
+	if hasNoRestartAnnotation(statefulset.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("%s: statefulset %s/%s has %s=true", ErrRestartNotAllowed, payload.Namespace, payload.Name, NoRestartAnnotation)), nil
 	}
 
@@ -296,7 +306,7 @@ func (t *Task) restartDaemonSet(ctx context.Context, payload *Payload) (*task.Re
 	}
 
 	// Check workload annotation for no-restart
-	if daemonset.Annotations[NoRestartAnnotation] == "true" {
+	if hasNoRestartAnnotation(daemonset.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("%s: daemonset %s/%s has %s=true", ErrRestartNotAllowed, payload.Namespace, payload.Name, NoRestartAnnotation)), nil
 	}
 

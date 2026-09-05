@@ -14,10 +14,17 @@ import (
 )
 
 const (
-	TaskName          = "pod_evict"
-	NoEvictAnnotation = "picoclaw.io/no-evict"
+	TaskName           = "pod_evict"
+	NoEvictAnnotation  = "centcom.io/no-evict"
 	DefaultGracePeriod = int64(30)
 )
+
+// hasNoEvictAnnotation reports whether the no-evict annotation is present
+// (presence-only check, any value counts).
+func hasNoEvictAnnotation(annotations map[string]string) bool {
+	_, ok := annotations[NoEvictAnnotation]
+	return ok
+}
 
 type Payload struct {
 	Namespace          string `json:"namespace"`
@@ -69,10 +76,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to get namespace: %w", err)
 	}
-	if namespace.Annotations != nil {
-		if _, exists := namespace.Annotations[NoEvictAnnotation]; exists {
-			return task.NewErrorResult(fmt.Sprintf("namespace %s has %s annotation, eviction not allowed", payload.Namespace, NoEvictAnnotation)), nil
-		}
+	if hasNoEvictAnnotation(namespace.Annotations) {
+		return task.NewErrorResult(fmt.Sprintf("namespace %s has %s annotation, eviction not allowed", payload.Namespace, NoEvictAnnotation)), nil
 	}
 
 	// Get pod
@@ -82,10 +87,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	// Check pod annotation
-	if pod.Annotations != nil {
-		if _, exists := pod.Annotations[NoEvictAnnotation]; exists {
-			return task.NewErrorResult(fmt.Sprintf("pod %s/%s has %s annotation, eviction not allowed", payload.Namespace, payload.PodName, NoEvictAnnotation)), nil
-		}
+	if hasNoEvictAnnotation(pod.Annotations) {
+		return task.NewErrorResult(fmt.Sprintf("pod %s/%s has %s annotation, eviction not allowed", payload.Namespace, payload.PodName, NoEvictAnnotation)), nil
 	}
 
 	// Extract owner info
