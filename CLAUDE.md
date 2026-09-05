@@ -397,7 +397,7 @@ curl -X POST http://localhost:8080/task \
    registry.Register(new_task.New(dependencies))
    ```
 
-3. Add RBAC permissions in `deploy/rbac.yaml` and Helm chart
+3. Add RBAC permissions to the Helm chart (`charts/centcom-satellite/templates/clusterrole.yaml` in the `philips-software/helm-charts` repo) — this is the only RBAC source of truth; there is no standalone `deploy/rbac.yaml` in this repo
 
 ## Current Version
 

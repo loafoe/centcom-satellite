@@ -113,15 +113,13 @@ make ko-push        # Build and push to registry
 
 ### Deploy to Kubernetes
 
+The Helm chart (published at `oci://ghcr.io/philips-software/helm-charts/centcom-satellite`) is the only supported deployment method — see its own `README.md` for the full values reference, or use the `install.sh` one-liner it publishes to auto-detect cluster settings.
+
 ```bash
-# Using Helm (recommended)
-helm install centcom-satellite oci://ghcr.io/loafoe/helm-charts/centcom-satellite \
+helm install centcom-satellite oci://ghcr.io/philips-software/helm-charts/centcom-satellite \
   --namespace centcom-satellite --create-namespace \
   --set 'spire.trustDomains[0]=example.org' \
   --set 'spire.allowedSPIFFEIDs[0]=spiffe://example.org/ai-agent'
-
-# Or using kustomize
-kubectl apply -k deploy/
 ```
 
 ### Configuration
