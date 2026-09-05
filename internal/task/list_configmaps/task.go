@@ -1,8 +1,9 @@
 // Package list_configmaps provides ConfigMap metadata listing functionality.
 //
 // This task returns metadata only — names, namespaces, key names, per-key data
-// sizes, and age. It never returns ConfigMap values. Use the get_configmap task
-// (which redacts secret-looking values) to read values.
+// sizes, and age. It never returns ConfigMap values. Use get_resource
+// (apiVersion: v1, kind: ConfigMap) to read values; it applies the same
+// secret-shaped-value redaction.
 package list_configmaps
 
 import (

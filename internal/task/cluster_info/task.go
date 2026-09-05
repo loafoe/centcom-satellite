@@ -40,7 +40,6 @@ type Capabilities struct {
 	PvResize         bool `json:"pv_resize"`
 	AutoRemediate    bool `json:"auto_remediate"`
 	HttpRequest      bool `json:"http_request"`
-	ConfigmapRead    bool `json:"configmap_read"`
 	CloudWatchRCA    bool `json:"cloudwatch_rca"`
 	GuardDuty        bool `json:"guardduty"`
 	SecurityHub      bool `json:"securityhub"`
