@@ -1,21 +1,23 @@
-package get_configmap
+// Package redact provides a shared heuristic for masking secret-shaped
+// values in otherwise-legitimate Kubernetes objects. Originally specific to
+// get_configmap, generalized so get_resource (and any future generic
+// resource reader) can apply the same protection to arbitrary object graphs.
+package redact
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
-	"time"
 )
 
-// redactionReason describes why a value was masked. Empty string means not redacted.
-type redactionReason string
+// Reason describes why a value was masked. Empty string means not redacted.
+type Reason string
 
 const (
-	reasonSecretKeyName redactionReason = "secret-key-name"
-	reasonPEMBlock      redactionReason = "pem-block"
-	reasonInlineSecret  redactionReason = "inline-secret"
-	reasonHighEntropy   redactionReason = "high-entropy"
+	ReasonSecretKeyName Reason = "secret-key-name"
+	ReasonPEMBlock      Reason = "pem-block"
+	ReasonInlineSecret  Reason = "inline-secret"
+	ReasonHighEntropy   Reason = "high-entropy"
 )
 
 // minEntropyLen is the minimum value length before the high-entropy heuristic applies.
@@ -30,7 +32,6 @@ const minEntropyLen = 20
 // does not match secretKeyNameRe — can slip through this net and be returned in
 // cleartext. The key-name, PEM, and inline-secret heuristics catch the common cases;
 // tightening the entropy band (and adding name allow/deny lists) is deferred to v2.
-// See docs/superpowers/specs/2026-06-01-configmap-introspection-design.md in pico-mcp.
 const entropyThreshold = 4.0
 
 var (
@@ -42,27 +43,28 @@ var (
 	inlineSecretRe = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*\S`)
 )
 
-// redact decides whether a ConfigMap value should be masked, returning the reason
-// (empty if the value is safe to return as-is). The decision uses, in order:
-// secret-like key name, PEM block, inline secret pattern, then high Shannon entropy.
-func redact(key, value string) redactionReason {
+// Check decides whether a value should be masked given its key name context,
+// returning the reason (empty if the value is safe to return as-is). The
+// decision uses, in order: secret-like key name, PEM block, inline secret
+// pattern, then high Shannon entropy.
+func Check(key, value string) Reason {
 	if secretKeyNameRe.MatchString(key) {
-		return reasonSecretKeyName
+		return ReasonSecretKeyName
 	}
 	if strings.Contains(value, "-----BEGIN") {
-		return reasonPEMBlock
+		return ReasonPEMBlock
 	}
 	if inlineSecretRe.MatchString(value) {
-		return reasonInlineSecret
+		return ReasonInlineSecret
 	}
-	if len(value) >= minEntropyLen && shannonEntropy(value) > entropyThreshold {
-		return reasonHighEntropy
+	if len(value) >= minEntropyLen && ShannonEntropy(value) > entropyThreshold {
+		return ReasonHighEntropy
 	}
 	return ""
 }
 
-// shannonEntropy returns the Shannon entropy of s in bits per character.
-func shannonEntropy(s string) float64 {
+// ShannonEntropy returns the Shannon entropy of s in bits per character.
+func ShannonEntropy(s string) float64 {
 	if len(s) == 0 {
 		return 0
 	}
@@ -77,16 +79,4 @@ func shannonEntropy(s string) float64 {
 		entropy -= p * math.Log2(p)
 	}
 	return entropy
-}
-
-func formatAge(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
 }

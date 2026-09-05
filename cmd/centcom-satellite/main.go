@@ -30,7 +30,6 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/cw_list_metrics"
 	"github.com/loafoe/centcom-satellite/internal/task/cw_logs_query"
 	"github.com/loafoe/centcom-satellite/internal/task/dns_check"
-	"github.com/loafoe/centcom-satellite/internal/task/get_configmap"
 	"github.com/loafoe/centcom-satellite/internal/task/get_events"
 	"github.com/loafoe/centcom-satellite/internal/task/get_logs"
 	"github.com/loafoe/centcom-satellite/internal/task/get_resource"
@@ -63,6 +62,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/pv_resize_status"
 	"github.com/loafoe/centcom-satellite/internal/task/pv_usage"
 	"github.com/loafoe/centcom-satellite/internal/task/resource_pressure"
+	"github.com/loafoe/centcom-satellite/internal/task/resourceaccess"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings_statistics"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_insight_statistics"
@@ -164,7 +164,6 @@ func main() {
 		PvResize:         cfg.Features.PvResizeEnabled,
 		AutoRemediate:    cfg.Features.AutoRemediateEnabled,
 		HttpRequest:      cfg.Features.HTTPRequestEnabled,
-		ConfigmapRead:    cfg.Features.ConfigmapReadEnabled,
 		CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
 		GuardDuty:        cfg.Features.GuardDutyEnabled,
 		SecurityHub:      cfg.Features.SecurityHubEnabled,
@@ -184,6 +183,12 @@ func main() {
 		registry.Register(storage_status.New(k8sClient.Clientset))
 		registry.Register(list_namespaces.New(k8sClient.Clientset))
 		registry.Register(pv_usage.New(k8sClient.Clientset))
+		// ConfigMap metadata listing (names, key names, sizes, age - never
+		// values). Unconditional: its RBAC (configmaps get/list) is part of
+		// the base ClusterRole, same as the other list_* tasks below. Reading
+		// actual values goes through get_resource (kind: ConfigMap), which
+		// applies Layer 3 redaction.
+		registry.Register(list_configmaps.New(k8sClient.Clientset))
 		registry.Register(list_pods.New(k8sClient.Clientset))
 		registry.Register(list_pvcs.New(k8sClient.Clientset))
 		registry.Register(get_logs.New(k8sClient.Clientset))
@@ -200,10 +205,13 @@ func main() {
 		registry.Register(list_nodepools.New(k8sClient.DynamicClient))
 		registry.Register(list_vpas.New(k8sClient.Clientset, k8sClient.DynamicClient))
 
-		// Optional: get_resource task (requires expanded RBAC)
+		// Optional: get_resource task (requires expanded RBAC - see the
+		// chart's view ClusterRoleBinding). denylist always blocks Secret
+		// even if ResourceAccessDeny is empty (the common case).
 		if cfg.Features.GetResourceEnabled {
-			registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper))
-			slog.Info("get_resource task enabled")
+			denylist := resourceaccess.New(cfg.Features.ResourceAccessDeny)
+			registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper, denylist))
+			slog.Info("get_resource task enabled", "denied_kinds", len(cfg.Features.ResourceAccessDeny)+1)
 		}
 
 		// Optional: workload_restart task (write operation)
@@ -240,13 +248,6 @@ func main() {
 		if cfg.Features.ArgocdEnabled {
 			registry.Register(list_argocd_applications.New(k8sClient.DynamicClient))
 			slog.Info("list_argocd_applications task enabled")
-		}
-
-		// Optional: ConfigMap introspection tasks (list metadata + read redacted values)
-		if cfg.Features.ConfigmapReadEnabled {
-			registry.Register(list_configmaps.New(k8sClient.Clientset))
-			registry.Register(get_configmap.New(k8sClient.Clientset))
-			slog.Info("list_configmaps and get_configmap tasks enabled")
 		}
 
 		// Optional: pv_resize task (storage write operation)

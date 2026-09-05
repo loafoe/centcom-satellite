@@ -3,11 +3,15 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/loafoe/centcom-satellite/internal/spire"
+	"github.com/loafoe/centcom-satellite/internal/task/resourceaccess"
 )
 
 // Config holds all application configuration.
@@ -89,8 +93,21 @@ type AWSAssumeRoleConfig struct {
 // FeaturesConfig holds feature flags.
 type FeaturesConfig struct {
 	// GetResourceEnabled enables the get_resource task for fetching arbitrary resources.
-	// Disabled by default as it requires expanded RBAC permissions.
+	// Enabled by default: the RBAC it requires is the built-in `view` ClusterRole
+	// (Layer 1), which already excludes Secrets, and the task itself adds a
+	// configurable GVK denylist (Layer 2, ResourceAccessDeny below) and
+	// content-based redaction of secret-shaped values (Layer 3, internal/redact) -
+	// defense in depth rather than a single RBAC gate. Set GET_RESOURCE_ENABLED=false
+	// to disable.
 	GetResourceEnabled bool
+
+	// ResourceAccessDeny is an operator-configured list of additional
+	// group+kind pairs get_resource refuses to read, on top of the
+	// non-negotiable default (Secret) - see
+	// internal/task/resourceaccess.DefaultDenied. Ships empty: operators
+	// opt specific kinds in via RESOURCE_ACCESS_DENY rather than starting
+	// from a curated list someone else chose for them.
+	ResourceAccessDeny []schema.GroupKind
 
 	// WorkloadRestartEnabled enables the workload_restart task for restarting workloads.
 	// Disabled by default as it requires write permissions and can cause service disruption.
@@ -118,11 +135,6 @@ type FeaturesConfig struct {
 	// ArgocdEnabled enables the list_argocd_applications task for Argo CD introspection.
 	// Disabled by default as it requires Argo CD CRDs and RBAC for argoproj.io.
 	ArgocdEnabled bool
-
-	// ConfigmapReadEnabled enables the list_configmaps and get_configmap tasks.
-	// Disabled by default as ConfigMaps frequently contain sensitive data; get_configmap
-	// redacts secret-looking values, but the capability is still opt-in.
-	ConfigmapReadEnabled bool
 
 	// HTTPRequestEnabled enables the http_request task for making HTTP requests to cluster-internal services.
 	// Disabled by default as it allows arbitrary HTTP requests within the cluster.
@@ -178,6 +190,11 @@ type PodResizeConfig struct {
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
+	resourceAccessDeny, err := resourceaccess.ParseGroupKindList(os.Getenv("RESOURCE_ACCESS_DENY"))
+	if err != nil {
+		return nil, fmt.Errorf("RESOURCE_ACCESS_DENY: %w", err)
+	}
+
 	cfg := &Config{
 		Port:                 getEnvInt("PORT", 8080),
 		MetricsPort:          getEnvInt("METRICS_PORT", 9090),
@@ -201,7 +218,8 @@ func Load() (*Config, error) {
 			},
 		},
 		Features: FeaturesConfig{
-			GetResourceEnabled:     getEnvBool("GET_RESOURCE_ENABLED", false),
+			GetResourceEnabled:     getEnvBool("GET_RESOURCE_ENABLED", true),
+			ResourceAccessDeny:     resourceAccessDeny,
 			WorkloadRestartEnabled: getEnvBool("WORKLOAD_RESTART_ENABLED", false),
 			WorkloadScaleEnabled:   getEnvBool("WORKLOAD_SCALE_ENABLED", false),
 			PodEvictEnabled:        getEnvBool("POD_EVICT_ENABLED", false),
@@ -213,7 +231,6 @@ func Load() (*Config, error) {
 			},
 			NodeclaimDeleteEnabled:  getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:           getEnvBool("FEATURES_ARGOCD", false),
-			ConfigmapReadEnabled:    getEnvBool("FEATURES_CONFIGMAP_READ", false),
 			HTTPRequestEnabled:      getEnvBool("HTTP_REQUEST_ENABLED", false),
 			PvResizeEnabled:         getEnvBool("PV_RESIZE_ENABLED", false),
 			AutoRemediateEnabled:    getEnvBool("AUTO_REMEDIATE_ENABLED", false),
