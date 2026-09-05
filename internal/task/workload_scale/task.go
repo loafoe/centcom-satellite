@@ -15,8 +15,18 @@ import (
 
 const (
 	TaskName          = "workload_scale"
-	NoScaleAnnotation = "picoclaw.io/no-scale"
+	NoScaleAnnotation = "centcom.io/no-scale"
+	// LegacyNoScaleAnnotation is the pre-rename annotation key. Checked
+	// alongside NoScaleAnnotation so workloads annotated before the
+	// centcom.io rename keep their opt-out.
+	LegacyNoScaleAnnotation = "picoclaw.io/no-scale"
 )
+
+// hasNoScaleAnnotation reports whether either the current or legacy
+// no-scale annotation is set to "true".
+func hasNoScaleAnnotation(annotations map[string]string) bool {
+	return annotations[NoScaleAnnotation] == "true" || annotations[LegacyNoScaleAnnotation] == "true"
+}
 
 type Payload struct {
 	Namespace        string `json:"namespace"`
@@ -65,7 +75,7 @@ func (t *Task) Execute(ctx context.Context, payload json.RawMessage) (*task.Resu
 		return nil, fmt.Errorf("failed to get namespace: %w", err)
 	}
 
-	if ns.Annotations[NoScaleAnnotation] == "true" {
+	if hasNoScaleAnnotation(ns.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("namespace %s has %s annotation set to true", p.Namespace, NoScaleAnnotation)), nil
 	}
 
@@ -124,7 +134,7 @@ func (t *Task) scaleDeployment(ctx context.Context, p *Payload) (*task.Result, e
 	}
 
 	// Check workload annotation
-	if deployment.Annotations[NoScaleAnnotation] == "true" {
+	if hasNoScaleAnnotation(deployment.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("deployment %s/%s has %s annotation set to true", p.Namespace, p.Name, NoScaleAnnotation)), nil
 	}
 
@@ -192,7 +202,7 @@ func (t *Task) scaleStatefulSet(ctx context.Context, p *Payload) (*task.Result, 
 	}
 
 	// Check workload annotation
-	if statefulSet.Annotations[NoScaleAnnotation] == "true" {
+	if hasNoScaleAnnotation(statefulSet.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("statefulset %s/%s has %s annotation set to true", p.Namespace, p.Name, NoScaleAnnotation)), nil
 	}
 
