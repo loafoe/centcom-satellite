@@ -16,6 +16,7 @@ A lightweight Kubernetes helper service that receives task requests and executes
 
 | Task | Description |
 |------|-------------|
+| `account_info` | Get the AWS account a satellite's credentials resolve to (works on cluster-less satellites too) |
 | `cluster_health` | Get cluster health status |
 | `cluster_info` | Get cluster information (version, nodes) |
 | `connectivity_test` | Test TCP/HTTP connectivity to endpoints |
@@ -35,15 +36,23 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `guardduty_get_findings_statistics` | Aggregate GuardDuty finding counts (by severity/type/date/resource/account) |
 | `guardduty_list_detectors` | List GuardDuty detectors and their status |
 | `guardduty_list_findings` | List GuardDuty finding IDs matching a filter |
+| `http_request` | Make HTTP requests to cluster-internal services (SSRF-guarded target validation) |
+| `list_argocd_applications` | List Argo CD Applications with health and sync status |
+| `list_configmaps` | List ConfigMaps (metadata only: names, key names, data sizes, age — never values) |
 | `list_endpoints` | List service endpoints |
 | `list_gateways` | List Gateway API gateways |
 | `list_ingresses` | List ingress resources |
 | `list_namespaces` | List namespaces in the cluster |
 | `list_network_policies` | List network policies |
+| `list_nodeclaims` | List Karpenter NodeClaims (instance type, nodepool, status, age) |
+| `list_nodepools` | List Karpenter NodePools and resource usage/limits |
 | `list_pods` | List pods with status and resource details |
+| `list_pvcs` | List PersistentVolumeClaims with status, capacity, and storage class |
 | `list_routes` | List Gateway API routes |
 | `list_services` | List services in namespace |
+| `list_vpas` | List VerticalPodAutoscalers and resource recommendations |
 | `list_workloads` | List deployments, statefulsets, daemonsets |
+| `nodeclaim_delete` | Delete a Karpenter NodeClaim to recycle a node |
 | `pod_evict` | Evict a pod from a node |
 | `pod_resize` | Resize pod resource requests/limits |
 | `pod_resource_usage` | Get pod resource usage metrics |
