@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/loafoe/centcom-satellite/internal/config"
 	"github.com/loafoe/centcom-satellite/internal/observability"
 	"github.com/loafoe/centcom-satellite/internal/spire"
 	"github.com/loafoe/centcom-satellite/internal/task"
@@ -20,6 +21,7 @@ import (
 type Config struct {
 	Port        int
 	MetricsPort int
+	RateLimit   config.RateLimitConfig
 }
 
 // Server is the main HTTP server.
@@ -61,13 +63,18 @@ func (s *Server) Start(ctx context.Context) error {
 	mainMux.HandleFunc("/info", s.handlers.HandleInfo)
 	mainMux.HandleFunc("/logs/stream", s.streamHandlers.HandleLogStream)
 
-	// Apply middleware
+	// Apply middleware. LoggingMiddleware must wrap RateLimitMiddleware
+	// (i.e. come first here — Chain makes earlier entries more "outer") so a
+	// rejected (429) request still gets logged: it calls next.ServeHTTP and
+	// then logs the final status, so it runs regardless of what the rate
+	// limiter, as its "next", decides to do.
 	mainHandler := Chain(
 		mainMux,
 		RecoveryMiddleware,
 		TracingMiddleware,
 		MetricsMiddleware(s.metrics),
 		LoggingMiddleware,
+		RateLimitMiddleware(s.config.RateLimit),
 	)
 
 	s.main = &http.Server{

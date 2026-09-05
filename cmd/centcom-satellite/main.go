@@ -337,6 +337,7 @@ func main() {
 		server.Config{
 			Port:        cfg.Port,
 			MetricsPort: cfg.MetricsPort,
+			RateLimit:   cfg.RateLimit,
 		},
 		registry,
 		metrics,

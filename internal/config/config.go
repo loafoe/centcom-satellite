@@ -42,6 +42,28 @@ type Config struct {
 
 	// AWSAssumeRole holds cross-account AWS access configuration.
 	AWSAssumeRole AWSAssumeRoleConfig
+
+	// RateLimit configures per-client-IP request throttling on the main
+	// HTTP server.
+	RateLimit RateLimitConfig
+}
+
+// RateLimitConfig configures per-client-IP request throttling. Enabled by
+// default with a generous limit: legitimate traffic (centcom polling
+// cluster_info every few seconds, a handful of concurrent tool calls, log
+// streaming) never approaches it — it exists to bound one misbehaving or
+// compromised caller, not to shape normal load. /healthz and /readyz are
+// never throttled regardless of this config, since a rate-limited liveness
+// probe would get the pod killed by kubelet.
+type RateLimitConfig struct {
+	// Enabled turns the limiter on. Defaults to true; set
+	// RATE_LIMIT_ENABLED=false to disable entirely.
+	Enabled bool
+	// RequestsPerSecond is the sustained per-client-IP request rate.
+	RequestsPerSecond float64
+	// Burst is the maximum number of requests a single client IP can make
+	// in a short burst before the sustained rate applies.
+	Burst int
 }
 
 // AWSAssumeRoleConfig configures cross-account AWS access via STS AssumeRole.
@@ -206,6 +228,11 @@ func Load() (*Config, error) {
 			SessionName: getEnvString("AWS_ASSUME_ROLE_SESSION_NAME", "centcom-satellite"),
 			Region:      os.Getenv("AWS_ASSUME_ROLE_REGION"),
 		},
+		RateLimit: RateLimitConfig{
+			Enabled:           getEnvBool("RATE_LIMIT_ENABLED", true),
+			RequestsPerSecond: getEnvFloat("RATE_LIMIT_REQUESTS_PER_SECOND", 50),
+			Burst:             getEnvInt("RATE_LIMIT_BURST", 100),
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -255,6 +282,15 @@ func (c *Config) Validate() error {
 		errs = append(errs, "AWS_ASSUME_ROLE_ARN must be a valid IAM role ARN (arn:aws:iam::<account>:role/<name>)")
 	}
 
+	if c.RateLimit.Enabled {
+		if c.RateLimit.RequestsPerSecond <= 0 {
+			errs = append(errs, "RATE_LIMIT_REQUESTS_PER_SECOND must be > 0 when rate limiting is enabled")
+		}
+		if c.RateLimit.Burst <= 0 {
+			errs = append(errs, "RATE_LIMIT_BURST must be > 0 when rate limiting is enabled")
+		}
+	}
+
 	if len(errs) > 0 {
 		return errors.New("configuration errors: " + strings.Join(errs, "; "))
 	}
@@ -273,6 +309,15 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatValue
 		}
 	}
 	return defaultValue
