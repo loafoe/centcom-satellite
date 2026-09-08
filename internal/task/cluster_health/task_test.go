@@ -140,3 +140,51 @@ func TestTask_Execute_PodRestarts(t *testing.T) {
 	assert.True(t, foundRecent, "expected pod-recent to be flagged")
 	assert.True(t, foundWaiting, "expected pod-waiting to be flagged")
 }
+
+func TestTask_Execute_PodRestarts_ConfigurableWindow(t *testing.T) {
+	now := time.Now()
+	restartTime := metav1.NewTime(now.Add(-1 * time.Hour))
+
+	// Restarted 1 hour ago, count > 5. Within the default 3h window, but
+	// outside a caller-supplied 30-minute window.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pod-recent",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Hour)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:         "container-recent",
+					RestartCount: 6,
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{
+							StartedAt: restartTime,
+						},
+					},
+					LastTerminationState: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							FinishedAt: restartTime,
+							Reason:     "OOMKilled",
+							Message:    "OOM killed container",
+							ExitCode:   137,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	task := New(fake.NewSimpleClientset(pod))
+
+	result, err := task.Execute(context.Background(), json.RawMessage(`{"namespace":"default","restart_window_minutes":30}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok, "expected HealthReport in Details")
+
+	assert.Empty(t, report.UnhealthyPods, "restart 1h ago should be excluded by a 30-minute window")
+}
