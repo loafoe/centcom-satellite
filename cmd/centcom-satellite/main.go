@@ -50,6 +50,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/list_nodepools"
 	"github.com/loafoe/centcom-satellite/internal/task/list_pods"
 	"github.com/loafoe/centcom-satellite/internal/task/list_pvcs"
+	"github.com/loafoe/centcom-satellite/internal/task/list_resources"
 	"github.com/loafoe/centcom-satellite/internal/task/list_routes"
 	"github.com/loafoe/centcom-satellite/internal/task/list_services"
 	"github.com/loafoe/centcom-satellite/internal/task/list_vpas"
@@ -209,9 +210,14 @@ func main() {
 		// chart's view ClusterRoleBinding). denylist always blocks Secret
 		// even if ResourceAccessDeny is empty (the common case).
 		if cfg.Features.GetResourceEnabled {
+			// list_resources shares the exact same Denylist instance as
+			// get_resource (not a second New() call) so the exclusion can't
+			// be bypassed by listing instead of getting - see
+			// resourceaccess.New's doc comment.
 			denylist := resourceaccess.New(cfg.Features.ResourceAccessDeny)
 			registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper, denylist))
-			slog.Info("get_resource task enabled", "denied_kinds", len(cfg.Features.ResourceAccessDeny)+1)
+			registry.Register(list_resources.New(k8sClient.DynamicClient, k8sClient.RESTMapper, denylist))
+			slog.Info("get_resource/list_resources tasks enabled", "denied_kinds", len(cfg.Features.ResourceAccessDeny)+1)
 		}
 
 		// Optional: workload_restart task (write operation)
