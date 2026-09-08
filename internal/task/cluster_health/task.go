@@ -21,6 +21,9 @@ const TaskName = "cluster_health"
 type Payload struct {
 	// EventsMinutes is how far back to look for warning events (default: 30)
 	EventsMinutes int `json:"events_minutes,omitempty"`
+	// RestartWindowMinutes is how far back a container restart must have
+	// occurred to flag a pod for high restart count (default: 180)
+	RestartWindowMinutes int `json:"restart_window_minutes,omitempty"`
 	// Namespace filters to a specific namespace (default: all namespaces)
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -116,6 +119,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.EventsMinutes == 0 {
 		payload.EventsMinutes = 30
 	}
+	if payload.RestartWindowMinutes == 0 {
+		payload.RestartWindowMinutes = 180
+	}
 
 	report := &HealthReport{
 		Healthy: true,
@@ -127,7 +133,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	// Check pods
-	unhealthyPods, err := t.checkPods(ctx, namespace)
+	unhealthyPods, err := t.checkPods(ctx, namespace, payload.RestartWindowMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check pods: %w", err)
 	}
@@ -171,7 +177,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	return task.NewSuccessResultWithDetails(report.Summary, report), nil
 }
 
-func (t *Task) checkPods(ctx context.Context, namespace string) ([]UnhealthyPod, error) {
+func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMinutes int) ([]UnhealthyPod, error) {
+	restartWindow := time.Duration(restartWindowMinutes) * time.Minute
 	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -227,9 +234,9 @@ func (t *Task) checkPods(ctx context.Context, namespace string) ([]UnhealthyPod,
 				lastRestart := getLastRestartTime(cs)
 				var shouldFlag bool
 				if !lastRestart.IsZero() {
-					shouldFlag = time.Since(lastRestart) <= 3*time.Hour
+					shouldFlag = time.Since(lastRestart) <= restartWindow
 				} else {
-					shouldFlag = time.Since(pod.CreationTimestamp.Time) <= 3*time.Hour
+					shouldFlag = time.Since(pod.CreationTimestamp.Time) <= restartWindow
 				}
 
 				if shouldFlag {
