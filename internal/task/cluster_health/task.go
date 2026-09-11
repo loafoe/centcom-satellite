@@ -26,16 +26,25 @@ type Payload struct {
 	RestartWindowMinutes int `json:"restart_window_minutes,omitempty"`
 	// Namespace filters to a specific namespace (default: all namespaces)
 	Namespace string `json:"namespace,omitempty"`
+	// IncludeProbeWarnings includes startup/liveness/readiness probe
+	// failure events (Warning events with Reason "Unhealthy") in
+	// RecentEvents. Default false: these are excluded, since they're
+	// frequently transient (node churn/rebalancing, brief network jitter —
+	// see the aws-load-balancer-controller and centcom probe-timeout
+	// investigations in CLAUDE.md for the same class of noise) and were
+	// making buildSummary report "Cluster has issues" purely from
+	// len(RecentEvents) > 0 even when nothing else was actually wrong.
+	IncludeProbeWarnings bool `json:"include_probe_warnings,omitempty"`
 }
 
 // HealthReport contains the cluster health summary.
 type HealthReport struct {
-	Healthy       bool              `json:"healthy"`
-	Summary       string            `json:"summary"`
-	UnhealthyPods []UnhealthyPod    `json:"unhealthy_pods,omitempty"`
-	Workloads     WorkloadStatus    `json:"workloads"`
-	NodeIssues    []NodeIssue       `json:"node_issues,omitempty"`
-	RecentEvents  []WarningEvent    `json:"recent_events,omitempty"`
+	Healthy       bool           `json:"healthy"`
+	Summary       string         `json:"summary"`
+	UnhealthyPods []UnhealthyPod `json:"unhealthy_pods,omitempty"`
+	Workloads     WorkloadStatus `json:"workloads"`
+	NodeIssues    []NodeIssue    `json:"node_issues,omitempty"`
+	RecentEvents  []WarningEvent `json:"recent_events,omitempty"`
 }
 
 // UnhealthyPod represents a pod in a problematic state.
@@ -61,10 +70,10 @@ type WorkloadStatus struct {
 
 // WorkloadSummary contains counts for a workload type.
 type WorkloadSummary struct {
-	Total      int              `json:"total"`
-	Healthy    int              `json:"healthy"`
-	Unhealthy  int              `json:"unhealthy"`
-	Degraded   []DegradedItem   `json:"degraded,omitempty"`
+	Total     int            `json:"total"`
+	Healthy   int            `json:"healthy"`
+	Unhealthy int            `json:"unhealthy"`
+	Degraded  []DegradedItem `json:"degraded,omitempty"`
 }
 
 // DegradedItem represents a workload not at desired state.
@@ -165,7 +174,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	// Get recent warning events
-	events, err := t.getWarningEvents(ctx, namespace, payload.EventsMinutes)
+	events, err := t.getWarningEvents(ctx, namespace, payload.EventsMinutes, payload.IncludeProbeWarnings)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
 	}
@@ -398,7 +407,11 @@ func (t *Task) checkNodes(ctx context.Context) ([]NodeIssue, error) {
 	return issues, nil
 }
 
-func (t *Task) getWarningEvents(ctx context.Context, namespace string, minutes int) ([]WarningEvent, error) {
+// probeWarningReason is the Reason Kubernetes' kubelet uses for all three
+// probe types (startup, liveness, readiness) on failure.
+const probeWarningReason = "Unhealthy"
+
+func (t *Task) getWarningEvents(ctx context.Context, namespace string, minutes int, includeProbeWarnings bool) ([]WarningEvent, error) {
 	events, err := t.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
 		FieldSelector: "type=Warning",
 	})
@@ -410,6 +423,10 @@ func (t *Task) getWarningEvents(ctx context.Context, namespace string, minutes i
 	var warnings []WarningEvent
 
 	for _, e := range events.Items {
+		if !includeProbeWarnings && e.Reason == probeWarningReason {
+			continue
+		}
+
 		eventTime := e.LastTimestamp.Time
 		if eventTime.IsZero() {
 			eventTime = e.EventTime.Time
