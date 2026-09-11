@@ -188,3 +188,82 @@ func TestTask_Execute_PodRestarts_ConfigurableWindow(t *testing.T) {
 
 	assert.Empty(t, report.UnhealthyPods, "restart 1h ago should be excluded by a 30-minute window")
 }
+
+func probeWarningEvent(name string, reason, message string) *corev1.Event {
+	return &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:      "Pod",
+			Name:      "some-pod",
+			Namespace: "default",
+		},
+		Type:          corev1.EventTypeWarning,
+		Reason:        reason,
+		Message:       message,
+		Count:         1,
+		LastTimestamp: metav1.NewTime(time.Now()),
+	}
+}
+
+// TestTask_Execute_ProbeWarnings_ExcludedByDefault guards the fix for a
+// real report: transient startup/liveness/readiness probe failures during
+// node churn/rebalancing were making buildSummary say "Cluster has
+// issues" (via len(RecentEvents) > 0) even though nothing else was wrong
+// and report.Healthy stayed true — noise, not a real problem. By default,
+// Warning events with Reason "Unhealthy" (kubelet's reason for all three
+// probe types) must be excluded from RecentEvents and must not affect the
+// summary.
+func TestTask_Execute_ProbeWarnings_ExcludedByDefault(t *testing.T) {
+	ev := probeWarningEvent("centcom.abc123", "Unhealthy", "Liveness probe failed: Get \"http://10.0.0.1:8080/health\": context deadline exceeded")
+	task := New(fake.NewSimpleClientset(ev))
+
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+
+	assert.Empty(t, report.RecentEvents, "probe-failure warning events should be excluded by default")
+	assert.True(t, report.Healthy)
+	assert.Equal(t, "Cluster is healthy - all workloads running, no node issues, no recent warnings", report.Summary)
+}
+
+// TestTask_Execute_ProbeWarnings_IncludedWhenRequested verifies the
+// filtering is a lever, not a removal: a caller who explicitly wants to
+// see probe warnings can still get them.
+func TestTask_Execute_ProbeWarnings_IncludedWhenRequested(t *testing.T) {
+	ev := probeWarningEvent("centcom.abc123", "Unhealthy", "Readiness probe failed: dial tcp: connect: connection refused")
+	task := New(fake.NewSimpleClientset(ev))
+
+	result, err := task.Execute(context.Background(), json.RawMessage(`{"include_probe_warnings": true}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+
+	require.Len(t, report.RecentEvents, 1)
+	assert.Equal(t, "Unhealthy", report.RecentEvents[0].Reason)
+}
+
+// TestTask_Execute_NonProbeWarnings_StillReportedByDefault ensures the
+// probe-specific filter doesn't over-broadly suppress unrelated warning
+// events.
+func TestTask_Execute_NonProbeWarnings_StillReportedByDefault(t *testing.T) {
+	ev := probeWarningEvent("some-pod.def456", "FailedScheduling", "0/3 nodes are available: insufficient cpu")
+	task := New(fake.NewSimpleClientset(ev))
+
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+
+	require.Len(t, report.RecentEvents, 1)
+	assert.Equal(t, "FailedScheduling", report.RecentEvents[0].Reason)
+}
