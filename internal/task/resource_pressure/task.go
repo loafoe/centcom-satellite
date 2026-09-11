@@ -17,10 +17,25 @@ import (
 
 const TaskName = "resource_pressure"
 
+// defaultMinPressurePercent is the default per-node allocation threshold
+// (requests as a percentage of allocatable) above which a node is reported
+// in NodePressure. Deliberately high: cluster-autoscaler/Karpenter-style
+// bin-packing intentionally drives allocation up as nodes are consolidated
+// to minimize count — that's efficient scheduling, not a problem, so a low
+// bar (the previous hardcoded 70%) would flag most nodes in a
+// well-optimized cluster as "under pressure" for no operationally
+// meaningful reason. 90% is closer to "this node is actually near its
+// scheduling ceiling," not merely "well utilized."
+const defaultMinPressurePercent = 90
+
 // Payload for resource_pressure task.
 type Payload struct {
 	// TopNamespaces limits the per-namespace breakdown (default: 10)
 	TopNamespaces int `json:"top_namespaces,omitempty"`
+	// MinPressurePercent is the per-node CPU/memory allocation percentage
+	// (requests / allocatable) above which a node is reported in
+	// NodePressure (default: 90 — see defaultMinPressurePercent).
+	MinPressurePercent float64 `json:"min_pressure_percent,omitempty"`
 }
 
 // ResourceReport contains the resource allocation analysis.
@@ -60,11 +75,11 @@ type NamespaceResource struct {
 
 // NodePressure shows nodes with high allocation.
 type NodePressure struct {
-	Name              string  `json:"name"`
-	CPUAllocPercent   float64 `json:"cpu_alloc_percent"`
-	MemAllocPercent   float64 `json:"mem_alloc_percent"`
-	PodCount          int     `json:"pod_count"`
-	PodCapacity       int64   `json:"pod_capacity"`
+	Name            string  `json:"name"`
+	CPUAllocPercent float64 `json:"cpu_alloc_percent"`
+	MemAllocPercent float64 `json:"mem_alloc_percent"`
+	PodCount        int     `json:"pod_count"`
+	PodCapacity     int64   `json:"pod_capacity"`
 }
 
 // PendingPod shows pods that can't be scheduled.
@@ -102,6 +117,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.TopNamespaces == 0 {
 		payload.TopNamespaces = 10
 	}
+	if payload.MinPressurePercent == 0 {
+		payload.MinPressurePercent = defaultMinPressurePercent
+	}
 
 	report := &ResourceReport{}
 
@@ -115,8 +133,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	var totalCapacityCPU, totalCapacityMem int64
 	var totalAllocatableCPU, totalAllocatableMem int64
 	nodeAllocatable := make(map[string]struct {
-		cpu int64
-		mem int64
+		cpu  int64
+		mem  int64
 		pods int64
 	})
 
@@ -133,8 +151,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		totalAllocatableMem += allocMem
 
 		nodeAllocatable[node.Name] = struct {
-			cpu int64
-			mem int64
+			cpu  int64
+			mem  int64
 			pods int64
 		}{allocCPU, allocMem, allocPods}
 	}
@@ -293,8 +311,8 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		if alloc.mem > 0 {
 			memPercent = float64(nr.mem) / float64(alloc.mem) * 100
 		}
-		// Only report nodes with >70% allocation
-		if cpuPercent > 70 || memPercent > 70 {
+		// Only report nodes at or above the (default: 90%, Karpenter/bin-packing-aware) threshold.
+		if cpuPercent >= payload.MinPressurePercent || memPercent >= payload.MinPressurePercent {
 			report.NodePressure = append(report.NodePressure, NodePressure{
 				Name:            nodeName,
 				CPUAllocPercent: cpuPercent,
