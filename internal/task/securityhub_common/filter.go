@@ -24,6 +24,14 @@ type Filter struct {
 	RecordState string `json:"record_state,omitempty"`
 	// ResourceType keeps findings for this resource type (e.g. "AwsEc2Instance").
 	ResourceType string `json:"resource_type,omitempty"`
+	// ResourceIDs keeps findings whose resource ID (an ARN for ARN-bearing
+	// resources like EC2 instances, e.g.
+	// "arn:aws:ec2:eu-west-2:123456789012:instance/i-041efada1a756a715") is in
+	// this list (exact match, OR'd together — same semantics as
+	// SeverityLabels/Types/WorkflowStatus above). Lets a caller scope a query
+	// to a known set of resources (e.g. every node in a Karpenter NodePool)
+	// instead of paging through a broad, unfiltered result set.
+	ResourceIDs []string `json:"resource_ids,omitempty"`
 	// AWSAccountID keeps findings for this account ID.
 	AWSAccountID string `json:"aws_account_id,omitempty"`
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
@@ -72,6 +80,9 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 	}
 	if f.ResourceType != "" {
 		out.ResourceType = []types.StringFilter{equalsFilter(f.ResourceType)}
+	}
+	for _, id := range f.ResourceIDs {
+		out.ResourceId = append(out.ResourceId, equalsFilter(id))
 	}
 	if f.AWSAccountID != "" {
 		out.AwsAccountId = []types.StringFilter{equalsFilter(f.AWSAccountID)}
