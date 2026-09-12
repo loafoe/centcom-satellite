@@ -31,6 +31,7 @@ func TestBuildFilters_FullFilter(t *testing.T) {
 		WorkflowStatus: []string{"NEW", "NOTIFIED"},
 		RecordState:    "ACTIVE",
 		ResourceType:   "AwsEc2Instance",
+		ResourceIDs:    []string{"arn:aws:ec2:eu-west-2:123456789012:instance/i-041efada1a756a715"},
 		AWSAccountID:   "123456789012",
 		UpdatedAfter:   "2026-07-01T00:00:00Z",
 		UpdatedBefore:  "2026-07-27T00:00:00Z",
@@ -52,6 +53,12 @@ func TestBuildFilters_FullFilter(t *testing.T) {
 	if len(f.ResourceType) != 1 || *f.ResourceType[0].Value != "AwsEc2Instance" {
 		t.Errorf("ResourceType = %+v", f.ResourceType)
 	}
+	if len(f.ResourceId) != 1 || *f.ResourceId[0].Value != "arn:aws:ec2:eu-west-2:123456789012:instance/i-041efada1a756a715" {
+		t.Errorf("ResourceId = %+v", f.ResourceId)
+	}
+	if f.ResourceId[0].Comparison != types.StringFilterComparisonEquals {
+		t.Errorf("ResourceId comparison = %v, want EQUALS", f.ResourceId[0].Comparison)
+	}
 	if len(f.AwsAccountId) != 1 || *f.AwsAccountId[0].Value != "123456789012" {
 		t.Errorf("AwsAccountId = %+v", f.AwsAccountId)
 	}
@@ -65,8 +72,32 @@ func TestBuildFilters_FullFilter(t *testing.T) {
 
 func TestBuildFilters_EmptyFiltersOmitted(t *testing.T) {
 	f := Filter{}.BuildFilters()
-	if len(f.Type) != 0 || len(f.ProductName) != 0 || len(f.WorkflowStatus) != 0 || len(f.ResourceType) != 0 || len(f.AwsAccountId) != 0 || len(f.UpdatedAt) != 0 || len(f.Region) != 0 {
+	if len(f.Type) != 0 || len(f.ProductName) != 0 || len(f.WorkflowStatus) != 0 || len(f.ResourceType) != 0 || len(f.ResourceId) != 0 || len(f.AwsAccountId) != 0 || len(f.UpdatedAt) != 0 || len(f.Region) != 0 {
 		t.Errorf("expected all unset filters to be empty, got %+v", f)
+	}
+}
+
+// TestBuildFilters_MultipleResourceIDsAreORed verifies multiple resource_ids
+// translate into multiple StringFilter entries on the same ResourceId field —
+// Security Hub ORs multiple values within one field, letting a caller query
+// every node in a NodePool/cluster (a set of instance ARNs) in one call
+// instead of one call per instance.
+func TestBuildFilters_MultipleResourceIDsAreORed(t *testing.T) {
+	ids := []string{
+		"arn:aws:ec2:eu-west-2:010526241823:instance/i-041efada1a756a715",
+		"arn:aws:ec2:eu-west-2:010526241823:instance/i-0aa11bb22cc33dd44",
+	}
+	f := Filter{ResourceIDs: ids}.BuildFilters()
+	if len(f.ResourceId) != len(ids) {
+		t.Fatalf("ResourceId len = %d, want %d", len(f.ResourceId), len(ids))
+	}
+	for i, id := range ids {
+		if *f.ResourceId[i].Value != id {
+			t.Errorf("ResourceId[%d] = %q, want %q", i, *f.ResourceId[i].Value, id)
+		}
+		if f.ResourceId[i].Comparison != types.StringFilterComparisonEquals {
+			t.Errorf("ResourceId[%d] comparison = %v, want EQUALS", i, f.ResourceId[i].Comparison)
+		}
 	}
 }
 
