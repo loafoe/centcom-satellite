@@ -3,6 +3,8 @@ package securityhub_get_findings
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,10 +15,14 @@ import (
 type fakeAPI struct {
 	lastInput      *securityhub.GetFindingsInput
 	getFindingsOut *securityhub.GetFindingsOutput
+	getFindingsErr error
 }
 
 func (f *fakeAPI) GetFindings(_ context.Context, in *securityhub.GetFindingsInput, _ ...func(*securityhub.Options)) (*securityhub.GetFindingsOutput, error) {
 	f.lastInput = in
+	if f.getFindingsErr != nil {
+		return nil, f.getFindingsErr
+	}
 	return f.getFindingsOut, nil
 }
 
@@ -99,5 +105,24 @@ func TestExecute_InvalidPayload(t *testing.T) {
 	}
 	if res.Success {
 		t.Fatal("expected success=false for invalid payload")
+	}
+}
+
+// TestExecute_AWSErrorSurfacesAsResultNotGoError guards against a corrupted
+// or expired NextToken (or any other AWS-rejected input) turning into an
+// opaque HTTP 500 ("task execution failed") via HandleTask's generic error
+// path. It must come back as a normal unsuccessful Result carrying the real
+// AWS error text, so the client actually learns what went wrong.
+func TestExecute_AWSErrorSurfacesAsResultNotGoError(t *testing.T) {
+	api := &fakeAPI{getFindingsErr: errors.New("InvalidInputException: Invalid NextToken")}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"next_token":"corrupted"}`))
+	if err != nil {
+		t.Fatalf("expected a Result, not a Go error: %v", err)
+	}
+	if res.Success {
+		t.Fatal("expected success=false when AWS rejects the request")
+	}
+	if !strings.Contains(res.Error, "Invalid NextToken") {
+		t.Fatalf("expected the real AWS error to be preserved, got %q", res.Error)
 	}
 }

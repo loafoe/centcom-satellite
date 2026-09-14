@@ -101,7 +101,10 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	out, err := client.ListFindings(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("list findings: %w", err)
+		// See securityhub_get_findings.Execute: a client-supplied error
+		// (bad/expired NextToken, invalid filter) should surface as the
+		// real AWS message via a normal Result, not an opaque HTTP 500.
+		return task.NewErrorResult(fmt.Sprintf("list findings: %v", err)), nil
 	}
 
 	result := FindingIDList{
