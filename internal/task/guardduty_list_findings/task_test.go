@@ -3,6 +3,8 @@ package guardduty_list_findings
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,6 +15,7 @@ type fakeAPI struct {
 	listDetectorsOut *guardduty.ListDetectorsOutput
 	lastInput        *guardduty.ListFindingsInput
 	listFindingsOut  *guardduty.ListFindingsOutput
+	listFindingsErr  error
 }
 
 func (f *fakeAPI) ListDetectors(_ context.Context, _ *guardduty.ListDetectorsInput, _ ...func(*guardduty.Options)) (*guardduty.ListDetectorsOutput, error) {
@@ -21,6 +24,9 @@ func (f *fakeAPI) ListDetectors(_ context.Context, _ *guardduty.ListDetectorsInp
 
 func (f *fakeAPI) ListFindings(_ context.Context, in *guardduty.ListFindingsInput, _ ...func(*guardduty.Options)) (*guardduty.ListFindingsOutput, error) {
 	f.lastInput = in
+	if f.listFindingsErr != nil {
+		return nil, f.listFindingsErr
+	}
 	return f.listFindingsOut, nil
 }
 
@@ -83,5 +89,27 @@ func TestExecute_InvalidPayload(t *testing.T) {
 	}
 	if res.Success {
 		t.Fatal("expected success=false for invalid payload")
+	}
+}
+
+// TestExecute_AWSErrorSurfacesAsResultNotGoError guards against a corrupted
+// or expired NextToken (or any other AWS-rejected input) turning into an
+// opaque HTTP 500 ("task execution failed") via HandleTask's generic error
+// path. It must come back as a normal unsuccessful Result carrying the real
+// AWS error text, so the client actually learns what went wrong.
+func TestExecute_AWSErrorSurfacesAsResultNotGoError(t *testing.T) {
+	api := &fakeAPI{
+		listDetectorsOut: &guardduty.ListDetectorsOutput{DetectorIds: []string{"det-x"}},
+		listFindingsErr:  errors.New("InvalidInputException: Invalid NextToken"),
+	}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"next_token":"corrupted"}`))
+	if err != nil {
+		t.Fatalf("expected a Result, not a Go error: %v", err)
+	}
+	if res.Success {
+		t.Fatal("expected success=false when AWS rejects the request")
+	}
+	if !strings.Contains(res.Error, "Invalid NextToken") {
+		t.Fatalf("expected the real AWS error to be preserved, got %q", res.Error)
 	}
 }

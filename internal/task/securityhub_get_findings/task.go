@@ -103,7 +103,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	out, err := client.GetFindings(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("get findings: %w", err)
+		// A client-supplied error (bad/expired NextToken, invalid filter,
+		// etc.) is not a satellite failure — return it as a normal
+		// unsuccessful Result so HandleTask responds 200 with the real AWS
+		// error message intact, instead of collapsing it into an opaque
+		// HTTP 500 ("task execution failed") that hides why the call
+		// actually failed.
+		return task.NewErrorResult(fmt.Sprintf("get findings: %v", err)), nil
 	}
 
 	result := FindingList{Findings: []shc.Finding{}, NextToken: aws.ToString(out.NextToken)}
