@@ -171,7 +171,88 @@ func main() {
 		SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
 	}
 
-	// Setup task registry
+	// Setup task registry. Extracted into registerTasks so the
+	// flag->registration wiring (in particular, that every write-capable
+	// task is only reachable when its own Features.*Enabled flag is true)
+	// is covered by an automated test instead of relying on manual code
+	// review - see TestRegisterTasks_* in main_test.go.
+	registry := registerTasks(cfg, k8sClient, awsOnlyMode, capabilities)
+
+	// Setup SPIRE client if enabled
+	var spireClient *spire.Client
+	if cfg.SPIRE.Enabled {
+		spireClient = spire.NewClient(&cfg.SPIRE)
+		if err := spireClient.Start(ctx); err != nil {
+			slog.Error("failed to start SPIRE client", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := spireClient.Close(); err != nil {
+				slog.Error("failed to close SPIRE client", "error", err)
+			}
+		}()
+	}
+
+	// Create and start server
+	var k8sClientset kubernetes.Interface
+	if k8sClient != nil {
+		k8sClientset = k8sClient.Clientset
+	}
+	srv := server.New(
+		server.Config{
+			Port:        cfg.Port,
+			MetricsPort: cfg.MetricsPort,
+			RateLimit:   cfg.RateLimit,
+		},
+		registry,
+		metrics,
+		spireClient,
+		Version,
+		cfg.AllowUnauthenticated,
+		k8sClientset,
+	)
+
+	// Start server in goroutine
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- srv.Start(ctx)
+	}()
+
+	// Wait for interrupt signal or server error
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigCh:
+		slog.Info("received signal, shutting down", "signal", sig)
+	case err := <-serverErrors:
+		if err != nil {
+			slog.Error("server error", "error", err)
+		}
+	}
+
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown error", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("shutdown complete")
+}
+
+// registerTasks builds the task registry, gating each optional task behind
+// its own cfg.Features.*Enabled flag. This is the sole runtime enforcement
+// point for the read-only/write-mode boundary: a task whose flag is false is
+// never added to the registry, so any call for it fails with
+// task.ErrTaskNotFound (see registry.Execute) regardless of caller
+// permissions - there is no separate RBAC/allowlist check inside the write
+// tasks themselves. See TestRegisterTasks_* in main_test.go, which locks
+// this behavior in per-flag and against install.sh's READ_ONLY=true default
+// feature set.
+func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, capabilities cluster_info.Capabilities) *task.Registry {
 	registry := task.NewRegistry()
 	registry.Register(account_info.New(cfg.AWSAssumeRole.ARN).WithCapabilities(capabilities))
 	registry.Register(dns_check.New())
@@ -320,67 +401,5 @@ func main() {
 		slog.Info("securityhub_update_findings task enabled")
 	}
 
-	// Setup SPIRE client if enabled
-	var spireClient *spire.Client
-	if cfg.SPIRE.Enabled {
-		spireClient = spire.NewClient(&cfg.SPIRE)
-		if err := spireClient.Start(ctx); err != nil {
-			slog.Error("failed to start SPIRE client", "error", err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := spireClient.Close(); err != nil {
-				slog.Error("failed to close SPIRE client", "error", err)
-			}
-		}()
-	}
-
-	// Create and start server
-	var k8sClientset kubernetes.Interface
-	if k8sClient != nil {
-		k8sClientset = k8sClient.Clientset
-	}
-	srv := server.New(
-		server.Config{
-			Port:        cfg.Port,
-			MetricsPort: cfg.MetricsPort,
-			RateLimit:   cfg.RateLimit,
-		},
-		registry,
-		metrics,
-		spireClient,
-		Version,
-		cfg.AllowUnauthenticated,
-		k8sClientset,
-	)
-
-	// Start server in goroutine
-	serverErrors := make(chan error, 1)
-	go func() {
-		serverErrors <- srv.Start(ctx)
-	}()
-
-	// Wait for interrupt signal or server error
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	select {
-	case sig := <-sigCh:
-		slog.Info("received signal, shutting down", "signal", sig)
-	case err := <-serverErrors:
-		if err != nil {
-			slog.Error("server error", "error", err)
-		}
-	}
-
-	// Graceful shutdown
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown error", "error", err)
-		os.Exit(1)
-	}
-
-	slog.Info("shutdown complete")
+	return registry
 }
