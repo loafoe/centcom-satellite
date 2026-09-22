@@ -127,7 +127,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig) func(http.Handler) http.Han
 				w.Header().Set("RateLimit-Reset", strconv.Itoa(retrySeconds))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
-				fmt.Fprintf(w, `{"error":"rate limit exceeded","retry_after_seconds":%d}`, retrySeconds)
+				_, _ = fmt.Fprintf(w, `{"error":"rate limit exceeded","retry_after_seconds":%d}`, retrySeconds)
 				return
 			}
 
