@@ -31,7 +31,7 @@ type Payload struct {
 	// RecentEvents. Default false: these are excluded, since they're
 	// frequently transient (node churn/rebalancing, brief network jitter —
 	// see the aws-load-balancer-controller and centcom probe-timeout
-	// investigations in CLAUDE.md for the same class of noise) and were
+	// investigations in AGENT.md for the same class of noise) and were
 	// making buildSummary report "Cluster has issues" purely from
 	// len(RecentEvents) > 0 even when nothing else was actually wrong.
 	IncludeProbeWarnings bool `json:"include_probe_warnings,omitempty"`

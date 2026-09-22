@@ -41,6 +41,20 @@ The agent uses SPIFFE/SPIRE for workload identity authentication:
 
 Authentication is checked in order: mTLS → JWT-SVID. For local development, set `ALLOW_UNAUTHENTICATED=true`.
 
+### Agent-less JWT-SVID validation (no local SPIRE Agent)
+
+JWT-SVID validation only needs the issuing trust domain's JWT signing
+public keys — it does not need this satellite to have its own issued
+identity, unlike mTLS (which requires a local SPIRE Agent to attest this
+workload and issue it a rotating X.509 SVID; there's no way around that).
+Setting `SPIRE_JWT_BUNDLE_SOURCE=federation` fetches those public keys
+directly from a SPIFFE Federation Bundle Endpoint over HTTPS instead of
+the local SPIRE Workload API socket, removing the local-agent dependency
+entirely for JWT-SVID-only deployments — this is what makes ECS/Fargate
+(or any target that can't run a SPIRE Agent sidecar) viable. Requires
+`SPIRE_MTLS_ENABLED=false`; mTLS mode is unaffected either way and
+continues to require a local agent when used.
+
 ## Current Tasks
 
 ### Implemented: `pv_resize`
@@ -111,6 +125,105 @@ Deletes Karpenter NodeClaims for safe node recycling.
 
 **Safety**: Blocks deletion if `karpenter.sh/do-not-disrupt=true` annotation present (use `force=true` to override).
 
+### Implemented: Security Hub tasks
+
+Read tasks (`securityhub_list_standards`, `securityhub_get_findings`,
+`securityhub_get_findings_statistics`) retrieve Security Hub findings and
+compliance-standard status. Unlike GuardDuty, Security Hub aggregates findings
+from many products (GuardDuty, Inspector, Macie, IAM Access Analyzer, Config
+compliance checks, custom integrations) and supports a write task,
+`securityhub_update_findings`, for setting a finding's triage state.
+
+**Request** (`securityhub_update_findings`):
+```json
+{
+  "type": "securityhub_update_findings",
+  "payload": {
+    "findings": [
+      {"id": "finding-id-1", "product_arn": "arn:aws:securityhub:us-east-1:123456789012:product/aws/guardduty"}
+    ],
+    "workflow_status": "RESOLVED",
+    "note": "Remediated via automation",
+    "note_updated_by": "centcom-satellite"
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "updated 1 findings (0 unprocessed)",
+  "details": {
+    "processed": [
+      {"id": "finding-id-1", "product_arn": "arn:aws:securityhub:us-east-1:123456789012:product/aws/guardduty"}
+    ],
+    "unprocessed": []
+  }
+}
+```
+
+### Implemented: `account_info`
+
+Reports which AWS account this satellite's AWS credentials currently resolve
+to — the cross-account AssumeRole target when `AWS_ASSUME_ROLE_ARN` is set,
+otherwise the base IRSA/local account — plus the same `capabilities` block
+`cluster_info` reports (which optional task groups are enabled). Has no
+Kubernetes dependency, so it works even when this satellite isn't running
+inside (or connected to) a Kubernetes cluster at all, and is the *only*
+capabilities source on such a satellite — `cluster_info` isn't registered in
+AWS-only mode. Always registered, in both AWS-only and Kubernetes modes (see
+"AWS-only mode" below).
+
+**Request**:
+```json
+{"type": "account_info", "payload": {}}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "resolved AWS account 009160061746",
+  "details": {
+    "aws_account_id": "009160061746",
+    "aws_caller_arn": "arn:aws:sts::009160061746:assumed-role/centcom-satellite-dip-ce-k3s-eu/centcom-satellite-obs-ct",
+    "assume_role_arn": "arn:aws:iam::009160061746:role/centcom-satellite-dip-ce-k3s-eu",
+    "region": "eu-west-2",
+    "capabilities": {
+      "cloudwatch_rca": true,
+      "guardduty": true,
+      "securityhub": true,
+      "securityhub_write": false
+    }
+  }
+}
+```
+
+### AWS-only mode
+
+When `AWS_ASSUME_ROLE_ARN` is set, the satellite assumes it may not be
+running inside (or connected to) a Kubernetes cluster at all, and switches
+to **AWS-only mode**:
+
+- No Kubernetes client is created at startup (skips both in-cluster config
+  and kubeconfig fallback), and no Kubernetes control-plane task is
+  registered (`list_pods`, `pv_resize`, `workload_restart`, `get_resource`,
+  etc., and the `/logs/stream` endpoint, which returns `503`).
+- `account_info`, `dns_check`, `connectivity_test`, `http_request` (no
+  Kubernetes dependency), and the AWS data-retrieval tasks (`cw_*`,
+  `cost_explorer`, `guardduty_*`, `securityhub_*`) remain available, exactly
+  as controlled by their usual feature flags.
+- **Caller authentication via SPIFFE/SPIRE is unaffected** — AWS-only mode
+  only disables Kubernetes control-plane tasks, not authentication. SPIRE
+  setup, `/readyz`, and the auth middleware run identically in both modes.
+
+This is a one-way switch driven entirely by `AWS_ASSUME_ROLE_ARN`: unset
+(default) keeps the original Kubernetes-attached behavior; set means this
+deployment monitors a remote AWS account and nothing else. There is no
+"mixed mode" — a deployment is either attached to a local Kubernetes cluster
+or dedicated to one remote AWS account, never both.
+
 ## Configuration
 
 Environment variables:
@@ -119,9 +232,18 @@ Environment variables:
 - `ALLOW_UNAUTHENTICATED` (default: false) - Allow unauthenticated requests (dev mode only)
 - `LOG_LEVEL` (default: info) - debug, info, warn, error
 - `LOG_FORMAT` (default: json) - json, text
-- `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - OpenTelemetry collector endpoint (span export). When empty, spans are not exported but trace context is still propagated.
+- `OTEL_EXPORTER_OTLP_INSECURE` / `OTEL_EXPORTER_OTLP_TRACES_INSECURE` - set to `false` to use TLS for the OTLP exporter (default: insecure/plaintext)
 - `OTEL_SERVICE_NAME` (default: centcom-satellite) - Service name for tracing
 - `NODECLAIM_DELETE_ENABLED` (default: false) - Enable nodeclaim_delete task
+- `CLOUDWATCH_RCA_ENABLED` (default: false) - Enable CloudWatch/Cost-Explorer data-retrieval tasks (cw_list_alarms, cw_alarm_history, cw_get_metrics, cw_list_metrics, cw_describe_log_groups, cw_logs_query, cost_explorer). Requires AWS credentials via IRSA and the IAM policy in `deploy/iam-policy-cloudwatch-rca.json`.
+- `GUARDDUTY_ENABLED` (default: false) - Enable GuardDuty data-retrieval tasks (guardduty_list_detectors, guardduty_get_findings_statistics, guardduty_list_findings, guardduty_get_findings, guardduty_findings). Independently toggleable from CloudWatch RCA. Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-guardduty.json`.
+- `SECURITYHUB_ENABLED` (default: false) - Enable Security Hub data-retrieval tasks (securityhub_list_standards, securityhub_get_findings, securityhub_get_findings_statistics, securityhub_get_insight_statistics). Requires AWS credentials via IRSA and the read-only IAM policy in `deploy/iam-policy-securityhub.json`.
+- `SECURITYHUB_WRITE_ENABLED` (default: false) - Enable securityhub_update_findings (BatchUpdateFindings — sets Workflow.Status/Note). Independently toggleable from SECURITYHUB_ENABLED. Requires the write IAM policy in `deploy/iam-policy-securityhub-write.json`.
+- `AWS_ASSUME_ROLE_ARN` (default: unset) - Target IAM role ARN in a different AWS account. When set, all AWS data-retrieval/write tasks (`cw_*`, `cost_explorer`, `guardduty_*`, `securityhub_*`) operate against that remote account via STS AssumeRole, and the satellite switches to **AWS-only mode** (see "AWS-only mode" above): no Kubernetes client, no Kubernetes control-plane tasks, but SPIFFE/SPIRE authentication still applies. Unset (default) preserves the original Kubernetes-attached behavior exactly. See `deploy/iam-policy-assumerole.json` for the source-account permission the satellite's own IRSA role needs. See `deploy/iam-trust-policy-assumerole-target-example.json` for the trust policy the *target* account's role needs (outside this repo's deploy scope, but documented here to save a round trip). Misconfiguration (bad trust policy, wrong ExternalId) is caught at startup — the process exits before serving traffic rather than failing on the first task call.
+- `AWS_ASSUME_ROLE_EXTERNAL_ID` (default: unset) - Optional STS ExternalId, passed to AssumeRole. Only needed if the target role's trust policy requires one.
+- `AWS_ASSUME_ROLE_SESSION_NAME` (default: `centcom-satellite`) - STS RoleSessionName, visible in the target account's CloudTrail.
+- `AWS_ASSUME_ROLE_REGION` (default: unset) - Overrides the AWS region used for AssumeRole'd API calls. Only applies while `AWS_ASSUME_ROLE_ARN` is set — a cluster-less (AWS-only) satellite's own pod region has no necessary relationship to the target account's region, so this can't fall back to the ambient `AWS_REGION`/pod region. Never affects the base-account code path (unset `AWS_ASSUME_ROLE_ARN`). A per-request `region` in a task's payload still takes precedence over this when a task supports it.
 
 SPIRE configuration:
 - `SPIRE_ENABLED` (default: false) - Enable SPIRE authentication
@@ -131,6 +253,66 @@ SPIRE configuration:
 - `SPIRE_ALLOWED_SPIFFE_IDS` - Comma-separated list of allowed SPIFFE IDs
 - `SPIRE_JWT_ENABLED` (default: false) - Enable JWT-SVID authentication
 - `SPIRE_JWT_AUDIENCES` - Comma-separated list of expected JWT audiences (required when JWT enabled)
+- `SPIRE_JWT_BUNDLE_SOURCE` (default: `workload_api`) - `workload_api` fetches the JWT trust bundle from the local SPIRE Workload API (requires a local SPIRE Agent). `federation` fetches it from a SPIFFE Federation Bundle Endpoint instead — no local SPIRE Agent required, enabling agent-less deployment targets (e.g. ECS/Fargate) for JWT-SVID auth. Incompatible with `SPIRE_MTLS_ENABLED=true` — mTLS always requires a local agent to issue this workload its own identity, which federation mode has no way to do.
+- `SPIRE_FEDERATION_BUNDLE_ENDPOINTS` (default: unset) - Comma-separated `trustdomain=https://url` pairs, e.g. `example.org=https://spire-server.example.org/bundle`. Required, with one entry per configured trust domain, when `SPIRE_JWT_BUNDLE_SOURCE=federation`.
+- `SPIRE_FEDERATION_CA_BUNDLE_PATH` (default: unset) - Optional PEM file of root CAs to trust when fetching from `SPIRE_FEDERATION_BUNDLE_ENDPOINTS`. Unset uses the system trust store — the common case for an endpoint behind a normal ALB/ingress with a publicly-trusted certificate.
+
+## Metrics
+
+Prometheus metrics are exposed on `METRICS_PORT` (default 9090) at `/metrics`, alongside the
+standard Go runtime and process collectors. Application metrics (all prefixed `centcom_satellite_`):
+
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `http_requests_total` | counter | `method`, `path`, `status` | `path` is the matched route; unknown paths bucket to `other` |
+| `http_request_duration_seconds` | histogram | `method`, `path` | |
+| `http_requests_in_flight` | gauge | — | concurrent requests being served |
+| `tasks_total` | counter | `type`, `status` | `status`: `success` / `failure` / `error` |
+| `task_duration_seconds` | histogram | `type` | |
+| `auth_attempts_total` | counter | `method`, `result` | `method`: `mtls`/`jwt`/`dev`/`none`; `result`: `success`/`rejected`/`unauthenticated` |
+| `k8s_requests_total` | counter | `verb`, `resource`, `status_class` | recorded via a client-go transport wrapper; covers all tasks |
+| `k8s_request_duration_seconds` | histogram | `verb`, `resource`, `status_class` | `resource` bucketed to a known allow-list, else `other` |
+| `log_streams_active` | gauge | — | active `/logs/stream` SSE connections |
+| `log_stream_duration_seconds` | histogram | — | wide buckets (1s–30m) for long-lived streams |
+| `log_stream_lines_total` | counter | — | lines streamed to clients |
+| `build_info` | gauge | `version`, `goversion` | constant `1`; build provenance |
+
+Cardinality is bounded by normalizing the HTTP `path` label (`internal/server/middleware.go`)
+and the k8s `resource` label (`internal/k8s/metrics_transport.go`). All metrics live in
+`internal/observability/metrics.go`. K8s API instrumentation is installed via
+`rest.Config.WrapTransport` in `internal/k8s/client.go`, so new tasks are covered automatically.
+
+## Tracing & End-to-End Traceability
+
+centcom-satellite participates in distributed traces that originate in **pico-mcp** (the
+caller). The full chain is: `pico-mcp → [HTTP /task] → centcom-satellite → [client-go] → kube-apiserver`,
+all stitched into one trace via **W3C Trace Context** (`traceparent`/`tracestate`)
+plus baggage.
+
+Note: centcom-satellite is a plain HTTP/JSON webhook receiver, **not** an MCP server, so
+the MCP-specific instrumentation conventions (e.g. grafana's `mcpconv`, which
+encode `tools/call`/MCP method semantics) do not apply here. The relevant standard
+for this hop is W3C Trace Context over HTTP + OTel HTTP/k8s semantic conventions.
+
+**Propagation is always on.** The global OTel propagator is installed in
+`SetupTracing` even when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset — so trace context
+flows through centcom-satellite regardless of whether this process exports its own spans.
+Span export (to the OTLP collector) is the only thing gated by the endpoint.
+
+Instrumentation points:
+
+| Hop | Mechanism | File |
+|-----|-----------|------|
+| Inbound HTTP | `otelhttp.NewHandler` server span; extracts `traceparent` from pico-mcp; span named `METHOD <route>` (normalized, low-cardinality) | `internal/server/middleware.go` (`TracingMiddleware`) |
+| Task dispatch | child span `task.execute <type>` with `centcom_satellite.task.type` / `centcom_satellite.task.success` attributes; `RecordError` + Error status on failure. Payloads are **not** recorded (may hold secrets) | `internal/server/handlers.go` |
+| Outbound k8s API | `otelhttp.NewTransport` wraps the metrics transport; creates `k8s <verb> <resource>` child spans and injects `traceparent` into every client-go request | `internal/k8s/metrics_transport.go` (`wrapTransport`) |
+| Logs | slog handler injects `trace_id`/`span_id` from context into records (`*Context` log calls); access logs include them too | `internal/observability/logging.go`, `internal/server/middleware.go` |
+
+The OTLP exporter uses `ParentBased(AlwaysSample)` so sampling decisions made
+upstream by pico-mcp are honoured. `RecordError`/span helpers live in
+`internal/observability/tracing.go`. Because k8s tracing rides on
+`rest.Config.WrapTransport` (same place as the metrics transport), **new tasks are
+traced automatically** — no per-task wiring needed.
 
 ## Build & Deploy
 
@@ -219,8 +401,8 @@ curl -X POST http://localhost:8080/task \
 
 ## Current Version
 
-- **centcom-satellite**: v0.32.0
-- **Helm chart**: 0.21.0
+- **centcom-satellite**: v0.62.0
+- **Helm chart**: 0.42.0
 
 ## Key Dependencies
 
