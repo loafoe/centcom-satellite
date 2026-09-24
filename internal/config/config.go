@@ -180,10 +180,10 @@ type FeaturesConfig struct {
 
 // PodResizeConfig holds pod_resize task configuration.
 type PodResizeConfig struct {
-	// PercentageCap is the maximum percentage increase allowed (default 50).
-	PercentageCap int
-	// AbsoluteCap is the maximum memory value allowed (default "8Gi").
-	AbsoluteCap string
+	// MemoryAbsoluteCap is the maximum memory value allowed per resize call (default "20Gi").
+	MemoryAbsoluteCap string
+	// CPUAbsoluteCap is the maximum CPU value allowed per resize call (default "2").
+	CPUAbsoluteCap string
 	// ShrinkBuffer is the safety buffer percentage above current usage when reducing limits (default 20).
 	ShrinkBuffer int
 }
@@ -225,9 +225,9 @@ func Load() (*Config, error) {
 			PodEvictEnabled:        getEnvBool("POD_EVICT_ENABLED", false),
 			PodResizeEnabled:       getEnvBool("POD_RESIZE_ENABLED", false),
 			PodResizeConfig: PodResizeConfig{
-				PercentageCap: getEnvInt("POD_RESIZE_PERCENTAGE_CAP", 50),
-				AbsoluteCap:   getEnvString("POD_RESIZE_ABSOLUTE_CAP", "8Gi"),
-				ShrinkBuffer:  getEnvInt("POD_RESIZE_SHRINK_BUFFER", 20),
+				MemoryAbsoluteCap: getEnvString("POD_RESIZE_MEMORY_ABSOLUTE_CAP", "20Gi"),
+				CPUAbsoluteCap:    getEnvString("POD_RESIZE_CPU_ABSOLUTE_CAP", "2"),
+				ShrinkBuffer:      getEnvInt("POD_RESIZE_SHRINK_BUFFER", 20),
 			},
 			NodeclaimDeleteEnabled:  getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:           getEnvBool("FEATURES_ARGOCD", false),
