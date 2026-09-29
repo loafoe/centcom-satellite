@@ -302,19 +302,19 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 			slog.Info("get_resource/list_resources tasks enabled", "denied_kinds", len(cfg.Features.ResourceAccessDeny)+1)
 		}
 
-		// helm_application_apply is the write-path counterpart to
-		// get_resource/list_resources for the dip.io HelmApplication
-		// composite - independently toggleable read (apply/create-or-update)
-		// vs write (delete/sync) capability, matching the chart's own
-		// features.helmApplication/features.helmApplicationWrite RBAC split.
-		if cfg.Features.HelmApplicationEnabled {
+		// helm_application_apply/_delete/_sync are all write operations -
+		// apply can create or silently modify any HelmApplication, so it is
+		// not gated any more leniently than delete/sync (an earlier version
+		// of this code gated apply separately under an always-on flag on
+		// the mistaken premise that optimistic concurrency made it safe by
+		// default - fixed in code review). All three require the same
+		// flag, matching the chart's single features.helmApplicationWrite
+		// RBAC gate.
+		if cfg.Features.HelmApplicationWriteEnabled {
 			registry.Register(helm_application.NewApply(k8sClient.DynamicClient))
-			slog.Info("helm_application_apply task enabled")
-			if cfg.Features.HelmApplicationWriteEnabled {
-				registry.Register(helm_application.NewDelete(k8sClient.DynamicClient))
-				registry.Register(helm_application.NewSync(k8sClient.DynamicClient))
-				slog.Info("helm_application_delete/helm_application_sync tasks enabled")
-			}
+			registry.Register(helm_application.NewDelete(k8sClient.DynamicClient))
+			registry.Register(helm_application.NewSync(k8sClient.DynamicClient))
+			slog.Info("helm_application_apply/_delete/_sync tasks enabled")
 		}
 
 		// Optional: workload_restart task (write operation)

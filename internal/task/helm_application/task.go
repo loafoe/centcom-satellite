@@ -26,11 +26,20 @@ const ApplyTaskName = "helm_application_apply"
 
 const helmApplicationsResource = "helmapplications"
 
-// ApplyPayload is the wire payload for helm_application_apply. Resource
-// Version is optional: empty means "create, or blindly overwrite spec on
-// update" (used by the free-form deploy path when the caller never read an
-// existing object); non-empty enforces optimistic concurrency against the
-// caller's last-read ResourceVersion.
+// ApplyPayload is the wire payload for helm_application_apply.
+//
+// CreateOnly, when true, refuses instead of updating if the object already
+// exists - centcom's deploy_application sets this (a fresh deploy has no
+// business silently replacing something with the same name), while
+// update_application leaves it false and instead supplies ResourceVersion.
+//
+// ResourceVersion, when set, enforces optimistic concurrency against the
+// caller's last-read value, AND requires the object to already exist (a
+// caller who read a ResourceVersion has necessarily seen the object; if
+// it's now missing, that's a real "someone deleted it" condition to
+// surface, not ground to silently create a new one under the same name).
+// Empty means create-or-blind-update, used by the free-form path when the
+// caller never read an existing object.
 type ApplyPayload struct {
 	APIVersion      string            `json:"apiVersion"`
 	Name            string            `json:"name"`
@@ -38,6 +47,7 @@ type ApplyPayload struct {
 	Spec            map[string]any    `json:"spec"`
 	Labels          map[string]string `json:"labels,omitempty"`
 	ResourceVersion string            `json:"resourceVersion,omitempty"`
+	CreateOnly      bool              `json:"createOnly,omitempty"`
 	DryRun          bool              `json:"dryRun,omitempty"`
 }
 
@@ -76,10 +86,17 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 
 	existing, getErr := client.Get(ctx, p.Name, metav1.GetOptions{})
 	if getErr != nil && !apierrors.IsNotFound(getErr) {
-		return nil, getErr
+		return task.NewErrorResult(getErr.Error()), nil
 	}
 
 	if existing == nil {
+		if p.ResourceVersion != "" {
+			// The caller read a ResourceVersion, so they necessarily saw
+			// the object before - if it's gone now, that's a real
+			// "someone deleted it out from under you" condition to
+			// surface, not grounds to silently create a new one.
+			return task.NewErrorResult("HelmApplication " + p.Name + " not found (it existed when you read its resourceVersion, but has since been deleted)"), nil
+		}
 		obj := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": p.APIVersion,
 			"kind":       "HelmApplication",
@@ -94,24 +111,42 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 		}
 		created, err := client.Create(ctx, obj, metav1.CreateOptions{DryRun: dryRun})
 		if err != nil {
-			return nil, err
+			return task.NewErrorResult(err.Error()), nil
 		}
 		return task.NewSuccessResultWithDetails("created", get_resource.ExtractSummary(created, true)), nil
 	}
 
-	if p.ResourceVersion != "" && existing.GetResourceVersion() != p.ResourceVersion {
-		return nil, &ConflictError{Name: p.Name}
+	if p.CreateOnly {
+		return task.NewErrorResult("HelmApplication " + p.Name + " already exists (use update_application to modify it)"), nil
 	}
-	existing.Object["spec"] = p.Spec
+	if p.ResourceVersion != "" && existing.GetResourceVersion() != p.ResourceVersion {
+		return task.NewErrorResult((&ConflictError{Name: p.Name}).Error()), nil
+	}
+
+	// Merge only the caller-supplied top-level spec keys into the existing
+	// spec, rather than replacing it wholesale - centcom's spec builder can
+	// only ever express source/chart/valuesObject, never
+	// destination/syncPolicy/project/spec.crossplane.*, so a wholesale
+	// replace would silently drop those fields on every update (e.g.
+	// retargeting a real composite's destination.namespace to whatever the
+	// composite's own namespace happens to be).
+	existingSpec, _, _ := unstructured.NestedMap(existing.Object, "spec")
+	if existingSpec == nil {
+		existingSpec = map[string]any{}
+	}
+	for k, v := range p.Spec {
+		existingSpec[k] = v
+	}
+	existing.Object["spec"] = existingSpec
 	if p.Labels != nil {
 		existing.SetLabels(p.Labels)
 	}
 	updated, err := client.Update(ctx, existing, metav1.UpdateOptions{DryRun: dryRun})
 	if err != nil {
 		if apierrors.IsConflict(err) {
-			return nil, &ConflictError{Name: p.Name}
+			return task.NewErrorResult((&ConflictError{Name: p.Name}).Error()), nil
 		}
-		return nil, err
+		return task.NewErrorResult(err.Error()), nil
 	}
 	return task.NewSuccessResultWithDetails("updated", get_resource.ExtractSummary(updated, true)), nil
 }

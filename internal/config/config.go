@@ -101,22 +101,18 @@ type FeaturesConfig struct {
 	// to disable.
 	GetResourceEnabled bool
 
-	// HelmApplicationEnabled gates the helm_application_apply task
-	// (create-or-update). This is the write-side counterpart to the
-	// dip.io/helmapplications RBAC now shipped by chart default (see
-	// centcom-satellite chart 0.33.0) — that RBAC only grants read verbs by
-	// default, so this flag alone does not imply write access; it must be
-	// paired with HelmApplicationWriteEnabled below for delete/sync, and
-	// with the chart's own features.helmApplicationWrite for the write RBAC
-	// verbs to exist at all. Enabled by default like GetResourceEnabled,
-	// since create/update go through the same optimistic-concurrency-
-	// checked path regardless.
-	HelmApplicationEnabled bool
-
-	// HelmApplicationWriteEnabled additionally gates helm_application_delete
-	// and helm_application_sync — independently toggleable from
-	// HelmApplicationEnabled, same pairing pattern as
-	// SecurityHubEnabled/SecurityHubWriteEnabled below. Disabled by default.
+	// HelmApplicationWriteEnabled gates all three write tasks -
+	// helm_application_apply (create-or-update), helm_application_delete,
+	// and helm_application_sync. Corrected in code review: an earlier
+	// version of this code gated apply under a separate, always-true
+	// "HelmApplicationEnabled" flag on the mistaken premise that
+	// create-or-update was somehow less sensitive than delete/sync because
+	// it's optimistic-concurrency-checked - but a concurrency control is
+	// not an authorization control, and apply is the single most powerful
+	// of the three (it can create or silently modify any HelmApplication).
+	// All three now require the same flag, matching the chart's own single
+	// features.helmApplicationWrite RBAC gate. Disabled by default, like
+	// every other write-capable feature in this file.
 	HelmApplicationWriteEnabled bool
 
 	// ResourceAccessDeny is an operator-configured list of additional
@@ -237,7 +233,6 @@ func Load() (*Config, error) {
 		},
 		Features: FeaturesConfig{
 			GetResourceEnabled:          getEnvBool("GET_RESOURCE_ENABLED", true),
-			HelmApplicationEnabled:      getEnvBool("HELM_APPLICATION_ENABLED", true),
 			HelmApplicationWriteEnabled: getEnvBool("HELM_APPLICATION_WRITE_ENABLED", false),
 			ResourceAccessDeny:          resourceAccessDeny,
 			WorkloadRestartEnabled:      getEnvBool("WORKLOAD_RESTART_ENABLED", false),

@@ -3,7 +3,6 @@ package helm_application
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,9 +96,10 @@ func TestApplyTask_UpdateWithStaleResourceVersionConflicts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = task.Execute(context.Background(), payload)
-	var conflictErr *ConflictError
-	require.True(t, errors.As(err, &conflictErr), "expected a ConflictError, got %v", err)
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err, "the conflict must be encoded in the Result, not returned as a Go error - a raw error is turned into a generic 500 by the satellite's HTTP handler, losing this message entirely")
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "modified since")
 }
 
 // TestApplyTask_DryRunOptionIsBuiltCorrectly unit-tests dryRunOptions
@@ -148,6 +148,97 @@ func TestApplyTask_MissingRequiredFields(t *testing.T) {
 	assert.Contains(t, result.Error, "required")
 }
 
+// TestApplyTask_CreateOnlyRefusesExistingObject is the regression test for
+// a real bug found in code review: deploy_application (which never
+// supplies a ResourceVersion, and previously had no way to say "this must
+// be new") could silently replace ANY existing HelmApplication's spec -
+// including live infrastructure like dex-issuer - if the caller happened
+// to reuse an existing name. CreateOnly makes that explicit and refuses
+// instead of falling through to Update.
+func TestApplyTask_CreateOnlyRefusesExistingObject(t *testing.T) {
+	dc := newFakeClient(existingHelmApp("dex-issuer", "argocd", "rv-1"))
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "dex-issuer", Namespace: "argocd", CreateOnly: true,
+		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://langfuse", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success, "must refuse rather than silently overwrite an existing object")
+	assert.Contains(t, result.Error, "already exists")
+
+	obj, getErr := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "dex-issuer", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	repoURL, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "repoURL")
+	assert.Equal(t, "oci://old", repoURL, "the existing object must be untouched")
+}
+
+// TestApplyTask_UpdatePreservesFieldsNotInCallerSpec is the regression test
+// for a real bug found in code review: update replaced the ENTIRE spec
+// wholesale with only the caller's source/values, silently dropping fields
+// centcom's own spec builder can't even express - destination, syncPolicy,
+// project, spec.crossplane.* - which would retarget or break a live
+// composite like dex-issuer (e.g. dropping destination.namespace would
+// retarget it into the composite's own namespace, where default syncPolicy
+// has prune:true).
+func TestApplyTask_UpdatePreservesFieldsNotInCallerSpec(t *testing.T) {
+	obj := existingHelmApp("dex-issuer", "argocd", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source":      map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0"},
+		"destination": map[string]any{"namespace": "dex-system"},
+		"project":     "default",
+		"syncPolicy":  map[string]any{"automated": map[string]any{"prune": false}},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "dex-issuer", Namespace: "argocd",
+		ResourceVersion: "rv-1",
+		Spec:            map[string]any{"source": map[string]any{"repoURL": "oci://new", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	updated, getErr := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "dex-issuer", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	repoURL, _, _ := unstructured.NestedString(updated.Object, "spec", "source", "repoURL")
+	assert.Equal(t, "oci://new", repoURL, "the caller-supplied field must still be updated")
+	namespace, found, _ := unstructured.NestedString(updated.Object, "spec", "destination", "namespace")
+	assert.True(t, found, "destination.namespace must be preserved, not dropped")
+	assert.Equal(t, "dex-system", namespace)
+	project, found, _ := unstructured.NestedString(updated.Object, "spec", "project")
+	assert.True(t, found, "project must be preserved, not dropped")
+	assert.Equal(t, "default", project)
+}
+
+// TestApplyTask_UpdateOnMissingObjectReturnsNotFound is the regression test
+// for finding #12: a caller who supplies a ResourceVersion (meaning they
+// read the object before) but the object no longer exists must get a clear
+// not-found error, not have apply silently fall through to Create - that
+// would hide the fact that someone deleted it out from under the caller.
+func TestApplyTask_UpdateOnMissingObjectReturnsNotFound(t *testing.T) {
+	dc := newFakeClient()
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "my-app", Namespace: "argocd", ResourceVersion: "rv-1",
+		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "not found")
+}
+
 func TestDeleteTask_DeletesCleanly(t *testing.T) {
 	dc := newFakeClient(existingHelmApp("my-app", "argocd", "rv-1"))
 	task := NewDelete(dc)
@@ -172,6 +263,46 @@ func TestDeleteTask_AlreadyDeletedIsSuccess(t *testing.T) {
 	require.True(t, result.Success)
 }
 
+// TestDeleteTask_RefusesToDeleteBootstrap is a hard safety guardrail, not a
+// bug fix: the "bootstrap" HelmApplication on dip-ce-k3s-eu (and by
+// convention, any cluster following the same pattern) is the root
+// composite that bootstraps core cluster infrastructure - deleting it
+// could cascade-destroy the cluster. This check lives in the satellite
+// task itself (not just an admin gate in centcom) so it can't be bypassed
+// by any caller of this task, including the unauthenticated call_task path
+// (see Critical #4 in the Phase 2 review) - defense in depth, the same
+// posture as the Secret denylist in get_resource.
+func TestDeleteTask_RefusesToDeleteBootstrap(t *testing.T) {
+	dc := newFakeClient(existingHelmApp("bootstrap", "argocd", "rv-1"))
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "bootstrap", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success, "must refuse to delete the bootstrap HelmApplication")
+	assert.Contains(t, result.Error, "bootstrap")
+
+	_, getErr := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "bootstrap", metav1.GetOptions{})
+	require.NoError(t, getErr, "bootstrap must still exist - the delete must never reach the API server")
+}
+
+// TestDeleteTask_RefusesToDeleteBootstrapRegardlessOfNamespace confirms the
+// guardrail is name-based, not scoped to one namespace - "bootstrap" is
+// protected everywhere, since a satellite may have it in any namespace.
+func TestDeleteTask_RefusesToDeleteBootstrapRegardlessOfNamespace(t *testing.T) {
+	dc := newFakeClient(existingHelmApp("bootstrap", "some-other-ns", "rv-1"))
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "bootstrap", "namespace": "some-other-ns"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+}
+
 func TestDeleteTask_ReportsStuckFinalizer(t *testing.T) {
 	// k8s.io/client-go/dynamic/fake's ObjectTracker does not implement
 	// finalizer-aware delete blocking the way a real apiserver does (Delete
@@ -192,10 +323,39 @@ func TestDeleteTask_ReportsStuckFinalizer(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
 	require.NoError(t, err)
 
-	_, err = task.Execute(context.Background(), payload)
-	var stuck *StuckDeletingError
-	require.True(t, errors.As(err, &stuck), "expected a StuckDeletingError, got %v", err)
-	assert.Contains(t, stuck.Finalizers, "resources-finalizer.argocd.argoproj.io")
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err, "the error must be encoded in the Result, not returned as a Go error - a raw error is turned into a generic 500 by the satellite's HTTP handler, losing this message entirely")
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "resources-finalizer.argocd.argoproj.io")
+}
+
+// TestDeleteTask_CrossplaneOwnFinalizerAloneIsNotStuck is the regression
+// test for a real bug found in code review: every live HelmApplication
+// composite carries Crossplane's own "composite.apiextensions.crossplane.io"
+// finalizer as a normal part of its lifecycle (confirmed live on
+// dip-ce-k3s-eu's bootstrap/cloudnative-pg-operator/dex-issuer composites)
+// - only the specific, forbidden "resources-finalizer.argocd.argoproj.io"
+// (the guardrail documented in crossplane-compositions' README) indicates a
+// genuinely stuck delete. Before this fix, ANY finalizer at all - including
+// Crossplane's own, present on every single real delete - was reported as
+// stuck, making every successful delete look like a failure.
+func TestDeleteTask_CrossplaneOwnFinalizerAloneIsNotStuck(t *testing.T) {
+	obj := existingHelmApp("my-app", "argocd", "rv-1")
+	obj.SetFinalizers([]string{"composite.apiextensions.crossplane.io"})
+	now := metav1.Now()
+	obj.SetDeletionTimestamp(&now)
+	dc := newFakeClient(obj)
+	dc.PrependReactor("delete", "helmapplications", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success, "Crossplane's own composite finalizer alone must not be reported as stuck - it's present on every legitimate in-progress delete")
 }
 
 func TestSyncTask_PatchesArgoCDOperationAnnotation(t *testing.T) {
@@ -211,6 +371,10 @@ func TestSyncTask_PatchesArgoCDOperationAnnotation(t *testing.T) {
 
 	obj, err := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "my-app", metav1.GetOptions{})
 	require.NoError(t, err)
-	_, found, _ := unstructured.NestedString(obj.Object, "metadata", "annotations", "argocd.argoproj.io/refresh")
-	assert.True(t, found, "expected the refresh annotation to be set")
+	value, found, _ := unstructured.NestedString(obj.Object, "metadata", "annotations", "argocd.argoproj.io/refresh")
+	require.True(t, found, "expected the refresh annotation to be set")
+	// "hard" is the value ArgoCD's own convention actually treats as a
+	// hard-refresh trigger - an arbitrary timestamp value (the original
+	// implementation) is not documented to trigger anything.
+	assert.Equal(t, "hard", value)
 }
