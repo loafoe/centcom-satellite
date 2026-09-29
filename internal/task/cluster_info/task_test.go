@@ -1,10 +1,14 @@
 package cluster_info
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	discoveryfake "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type fakeResourceLister struct {
@@ -57,5 +61,57 @@ func TestDiscoverHelmApplicationVersion_FalseWhenGetResourceDisabled(t *testing.
 	supported, version := discoverHelmApplicationVersion(fake, false)
 	if supported || version != "" {
 		t.Fatalf("got supported=%v version=%q, want false/\"\" when get_resource is disabled", supported, version)
+	}
+}
+
+// TestExecute_DiscoversHelmApplicationLivePerCall proves the discovery is
+// genuinely live per Execute() call, not baked into the static
+// WithCapabilities snapshot taken once at construction - if someone moved
+// the call into New()/WithCapabilities, or swapped in a cached discovery
+// client, this test (unlike the pure discoverHelmApplicationVersion unit
+// tests above) would catch it: the fake clientset's discovery resources are
+// mutated *between* two Execute() calls on the same *Task.
+func TestExecute_DiscoversHelmApplicationLivePerCall(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	fakeDiscovery, ok := clientset.Discovery().(*discoveryfake.FakeDiscovery)
+	if !ok {
+		t.Fatal("expected clientset.Discovery() to be *discoveryfake.FakeDiscovery")
+	}
+
+	task := New(clientset).WithCapabilities(Capabilities{GetResource: true})
+
+	// First call: CRD not yet installed.
+	fakeDiscovery.Resources = []*metav1.APIResourceList{}
+	result1, err := task.Execute(context.Background(), json.RawMessage("{}"))
+	if err != nil {
+		t.Fatalf("Execute (before CRD installed): %v", err)
+	}
+	ci1, ok := result1.Details.(*ClusterInfo)
+	if !ok {
+		t.Fatalf("expected result1.Details to be *ClusterInfo, got %T", result1.Details)
+	}
+	if ci1.Capabilities.HelmApplication {
+		t.Fatal("expected HelmApplication=false before the CRD is installed")
+	}
+
+	// Simulate the CRD being installed on the live cluster after this
+	// process started, with no restart - the exact scenario a
+	// startup-time-only snapshot would get wrong forever.
+	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "dip.io/v1alpha1", APIResources: []metav1.APIResource{{Kind: "HelmApplication"}}},
+	}
+	result2, err := task.Execute(context.Background(), json.RawMessage("{}"))
+	if err != nil {
+		t.Fatalf("Execute (after CRD installed): %v", err)
+	}
+	ci2, ok := result2.Details.(*ClusterInfo)
+	if !ok {
+		t.Fatalf("expected result2.Details to be *ClusterInfo, got %T", result2.Details)
+	}
+	if !ci2.Capabilities.HelmApplication {
+		t.Fatal("expected HelmApplication=true immediately after the CRD is installed, with no restart - discovery must be live per call")
+	}
+	if ci2.Capabilities.HelmApplicationVersion != "v1alpha1" {
+		t.Fatalf("expected version v1alpha1, got %q", ci2.Capabilities.HelmApplicationVersion)
 	}
 }
