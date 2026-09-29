@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var gvr = schema.GroupVersionResource{Group: "dip.io", Version: "v1", Resource: "helmapplications"}
@@ -145,4 +146,71 @@ func TestApplyTask_MissingRequiredFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Error, "required")
+}
+
+func TestDeleteTask_DeletesCleanly(t *testing.T) {
+	dc := newFakeClient(existingHelmApp("my-app", "argocd", "rv-1"))
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+}
+
+func TestDeleteTask_AlreadyDeletedIsSuccess(t *testing.T) {
+	dc := newFakeClient()
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+}
+
+func TestDeleteTask_ReportsStuckFinalizer(t *testing.T) {
+	// k8s.io/client-go/dynamic/fake's ObjectTracker does not implement
+	// finalizer-aware delete blocking the way a real apiserver does (Delete
+	// on an object with finalizers just removes it outright) - a
+	// PrependReactor simulates the real behavior: a "delete" against an
+	// object carrying finalizers marks it terminating but does not remove
+	// it, exactly what this task's own Get-after-Delete check relies on.
+	obj := existingHelmApp("my-app", "argocd", "rv-1")
+	obj.SetFinalizers([]string{"resources-finalizer.argocd.argoproj.io"})
+	now := metav1.Now()
+	obj.SetDeletionTimestamp(&now)
+	dc := newFakeClient(obj)
+	dc.PrependReactor("delete", "helmapplications", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // handled: pretend the delete call succeeded, but leave the tracker's copy untouched.
+	})
+	task := NewDelete(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	_, err = task.Execute(context.Background(), payload)
+	var stuck *StuckDeletingError
+	require.True(t, errors.As(err, &stuck), "expected a StuckDeletingError, got %v", err)
+	assert.Contains(t, stuck.Finalizers, "resources-finalizer.argocd.argoproj.io")
+}
+
+func TestSyncTask_PatchesArgoCDOperationAnnotation(t *testing.T) {
+	dc := newFakeClient(existingHelmApp("my-app", "argocd", "rv-1"))
+	task := NewSync(dc)
+
+	payload, err := json.Marshal(map[string]any{"apiVersion": "dip.io/v1", "name": "my-app", "namespace": "argocd"})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	obj, err := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "my-app", metav1.GetOptions{})
+	require.NoError(t, err)
+	_, found, _ := unstructured.NestedString(obj.Object, "metadata", "annotations", "argocd.argoproj.io/refresh")
+	assert.True(t, found, "expected the refresh annotation to be set")
 }

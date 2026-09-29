@@ -38,6 +38,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/guardduty_get_findings_statistics"
 	"github.com/loafoe/centcom-satellite/internal/task/guardduty_list_detectors"
 	"github.com/loafoe/centcom-satellite/internal/task/guardduty_list_findings"
+	"github.com/loafoe/centcom-satellite/internal/task/helm_application"
 	"github.com/loafoe/centcom-satellite/internal/task/http_request"
 	"github.com/loafoe/centcom-satellite/internal/task/list_argocd_applications"
 	"github.com/loafoe/centcom-satellite/internal/task/list_configmaps"
@@ -299,6 +300,21 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 			registry.Register(get_resource.New(k8sClient.DynamicClient, k8sClient.RESTMapper, denylist))
 			registry.Register(list_resources.New(k8sClient.DynamicClient, k8sClient.RESTMapper, denylist))
 			slog.Info("get_resource/list_resources tasks enabled", "denied_kinds", len(cfg.Features.ResourceAccessDeny)+1)
+		}
+
+		// helm_application_apply is the write-path counterpart to
+		// get_resource/list_resources for the dip.io HelmApplication
+		// composite - independently toggleable read (apply/create-or-update)
+		// vs write (delete/sync) capability, matching the chart's own
+		// features.helmApplication/features.helmApplicationWrite RBAC split.
+		if cfg.Features.HelmApplicationEnabled {
+			registry.Register(helm_application.NewApply(k8sClient.DynamicClient))
+			slog.Info("helm_application_apply task enabled")
+			if cfg.Features.HelmApplicationWriteEnabled {
+				registry.Register(helm_application.NewDelete(k8sClient.DynamicClient))
+				registry.Register(helm_application.NewSync(k8sClient.DynamicClient))
+				slog.Info("helm_application_delete/helm_application_sync tasks enabled")
+			}
 		}
 
 		// Optional: workload_restart task (write operation)

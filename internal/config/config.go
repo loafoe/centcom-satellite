@@ -101,6 +101,24 @@ type FeaturesConfig struct {
 	// to disable.
 	GetResourceEnabled bool
 
+	// HelmApplicationEnabled gates the helm_application_apply task
+	// (create-or-update). This is the write-side counterpart to the
+	// dip.io/helmapplications RBAC now shipped by chart default (see
+	// centcom-satellite chart 0.33.0) — that RBAC only grants read verbs by
+	// default, so this flag alone does not imply write access; it must be
+	// paired with HelmApplicationWriteEnabled below for delete/sync, and
+	// with the chart's own features.helmApplicationWrite for the write RBAC
+	// verbs to exist at all. Enabled by default like GetResourceEnabled,
+	// since create/update go through the same optimistic-concurrency-
+	// checked path regardless.
+	HelmApplicationEnabled bool
+
+	// HelmApplicationWriteEnabled additionally gates helm_application_delete
+	// and helm_application_sync — independently toggleable from
+	// HelmApplicationEnabled, same pairing pattern as
+	// SecurityHubEnabled/SecurityHubWriteEnabled below. Disabled by default.
+	HelmApplicationWriteEnabled bool
+
 	// ResourceAccessDeny is an operator-configured list of additional
 	// group+kind pairs get_resource refuses to read, on top of the
 	// non-negotiable default (Secret) - see
@@ -218,12 +236,14 @@ func Load() (*Config, error) {
 			},
 		},
 		Features: FeaturesConfig{
-			GetResourceEnabled:     getEnvBool("GET_RESOURCE_ENABLED", true),
-			ResourceAccessDeny:     resourceAccessDeny,
-			WorkloadRestartEnabled: getEnvBool("WORKLOAD_RESTART_ENABLED", false),
-			WorkloadScaleEnabled:   getEnvBool("WORKLOAD_SCALE_ENABLED", false),
-			PodEvictEnabled:        getEnvBool("POD_EVICT_ENABLED", false),
-			PodResizeEnabled:       getEnvBool("POD_RESIZE_ENABLED", false),
+			GetResourceEnabled:          getEnvBool("GET_RESOURCE_ENABLED", true),
+			HelmApplicationEnabled:      getEnvBool("HELM_APPLICATION_ENABLED", true),
+			HelmApplicationWriteEnabled: getEnvBool("HELM_APPLICATION_WRITE_ENABLED", false),
+			ResourceAccessDeny:          resourceAccessDeny,
+			WorkloadRestartEnabled:      getEnvBool("WORKLOAD_RESTART_ENABLED", false),
+			WorkloadScaleEnabled:        getEnvBool("WORKLOAD_SCALE_ENABLED", false),
+			PodEvictEnabled:             getEnvBool("POD_EVICT_ENABLED", false),
+			PodResizeEnabled:            getEnvBool("POD_RESIZE_ENABLED", false),
 			PodResizeConfig: PodResizeConfig{
 				MemoryAbsoluteCap: getEnvString("POD_RESIZE_MEMORY_ABSOLUTE_CAP", "20Gi"),
 				CPUAbsoluteCap:    getEnvString("POD_RESIZE_CPU_ABSOLUTE_CAP", "2"),
