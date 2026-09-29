@@ -44,6 +44,45 @@ type Capabilities struct {
 	GuardDuty        bool `json:"guardduty"`
 	SecurityHub      bool `json:"securityhub"`
 	SecurityHubWrite bool `json:"securityhub_write"`
+	// HelmApplication and HelmApplicationVersion are deliberately NOT set via
+	// WithCapabilities like the fields above — they're computed live on every
+	// Execute() call (see discoverHelmApplicationVersion) because whether the
+	// CRD is installed is real cluster state that can change after this
+	// process started, unlike the other flags which just mirror static
+	// per-process config.
+	HelmApplication        bool   `json:"helm_application"`
+	HelmApplicationVersion string `json:"helm_application_version,omitempty"`
+}
+
+// resourceLister is the narrow slice of discovery.DiscoveryInterface that
+// discoverHelmApplicationVersion needs — kept narrow so tests can fake it
+// without implementing the full (large) DiscoveryInterface.
+type resourceLister interface {
+	ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error)
+}
+
+// discoverHelmApplicationVersion performs a live discovery call (never a
+// cached/startup-time snapshot) to determine whether the dip.io
+// HelmApplication CRD is currently served, and which version. It reports
+// unsupported when getResourceEnabled is false even if the CRD is present,
+// since the Applications read path depends on the get_resource/list_resources
+// tasks, which are registered independently of RBAC/CRD presence.
+func discoverHelmApplicationVersion(dc resourceLister, getResourceEnabled bool) (supported bool, version string) {
+	if !getResourceEnabled {
+		return false, ""
+	}
+	for _, v := range []string{"v1", "v1alpha1"} {
+		list, err := dc.ServerResourcesForGroupVersion("dip.io/" + v)
+		if err != nil {
+			continue
+		}
+		for _, r := range list.APIResources {
+			if r.Kind == "HelmApplication" {
+				return true, v
+			}
+		}
+	}
+	return false, ""
 }
 
 // VersionInfo contains Kubernetes version details.
@@ -158,6 +197,8 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	}
 	info.Namespaces = len(namespaces.Items)
 	info.Capabilities = t.capabilities
+	info.Capabilities.HelmApplication, info.Capabilities.HelmApplicationVersion =
+		discoverHelmApplicationVersion(t.discoveryClient, t.capabilities.GetResource)
 
 	return task.NewSuccessResultWithDetails(
 		fmt.Sprintf("Cluster running Kubernetes %s with %d nodes (%d ready)",
