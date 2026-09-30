@@ -115,3 +115,27 @@ func TestExecute_DiscoversHelmApplicationLivePerCall(t *testing.T) {
 		t.Fatalf("expected version v1alpha1, got %q", ci2.Capabilities.HelmApplicationVersion)
 	}
 }
+
+// TestExecute_ReportsHelmApplicationWriteCapability guards centcom's
+// ability to show/hide write-action buttons (Deploy/Sync/Delete) per
+// satellite: unlike HelmApplication/HelmApplicationVersion (live-discovered
+// CRD state), HelmApplicationWrite is a static passthrough of this
+// process's own config (HELM_APPLICATION_WRITE_ENABLED) - it must round-trip
+// through WithCapabilities/Execute unchanged, the same as every other
+// static capability flag (GetResource, Argocd, etc.).
+func TestExecute_ReportsHelmApplicationWriteCapability(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	task := New(clientset).WithCapabilities(Capabilities{HelmApplicationWrite: true})
+
+	result, err := task.Execute(context.Background(), json.RawMessage("{}"))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	ci, ok := result.Details.(*ClusterInfo)
+	if !ok {
+		t.Fatalf("expected result.Details to be *ClusterInfo, got %T", result.Details)
+	}
+	if !ci.Capabilities.HelmApplicationWrite {
+		t.Fatal("expected HelmApplicationWrite=true to round-trip from WithCapabilities")
+	}
+}

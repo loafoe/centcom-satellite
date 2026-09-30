@@ -52,6 +52,14 @@ type Capabilities struct {
 	// per-process config.
 	HelmApplication        bool   `json:"helm_application"`
 	HelmApplicationVersion string `json:"helm_application_version,omitempty"`
+	// HelmApplicationWrite, unlike the two fields above, IS one of the
+	// static per-process config flags set via WithCapabilities (mirrors
+	// HELM_APPLICATION_WRITE_ENABLED directly) - no live discovery needed,
+	// since whether write mode is enabled doesn't change without a
+	// restart. Lets centcom show/hide write-action buttons (Deploy/Sync/
+	// Delete) per satellite instead of only knowing whether HelmApplication
+	// read is supported.
+	HelmApplicationWrite bool `json:"helm_application_write"`
 }
 
 // resourceLister is the narrow slice of discovery.DiscoveryInterface that

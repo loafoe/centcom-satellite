@@ -156,20 +156,21 @@ func main() {
 	// and cluster_info (Kubernetes mode only) — account_info is the only
 	// capabilities source on a cluster-less (AWS-only AssumeRole) satellite.
 	capabilities := cluster_info.Capabilities{
-		WorkloadRestart:  cfg.Features.WorkloadRestartEnabled,
-		WorkloadScale:    cfg.Features.WorkloadScaleEnabled,
-		PodEvict:         cfg.Features.PodEvictEnabled,
-		PodResize:        cfg.Features.PodResizeEnabled,
-		GetResource:      cfg.Features.GetResourceEnabled,
-		NodeclaimDelete:  cfg.Features.NodeclaimDeleteEnabled,
-		Argocd:           cfg.Features.ArgocdEnabled,
-		PvResize:         cfg.Features.PvResizeEnabled,
-		AutoRemediate:    cfg.Features.AutoRemediateEnabled,
-		HttpRequest:      cfg.Features.HTTPRequestEnabled,
-		CloudWatchRCA:    cfg.Features.CloudWatchRCAEnabled,
-		GuardDuty:        cfg.Features.GuardDutyEnabled,
-		SecurityHub:      cfg.Features.SecurityHubEnabled,
-		SecurityHubWrite: cfg.Features.SecurityHubWriteEnabled,
+		WorkloadRestart:      cfg.Features.WorkloadRestartEnabled,
+		WorkloadScale:        cfg.Features.WorkloadScaleEnabled,
+		PodEvict:             cfg.Features.PodEvictEnabled,
+		PodResize:            cfg.Features.PodResizeEnabled,
+		GetResource:          cfg.Features.GetResourceEnabled,
+		NodeclaimDelete:      cfg.Features.NodeclaimDeleteEnabled,
+		Argocd:               cfg.Features.ArgocdEnabled,
+		PvResize:             cfg.Features.PvResizeEnabled,
+		AutoRemediate:        cfg.Features.AutoRemediateEnabled,
+		HttpRequest:          cfg.Features.HTTPRequestEnabled,
+		CloudWatchRCA:        cfg.Features.CloudWatchRCAEnabled,
+		GuardDuty:            cfg.Features.GuardDutyEnabled,
+		SecurityHub:          cfg.Features.SecurityHubEnabled,
+		SecurityHubWrite:     cfg.Features.SecurityHubWriteEnabled,
+		HelmApplicationWrite: cfg.Features.HelmApplicationWriteEnabled,
 	}
 
 	// Setup task registry. Extracted into registerTasks so the
