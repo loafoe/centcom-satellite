@@ -97,6 +97,9 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 			// surface, not grounds to silently create a new one.
 			return task.NewErrorResult("HelmApplication " + p.Name + " not found (it existed when you read its resourceVersion, but has since been deleted)"), nil
 		}
+		if err := validateHelmApplicationSpec(p.Spec); err != nil {
+			return task.NewErrorResult("refusing to write an invalid spec: " + err.Error()), nil
+		}
 		obj := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": p.APIVersion,
 			"kind":       "HelmApplication",
@@ -123,21 +126,25 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 		return task.NewErrorResult((&ConflictError{Name: p.Name}).Error()), nil
 	}
 
-	// Merge only the caller-supplied top-level spec keys into the existing
-	// spec, rather than replacing it wholesale - centcom's spec builder can
-	// only ever express source/chart/valuesObject, never
-	// destination/syncPolicy/project/spec.crossplane.*, so a wholesale
-	// replace would silently drop those fields on every update (e.g.
-	// retargeting a real composite's destination.namespace to whatever the
-	// composite's own namespace happens to be).
+	// Deep-merge the caller-supplied spec into the existing spec, rather
+	// than replacing it wholesale at either the top level or within a
+	// nested object like source - centcom's spec builder can only ever
+	// express a subset of source's fields at once (e.g. repoURL +
+	// targetRevision + helm.valuesObject, never chart), so a shallow,
+	// top-level-only merge silently drops sibling fields an update never
+	// meant to touch (e.g. dropping source.chart, or destination/
+	// syncPolicy/project/spec.crossplane.* on a top-level replace).
 	existingSpec, _, _ := unstructured.NestedMap(existing.Object, "spec")
 	if existingSpec == nil {
 		existingSpec = map[string]any{}
 	}
-	for k, v := range p.Spec {
-		existingSpec[k] = v
+	mergedSpec := deepMergeMap(existingSpec, p.Spec)
+
+	if err := validateHelmApplicationSpec(mergedSpec); err != nil {
+		return task.NewErrorResult("refusing to write an invalid spec: " + err.Error()), nil
 	}
-	existing.Object["spec"] = existingSpec
+
+	existing.Object["spec"] = mergedSpec
 	if p.Labels != nil {
 		existing.SetLabels(p.Labels)
 	}
@@ -149,4 +156,55 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 		return task.NewErrorResult(err.Error()), nil
 	}
 	return task.NewSuccessResultWithDetails("updated", get_resource.ExtractSummary(updated, true)), nil
+}
+
+// deepMergeMap merges overlay into base, recursing into nested
+// map[string]any values on both sides so a partial update only ever
+// touches the keys it actually names - a sibling key present in base but
+// absent from overlay is left untouched at every depth, not just the top
+// level. Non-map values (scalars, slices) in overlay replace base's value
+// at that key outright; base is not mutated.
+func deepMergeMap(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, overlayVal := range overlay {
+		baseVal, exists := merged[k]
+		if !exists {
+			merged[k] = overlayVal
+			continue
+		}
+		baseMap, baseIsMap := baseVal.(map[string]any)
+		overlayMap, overlayIsMap := overlayVal.(map[string]any)
+		if baseIsMap && overlayIsMap {
+			merged[k] = deepMergeMap(baseMap, overlayMap)
+			continue
+		}
+		merged[k] = overlayVal
+	}
+	return merged
+}
+
+// validateHelmApplicationSpec enforces the invariant ArgoCD itself requires
+// of source.repoURL and either source.path or source.chart
+// (InvalidSpecError otherwise): a spec failing this can be admitted by the
+// HelmApplication XRD (source is x-kubernetes-preserve-unknown-fields), but
+// leaves the composed Application inert. Caught here, before the write,
+// instead of discovered later as a live resource stuck in that state.
+func validateHelmApplicationSpec(spec map[string]any) error {
+	source, ok := spec["source"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	repoURL, _ := source["repoURL"].(string)
+	if repoURL == "" {
+		return nil
+	}
+	chart, _ := source["chart"].(string)
+	path, _ := source["path"].(string)
+	if chart == "" && path == "" {
+		return &InvalidSpecError{Reason: "spec.source.repoURL is set but neither spec.source.chart nor spec.source.path is present"}
+	}
+	return nil
 }

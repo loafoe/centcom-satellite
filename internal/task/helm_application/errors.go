@@ -13,6 +13,16 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("HelmApplication %q was modified since it was last read; re-fetch and retry", e.Name)
 }
 
+// InvalidSpecError indicates the merged spec fails an invariant ArgoCD
+// itself requires (see validateHelmApplicationSpec) - refused before the
+// write, rather than committed and discovered later as a live resource
+// stuck in ArgoCD's own InvalidSpecError state.
+type InvalidSpecError struct{ Reason string }
+
+func (e *InvalidSpecError) Error() string {
+	return e.Reason
+}
+
 // StuckDeletingError indicates a delete was accepted by the API server but
 // the object still carries finalizers after the check - most likely the
 // forbidden ArgoCD resources-finalizer manually added despite the

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,7 +40,7 @@ func existingHelmApp(name, namespace, resourceVersion string) *unstructured.Unst
 			"resourceVersion": resourceVersion,
 		},
 		"spec": map[string]any{
-			"source": map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0"},
+			"source": map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0", "chart": "test-chart"},
 		},
 	}}
 }
@@ -50,7 +51,7 @@ func TestApplyTask_CreatesNewResource(t *testing.T) {
 
 	payload, err := json.Marshal(ApplyPayload{
 		APIVersion: "dip.io/v1", Name: "my-app", Namespace: "argocd",
-		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0"}},
+		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0", "chart": "x"}},
 	})
 	require.NoError(t, err)
 
@@ -125,7 +126,7 @@ func TestApplyTask_DryRunSucceedsWithoutError(t *testing.T) {
 
 	payload, err := json.Marshal(ApplyPayload{
 		APIVersion: "dip.io/v1", Name: "my-app", Namespace: "argocd",
-		Spec:   map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0"}},
+		Spec:   map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0", "chart": "x"}},
 		DryRun: true,
 	})
 	require.NoError(t, err)
@@ -187,7 +188,7 @@ func TestApplyTask_CreateOnlyRefusesExistingObject(t *testing.T) {
 func TestApplyTask_UpdatePreservesFieldsNotInCallerSpec(t *testing.T) {
 	obj := existingHelmApp("dex-issuer", "argocd", "rv-1")
 	obj.Object["spec"] = map[string]any{
-		"source":      map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0"},
+		"source":      map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0", "chart": "dex"},
 		"destination": map[string]any{"namespace": "dex-system"},
 		"project":     "default",
 		"syncPolicy":  map[string]any{"automated": map[string]any{"prune": false}},
@@ -210,12 +211,72 @@ func TestApplyTask_UpdatePreservesFieldsNotInCallerSpec(t *testing.T) {
 	require.NoError(t, getErr)
 	repoURL, _, _ := unstructured.NestedString(updated.Object, "spec", "source", "repoURL")
 	assert.Equal(t, "oci://new", repoURL, "the caller-supplied field must still be updated")
+	// Regression guard: an update that only names repoURL/targetRevision
+	// inside source must not wholesale-replace source and drop chart -
+	// the exact shape of the incident this merge fix was written for
+	// (update_application dropped spec.source.chart, leaving the app in
+	// ArgoCD's InvalidSpecError state).
+	chart, found, _ := unstructured.NestedString(updated.Object, "spec", "source", "chart")
+	assert.True(t, found, "source.chart must be preserved, not dropped by a same-key nested replace")
+	assert.Equal(t, "dex", chart)
 	namespace, found, _ := unstructured.NestedString(updated.Object, "spec", "destination", "namespace")
 	assert.True(t, found, "destination.namespace must be preserved, not dropped")
 	assert.Equal(t, "dex-system", namespace)
 	project, found, _ := unstructured.NestedString(updated.Object, "spec", "project")
 	assert.True(t, found, "project must be preserved, not dropped")
 	assert.Equal(t, "default", project)
+}
+
+// TestApplyTask_UpdateRefusesToDropChartOrPath guards the invariant ArgoCD
+// itself requires: a merged source with repoURL set but neither chart nor
+// path is refused before the write, never committed and left for someone
+// to discover later as a live resource stuck in ArgoCD's InvalidSpecError
+// state (the original incident this validation was added for).
+func TestApplyTask_UpdateRefusesToDropChartOrPath(t *testing.T) {
+	obj := existingHelmApp("no-chart-yet", "argocd", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0"},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "no-chart-yet", Namespace: "argocd",
+		ResourceVersion: "rv-1",
+		Spec:            map[string]any{"source": map[string]any{"repoURL": "oci://new", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "chart")
+
+	unchanged, getErr := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "no-chart-yet", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	repoURL, _, _ := unstructured.NestedString(unchanged.Object, "spec", "source", "repoURL")
+	assert.Equal(t, "oci://old", repoURL, "a refused update must not be partially applied")
+}
+
+// TestApplyTask_CreateRefusesInvalidSpec covers the same guard on the
+// create path (deploy_application), not just update.
+func TestApplyTask_CreateRefusesInvalidSpec(t *testing.T) {
+	dc := newFakeClient()
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "my-app", Namespace: "argocd",
+		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "chart")
+
+	_, getErr := dc.Resource(gvr).Namespace("argocd").Get(context.Background(), "my-app", metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(getErr), "a refused create must not create the object")
 }
 
 // TestApplyTask_UpdateOnMissingObjectReturnsNotFound is the regression test
