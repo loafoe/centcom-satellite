@@ -6,12 +6,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
+
+// nodeStatsTimeout bounds a single kubelet stats/summary proxy call so one
+// slow or unresponsive node can't stall the whole scan.
+const nodeStatsTimeout = 5 * time.Second
+
+// nodeStatsConcurrency caps how many kubelet stats/summary calls run at
+// once. Querying every node sequentially scales latency linearly with
+// cluster size regardless of how few PVCs are actually being asked about -
+// on a 187-node cluster (src-co-sb) that meant 36+ seconds per call, long
+// enough to trip timeouts upstream of this satellite and surface as a hard
+// failure instead of a usage report. Bounded (rather than unlimited)
+// concurrency avoids hammering every kubelet/API-server-proxy connection
+// at once on very large clusters.
+const nodeStatsConcurrency = 30
 
 const TaskName = "pv_usage"
 
@@ -127,21 +143,45 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Map to deduplicate PVCs (same PVC might be mounted on multiple pods)
 	pvcUsageMap := make(map[string]*PVCUsage)
 
-	// Query each node's kubelet stats
+	// Query nodes' kubelet stats with bounded concurrency (see
+	// nodeStatsConcurrency) instead of one at a time - each node result is
+	// merged sequentially below so pvcUsageMap/report never need locking.
+	type nodeResult struct {
+		name  string
+		stats *KubeletStatsSummary
+		err   error
+	}
+	results := make(chan nodeResult, len(nodes.Items))
+	sem := make(chan struct{}, nodeStatsConcurrency)
+	var wg sync.WaitGroup
 	for _, node := range nodes.Items {
+		wg.Add(1)
+		go func(nodeName string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			nodeCtx, cancel := context.WithTimeout(ctx, nodeStatsTimeout)
+			defer cancel()
+			stats, err := t.getNodeStats(nodeCtx, nodeName)
+			results <- nodeResult{name: nodeName, stats: stats, err: err}
+		}(node.Name)
+	}
+	wg.Wait()
+	close(results)
+
+	for res := range results {
 		report.NodesQueried++
 
-		stats, err := t.getNodeStats(ctx, node.Name)
-		if err != nil {
+		if res.err != nil {
 			report.NodeErrors = append(report.NodeErrors, NodeError{
-				Node:  node.Name,
-				Error: err.Error(),
+				Node:  res.name,
+				Error: res.err.Error(),
 			})
 			continue
 		}
 
 		// Extract PVC usage from pod volumes
-		for _, pod := range stats.Pods {
+		for _, pod := range res.stats.Pods {
 			for _, vol := range pod.Volume {
 				if vol.PVCRef == nil {
 					continue

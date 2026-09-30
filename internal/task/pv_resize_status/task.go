@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,6 +14,13 @@ import (
 
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
+
+// nodeStatsTimeout bounds a single kubelet stats/summary proxy call. Without
+// it, a slow or unresponsive node's API-server-proxied kubelet call can hang
+// for the life of the request's own context, which on a large cluster is the
+// difference between a sub-second lookup and one that trips an unrelated
+// upstream timeout (see getFilesystemStats).
+const nodeStatsTimeout = 5 * time.Second
 
 const TaskName = "pv_resize_status"
 
@@ -192,15 +200,36 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 }
 
 // getFilesystemStats queries kubelet to get actual filesystem size for the PVC.
+//
+// Only the node(s) actually running a pod that mounts this PVC are queried -
+// not every node in the cluster. A full-cluster scan (list every node, proxy
+// each one's kubelet stats/summary sequentially) made this call scale with
+// cluster size regardless of which single PVC was asked about: on a
+// 187-node cluster (src-co-sb) that took 36-44s per call, comfortably long
+// enough to trip timeouts upstream of this satellite and surface as hard
+// failures instead of a normal resize-status answer.
 func (t *Task) getFilesystemStats(ctx context.Context, namespace, pvcName string) (capacity, used, available int64) {
-	// Get all nodes and query their stats
-	nodes, err := t.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return 0, 0, 0
 	}
 
-	for _, node := range nodes.Items {
-		stats, err := t.getNodeStats(ctx, node.Name)
+	nodeNames := make(map[string]struct{})
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == "" {
+			continue
+		}
+		for _, vol := range pod.Spec.Volumes {
+			if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == pvcName {
+				nodeNames[pod.Spec.NodeName] = struct{}{}
+			}
+		}
+	}
+
+	for nodeName := range nodeNames {
+		nodeCtx, cancel := context.WithTimeout(ctx, nodeStatsTimeout)
+		stats, err := t.getNodeStats(nodeCtx, nodeName)
+		cancel()
 		if err != nil {
 			continue
 		}
