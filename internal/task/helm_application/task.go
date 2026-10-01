@@ -11,6 +11,7 @@ package helm_application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -206,5 +207,43 @@ func validateHelmApplicationSpec(spec map[string]any) error {
 	if chart == "" && path == "" {
 		return &InvalidSpecError{Reason: "spec.source.repoURL is set but neither spec.source.chart nor spec.source.path is present"}
 	}
+	helm, _ := source["helm"].(map[string]any)
+	if helm != nil {
+		if valuesObject, ok := helm["valuesObject"].(map[string]any); ok {
+			if badPath := findItemWrappedArray(valuesObject, "spec.source.helm.valuesObject"); badPath != "" {
+				return &InvalidSpecError{Reason: fmt.Sprintf(
+					"%s is a {\"item\": [...]} -wrapped map, not a plain JSON array - this is never a legitimate "+
+						"Helm value and is the signature of a caller mis-encoding a list (the same corruption class "+
+						"that left grafana-kustomize's valuesObject fully stringified and its Application unable to "+
+						"render)", badPath)}
+			}
+		}
+	}
 	return nil
+}
+
+// findItemWrappedArray recursively looks for the specific shape {"item":
+// [...]} - a map whose only key is literally "item" and whose value is a
+// list. This is a narrow, high-confidence anti-pattern check, not a general
+// type validator: unlike a numeric- or boolean-looking string (which many
+// legitimate Helm values genuinely are - a port, a version, a zip code),
+// this exact wrapper shape has no legitimate Helm-values use and has only
+// ever been observed as a caller's list-encoding bug. Returns the dotted
+// path to the first occurrence found, or "" if none.
+func findItemWrappedArray(m map[string]any, path string) string {
+	if len(m) == 1 {
+		if item, ok := m["item"]; ok {
+			if _, isSlice := item.([]any); isSlice {
+				return path
+			}
+		}
+	}
+	for k, v := range m {
+		if nested, ok := v.(map[string]any); ok {
+			if found := findItemWrappedArray(nested, path+"."+k); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
 }

@@ -258,6 +258,74 @@ func TestApplyTask_UpdateRefusesToDropChartOrPath(t *testing.T) {
 	assert.Equal(t, "oci://old", repoURL, "a refused update must not be partially applied")
 }
 
+// TestApplyTask_UpdateRefusesItemWrappedArray guards the second half of
+// the grafana-kustomize incident: valuesObject.grafana.authProxy.caddy.
+// trustedIPs arrived as {"item": ["192.168.2.228"]} instead of a plain
+// array - a shape no legitimate Helm value has ever used - and the
+// corresponding chart's helm template failed to render as a result. This
+// must be refused before the write, at any depth under valuesObject.
+func TestApplyTask_UpdateRefusesItemWrappedArray(t *testing.T) {
+	obj := existingHelmApp("grafana", "monitoring", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.0", "chart": "helm-charts/grafana"},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "grafana", Namespace: "monitoring",
+		ResourceVersion: "rv-1",
+		Spec: map[string]any{"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.7",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"grafana": map[string]any{"authProxy": map[string]any{"caddy": map[string]any{
+					"trustedIPs": map[string]any{"item": []any{"192.168.2.228"}},
+				}}},
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "valuesObject.grafana.authProxy.caddy.trustedIPs")
+
+	unchanged, getErr := dc.Resource(gvr).Namespace("monitoring").Get(context.Background(), "grafana", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	targetRevision, _, _ := unstructured.NestedString(unchanged.Object, "spec", "source", "targetRevision")
+	assert.Equal(t, "0.78.0", targetRevision, "a refused update must not be partially applied")
+}
+
+// TestApplyTask_UpdateAcceptsPlainArray is the negative counterpart: a
+// normal, correctly-encoded array under valuesObject must not be flagged.
+func TestApplyTask_UpdateAcceptsPlainArray(t *testing.T) {
+	obj := existingHelmApp("grafana", "monitoring", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.0", "chart": "helm-charts/grafana"},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "grafana", Namespace: "monitoring",
+		ResourceVersion: "rv-1",
+		Spec: map[string]any{"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.7",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"grafana": map[string]any{"authProxy": map[string]any{"caddy": map[string]any{
+					"trustedIPs": []any{"192.168.2.228"},
+				}}},
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+}
+
 // TestApplyTask_CreateRefusesInvalidSpec covers the same guard on the
 // create path (deploy_application), not just update.
 func TestApplyTask_CreateRefusesInvalidSpec(t *testing.T) {
