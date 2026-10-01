@@ -19,8 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	"github.com/loafoe/centcom-satellite/internal/redact"
 	"github.com/loafoe/centcom-satellite/internal/task"
-	"github.com/loafoe/centcom-satellite/internal/task/get_resource"
 )
 
 const ApplyTaskName = "helm_application_apply"
@@ -117,7 +117,7 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 		if err != nil {
 			return task.NewErrorResult(err.Error()), nil
 		}
-		return task.NewSuccessResultWithDetails("created", get_resource.ExtractSummary(created, true)), nil
+		return applyResult("created", created), nil
 	}
 
 	if p.CreateOnly {
@@ -156,7 +156,28 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 		}
 		return task.NewErrorResult(err.Error()), nil
 	}
-	return task.NewSuccessResultWithDetails("updated", get_resource.ExtractSummary(updated, true)), nil
+	return applyResult("updated", updated), nil
+}
+
+// applyResult returns the FULL resulting object (apiVersion, kind, metadata,
+// spec, status) - the same shape get_application shows, not a metadata-only
+// summary - so a caller can see exactly what spec.source/valuesObject ended
+// up as, including after a dry-run (the API server computes and returns the
+// would-be object without persisting it). A prior version returned only
+// get_resource.ExtractSummary's metadata/status fields: spec was always
+// absent, dry-run or not, which left no way for a caller to tell "my change
+// landed as intended" apart from "a sibling field got silently dropped" -
+// the field simply wasn't in the document either way. Secret-shaped values
+// are still redacted (key name / PEM / inline-secret patterns - see
+// internal/redact), but legitimate content is never masked just for
+// looking long or random.
+func applyResult(verb string, obj *unstructured.Unstructured) *task.Result {
+	redacted, n := redact.WalkObject(obj.Object)
+	message := verb
+	if n > 0 {
+		message = fmt.Sprintf("%s (%d value(s) redacted)", verb, n)
+	}
+	return task.NewSuccessResultWithDetails(message, redacted)
 }
 
 // deepMergeMap merges overlay into base, recursing into nested

@@ -347,6 +347,67 @@ func TestApplyTask_CreateRefusesInvalidSpec(t *testing.T) {
 	assert.True(t, apierrors.IsNotFound(getErr), "a refused create must not create the object")
 }
 
+// TestApplyTask_UpdateResultIncludesSpec is the direct regression test for
+// the incident this fix addresses: update_application (dry-run or real)
+// returned only metadata/status (get_resource.ExtractSummary never
+// extracts spec, for any resource type) - a caller had no way to see
+// whether spec.source.chart or spec.source.helm.valuesObject survived the
+// merge, since an absent field and a correctly-preserved-but-unreported
+// one look identical in that document. The result must now carry the
+// actual merged spec.
+func TestApplyTask_UpdateResultIncludesSpec(t *testing.T) {
+	obj := existingHelmApp("dex-issuer", "argocd", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{"repoURL": "oci://old", "targetRevision": "0.9.0", "chart": "dex"},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "dex-issuer", Namespace: "argocd",
+		ResourceVersion: "rv-1",
+		Spec:            map[string]any{"source": map[string]any{"repoURL": "oci://new", "targetRevision": "1.0.0"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	details, ok := result.Details.(map[string]any)
+	require.True(t, ok, "Details must be the full object (map[string]any), not a metadata-only summary, got %T", result.Details)
+	spec, ok := details["spec"].(map[string]any)
+	require.True(t, ok, "result must include spec so a caller can see what the merge actually produced")
+	source, ok := spec["source"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "oci://new", source["repoURL"], "the caller-supplied change must be visible")
+	assert.Equal(t, "dex", source["chart"], "a preserved sibling field must be visible too, not just the changed one")
+}
+
+// TestApplyTask_CreateResultIncludesSpec is the create-path counterpart.
+func TestApplyTask_CreateResultIncludesSpec(t *testing.T) {
+	dc := newFakeClient()
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "my-app", Namespace: "argocd",
+		Spec: map[string]any{"source": map[string]any{"repoURL": "oci://x", "targetRevision": "1.0.0", "chart": "x"}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	details, ok := result.Details.(map[string]any)
+	require.True(t, ok, "Details must be the full object, not a metadata-only summary, got %T", result.Details)
+	spec, ok := details["spec"].(map[string]any)
+	require.True(t, ok, "result must include spec")
+	source, ok := spec["source"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "x", source["chart"])
+}
+
 // TestApplyTask_UpdateOnMissingObjectReturnsNotFound is the regression test
 // for finding #12: a caller who supplies a ResourceVersion (meaning they
 // read the object before) but the object no longer exists must get a clear
