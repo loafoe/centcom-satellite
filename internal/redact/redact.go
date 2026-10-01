@@ -2,10 +2,21 @@
 // values in otherwise-legitimate Kubernetes objects. Originally specific to
 // get_configmap, generalized so get_resource (and any future generic
 // resource reader) can apply the same protection to arbitrary object graphs.
+//
+// Deliberately NOT included: a Shannon-entropy-based "this token looks
+// random" heuristic (removed 2026-10, see git history for the prior
+// implementation). It caused active harm in production: it masked
+// legitimate, non-secret content (long technical tokens - URLs, OTTL
+// expressions, label selectors - inside a HelmApplication's valuesObject)
+// with a placeholder that read identically to the field simply being
+// absent. A caller diffing a before/after for dropped fields had no way to
+// tell "redacted" apart from "never there" in that document, and a prior
+// incident showed exactly that confusion masking real data loss. The
+// heuristics below are deliberately exact pattern matches - key name, PEM
+// block, inline "key=value" - with no judgment call on what "looks random".
 package redact
 
 import (
-	"math"
 	"regexp"
 	"strings"
 )
@@ -17,34 +28,7 @@ const (
 	ReasonSecretKeyName Reason = "secret-key-name"
 	ReasonPEMBlock      Reason = "pem-block"
 	ReasonInlineSecret  Reason = "inline-secret"
-	ReasonHighEntropy   Reason = "high-entropy"
 )
-
-// minEntropyLen is the minimum token length before the high-entropy heuristic
-// applies. Short config values (ports, enums, booleans) are never
-// entropy-redacted. Must exceed 2^entropyThreshold (~21.1 at 4.4): a string
-// of N all-distinct characters tops out at exactly log2(N) bits/char, so at
-// or below that length the check could never fire regardless of content.
-const minEntropyLen = 24
-
-// entropyThreshold is the Shannon entropy (bits/char) above which a token is
-// treated as a likely secret (raw token, base64 blob, random key).
-//
-// Calibrated empirically (2026-09-05, against a real Grafana Alloy ConfigMap
-// that was being fully redacted): structured-but-benign technical tokens -
-// URLs, OTTL processor expressions, Prometheus label selectors, dotted
-// attribute paths - commonly land at 4.0-4.3 bits/char purely from mixed
-// case/punctuation, with the worst observed real sample (a full HTTPS URL) at
-// 4.27. Genuine secret-shaped tokens (AWS secret keys, Grafana/API service
-// tokens, JWTs, and this package's own random-token test fixture) all score
-// 4.5+. 4.4 sits in the gap between those two clusters.
-//
-// Known v1 limitation: a short, low-entropy credential (e.g. a ~20-char AWS access
-// key id at ~3.7 bits/char) stored under a benign-looking key name — i.e. one that
-// does not match secretKeyNameRe — can slip through this net and be returned in
-// cleartext. The key-name, PEM, and inline-secret heuristics catch the common cases;
-// tightening the entropy band (and adding name allow/deny lists) is deferred to v2.
-const entropyThreshold = 4.4
 
 var (
 	// secretKeyNameRe matches key names that conventionally hold secrets.
@@ -67,8 +51,8 @@ var (
 
 // Check decides whether a value should be masked given its key name context,
 // returning the reason (empty if the value is safe to return as-is). The
-// decision uses, in order: secret-like key name, PEM block, inline secret
-// pattern, then high Shannon entropy.
+// decision uses, in order: secret-like key name, PEM block, then inline
+// secret pattern.
 func Check(key, value string) Reason {
 	if secretKeyNameRe.MatchString(key) {
 		return ReasonSecretKeyName
@@ -79,27 +63,7 @@ func Check(key, value string) Reason {
 	if hasInlineSecret(value) {
 		return ReasonInlineSecret
 	}
-	if hasHighEntropyToken(value) {
-		return ReasonHighEntropy
-	}
 	return ""
-}
-
-// hasHighEntropyToken reports whether value contains a contiguous
-// whitespace-delimited token (its own base unit — a real secret is one
-// unbroken blob, not spread across a document) that is itself long and
-// random-looking. Scored per-token rather than over the whole value: a large
-// multi-line config document built from many short, ordinary words/tokens
-// can rack up several distinct characters in aggregate (which reads as
-// deceptively "high entropy" if scored as one blob) without any single token
-// in it actually being secret-shaped.
-func hasHighEntropyToken(value string) bool {
-	for _, tok := range strings.Fields(value) {
-		if len(tok) >= minEntropyLen && ShannonEntropy(tok) > entropyThreshold {
-			return true
-		}
-	}
-	return false
 }
 
 // hasInlineSecret reports whether value contains at least one occurrence of
@@ -128,22 +92,4 @@ func isLiteralValue(tok string) bool {
 		return false
 	}
 	return !dottedIdentifierRe.MatchString(tok)
-}
-
-// ShannonEntropy returns the Shannon entropy of s in bits per character.
-func ShannonEntropy(s string) float64 {
-	if len(s) == 0 {
-		return 0
-	}
-	counts := make(map[rune]int)
-	for _, r := range s {
-		counts[r]++
-	}
-	total := float64(len([]rune(s)))
-	var entropy float64
-	for _, c := range counts {
-		p := float64(c) / total
-		entropy -= p * math.Log2(p)
-	}
-	return entropy
 }
