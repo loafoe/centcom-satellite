@@ -326,6 +326,105 @@ func TestApplyTask_UpdateAcceptsPlainArray(t *testing.T) {
 	require.True(t, result.Success)
 }
 
+// TestApplyTask_UpdateRefusesListCollapsedToString is the regression test
+// for the second half of the grafana-kustomize incident reported live on
+// rpi: a caller's hand-built spec replaced
+// crossplaneProviders.grafana.datasources ([]) with "" - a plain string,
+// no {"item": [...]} wrapping involved, so the existing
+// findItemWrappedArray guard never saw it. This must be refused before
+// the write, the same as the item-wrapped case.
+func TestApplyTask_UpdateRefusesListCollapsedToString(t *testing.T) {
+	obj := existingHelmApp("grafana-kustomize", "monitoring", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.0", "chart": "helm-charts/grafana",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"crossplaneProviders": map[string]any{"grafana": map[string]any{"datasources": []any{}, "enabled": false}},
+			}},
+		},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "grafana-kustomize", Namespace: "monitoring",
+		ResourceVersion: "rv-1",
+		Spec: map[string]any{"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.8",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"crossplaneProviders": map[string]any{"grafana": map[string]any{"datasources": "", "enabled": false}},
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Contains(t, result.Error, "crossplaneProviders.grafana.datasources")
+
+	unchanged, getErr := dc.Resource(gvr).Namespace("monitoring").Get(context.Background(), "grafana-kustomize", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	targetRevision, _, _ := unstructured.NestedString(unchanged.Object, "spec", "source", "targetRevision")
+	assert.Equal(t, "0.78.0", targetRevision, "a refused update must not be partially applied")
+}
+
+// TestApplyTask_UpdatePreservesArrayElementSiblingFields is the
+// regression test for the other half of the same incident: a caller's
+// spec renamed/edited tenants[0] but, having reconstructed the element by
+// hand, omitted adminGroups/editorGroups/viewerGroups (previously []) -
+// and the old wholesale array replace dropped them from the live object
+// instead of just leaving them untouched like every other partial update
+// in this codebase does for map keys.
+func TestApplyTask_UpdatePreservesArrayElementSiblingFields(t *testing.T) {
+	obj := existingHelmApp("grafana-kustomize", "monitoring", "rv-1")
+	obj.Object["spec"] = map[string]any{
+		"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.0", "chart": "helm-charts/grafana",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"grafana": map[string]any{"tenants": []any{
+					map[string]any{
+						"name": "main-org", "tenantId": "anonymous",
+						"adminGroups": []any{}, "editorGroups": []any{}, "viewerGroups": []any{},
+					},
+				}},
+			}},
+		},
+	}
+	dc := newFakeClient(obj)
+	task := NewApply(dc)
+
+	payload, err := json.Marshal(ApplyPayload{
+		APIVersion: "dip.io/v1", Name: "grafana-kustomize", Namespace: "monitoring",
+		ResourceVersion: "rv-1",
+		Spec: map[string]any{"source": map[string]any{
+			"repoURL": "ghcr.io/philips-software", "targetRevision": "0.78.8",
+			"helm": map[string]any{"valuesObject": map[string]any{
+				"grafana": map[string]any{"tenants": []any{
+					map[string]any{"name": "main-org", "tenantId": "anonymous"},
+				}},
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := task.Execute(context.Background(), payload)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	updated, getErr := dc.Resource(gvr).Namespace("monitoring").Get(context.Background(), "grafana-kustomize", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	tenants, _, _ := unstructured.NestedSlice(updated.Object, "spec", "source", "helm", "valuesObject", "grafana", "tenants")
+	require.Len(t, tenants, 1)
+	tenant, ok := tenants[0].(map[string]any)
+	require.True(t, ok)
+	for _, groupField := range []string{"adminGroups", "editorGroups", "viewerGroups"} {
+		val, found := tenant[groupField]
+		assert.True(t, found, "%s must be preserved, not dropped by a same-length array wholesale replace", groupField)
+		assert.Equal(t, []any{}, val)
+	}
+}
+
 // TestApplyTask_CreateRefusesInvalidSpec covers the same guard on the
 // create path (deploy_application), not just update.
 func TestApplyTask_CreateRefusesInvalidSpec(t *testing.T) {

@@ -98,7 +98,7 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 			// surface, not grounds to silently create a new one.
 			return task.NewErrorResult("HelmApplication " + p.Name + " not found (it existed when you read its resourceVersion, but has since been deleted)"), nil
 		}
-		if err := validateHelmApplicationSpec(p.Spec); err != nil {
+		if err := validateHelmApplicationSpec(nil, p.Spec); err != nil {
 			return task.NewErrorResult("refusing to write an invalid spec: " + err.Error()), nil
 		}
 		obj := &unstructured.Unstructured{Object: map[string]any{
@@ -141,7 +141,7 @@ func (t *ApplyTask) Execute(ctx context.Context, payloadBytes json.RawMessage) (
 	}
 	mergedSpec := deepMergeMap(existingSpec, p.Spec)
 
-	if err := validateHelmApplicationSpec(mergedSpec); err != nil {
+	if err := validateHelmApplicationSpec(existingSpec, mergedSpec); err != nil {
 		return task.NewErrorResult("refusing to write an invalid spec: " + err.Error()), nil
 	}
 
@@ -203,7 +203,40 @@ func deepMergeMap(base, overlay map[string]any) map[string]any {
 			merged[k] = deepMergeMap(baseMap, overlayMap)
 			continue
 		}
+		baseSlice, baseIsSlice := baseVal.([]any)
+		overlaySlice, overlayIsSlice := overlayVal.([]any)
+		if baseIsSlice && overlayIsSlice && len(baseSlice) == len(overlaySlice) {
+			merged[k] = deepMergeSlice(baseSlice, overlaySlice)
+			continue
+		}
 		merged[k] = overlayVal
+	}
+	return merged
+}
+
+// deepMergeSlice is deepMergeMap's array counterpart: a same-length array
+// is merged element-by-element (recursing into deepMergeMap for any pair
+// of elements that are both maps), rather than replaced wholesale - the
+// same "a partial update only ever touches the keys it actually names"
+// philosophy, extended to array elements. This is what the
+// grafana-kustomize incident actually needed: a caller changing one
+// tenant's name among several, with the rest reconstructed by hand,
+// otherwise silently dropped that tenant's adminGroups/editorGroups/
+// viewerGroups the moment its position was reconstructed without them,
+// because the old behavior replaced the entire tenants array outright. A
+// length mismatch (an element added or removed) still has no sane
+// positional correspondence, so it keeps the old wholesale-replace
+// behavior.
+func deepMergeSlice(base, overlay []any) []any {
+	merged := make([]any, len(overlay))
+	for i, overlayVal := range overlay {
+		baseMap, baseIsMap := base[i].(map[string]any)
+		overlayMap, overlayIsMap := overlayVal.(map[string]any)
+		if baseIsMap && overlayIsMap {
+			merged[i] = deepMergeMap(baseMap, overlayMap)
+			continue
+		}
+		merged[i] = overlayVal
 	}
 	return merged
 }
@@ -214,7 +247,12 @@ func deepMergeMap(base, overlay map[string]any) map[string]any {
 // HelmApplication XRD (source is x-kubernetes-preserve-unknown-fields), but
 // leaves the composed Application inert. Caught here, before the write,
 // instead of discovered later as a live resource stuck in that state.
-func validateHelmApplicationSpec(spec map[string]any) error {
+//
+// existingSpec is the pre-merge spec being updated (nil on create, where
+// there is nothing yet to regress against) - passed through so the
+// list-collapse check below can compare a key's before/after shape, not
+// just the merged result in isolation.
+func validateHelmApplicationSpec(existingSpec, spec map[string]any) error {
 	source, ok := spec["source"].(map[string]any)
 	if !ok {
 		return nil
@@ -238,9 +276,75 @@ func validateHelmApplicationSpec(spec map[string]any) error {
 						"that left grafana-kustomize's valuesObject fully stringified and its Application unable to "+
 						"render)", badPath)}
 			}
+			if existingValuesObject := nestedValuesObject(existingSpec); existingValuesObject != nil {
+				if badPath := findListCollapsedToScalar(existingValuesObject, valuesObject, "spec.source.helm.valuesObject"); badPath != "" {
+					return &InvalidSpecError{Reason: fmt.Sprintf(
+						"%s was a list and this update would replace it with a non-list value - this is the same "+
+							"corruption class as the {\"item\": [...]} case above, just a different mis-encoding (the "+
+							"exact failure that turned grafana-kustomize's crossplaneProviders.grafana.datasources "+
+							"from [] into \"\"); if you really mean to empty this list, send an explicit [], not a "+
+							"string", badPath)}
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// nestedValuesObject reads spec.source.helm.valuesObject out of a (possibly
+// nil) spec map, returning nil if any step of the path is absent or not
+// the expected type - a create has no existingSpec at all, and an update
+// may legitimately be touching a HelmApplication that never had a
+// valuesObject before.
+func nestedValuesObject(spec map[string]any) map[string]any {
+	if spec == nil {
+		return nil
+	}
+	source, ok := spec["source"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	helm, ok := source["helm"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	valuesObject, _ := helm["valuesObject"].(map[string]any)
+	return valuesObject
+}
+
+// findListCollapsedToScalar recursively compares the pre-merge
+// (existing) and post-merge (merged) shape of the same tree, descending
+// into keys present as a map on both sides, and returns the dotted path
+// to the first key where existing held a list and merged no longer does.
+// This is deliberately list->non-list only, not a general type checker -
+// mirroring findItemWrappedArray's narrow, high-confidence scope, it
+// flags the specific corruption shape observed on grafana-kustomize
+// (crossplaneProviders.grafana.datasources: [] -> ""), not every type
+// change (many Helm values legitimately change type across an update).
+// A key missing from merged entirely (rather than present with the wrong
+// type) is not flagged here - deepMergeSlice above is what prevents that
+// shape of loss, for the array-element case this was actually hit by.
+func findListCollapsedToScalar(existing, merged map[string]any, path string) string {
+	for k, existingVal := range existing {
+		mergedVal, ok := merged[k]
+		if !ok {
+			continue
+		}
+		if _, isList := existingVal.([]any); isList {
+			if _, stillList := mergedVal.([]any); !stillList {
+				return path + "." + k
+			}
+			continue
+		}
+		existingMap, existingIsMap := existingVal.(map[string]any)
+		mergedMap, mergedIsMap := mergedVal.(map[string]any)
+		if existingIsMap && mergedIsMap {
+			if found := findListCollapsedToScalar(existingMap, mergedMap, path+"."+k); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
 }
 
 // findItemWrappedArray recursively looks for the specific shape {"item":
