@@ -279,9 +279,9 @@ func validateHelmApplicationSpec(existingSpec, spec map[string]any) error {
 			if existingValuesObject := nestedValuesObject(existingSpec); existingValuesObject != nil {
 				if badPath := findListCollapsedToScalar(existingValuesObject, valuesObject, "spec.source.helm.valuesObject"); badPath != "" {
 					return &InvalidSpecError{Reason: fmt.Sprintf(
-						"%s was a list and this update would replace it with a non-list value - this is the same "+
-							"corruption class as the {\"item\": [...]} case above, just a different mis-encoding (the "+
-							"exact failure that turned grafana-kustomize's crossplaneProviders.grafana.datasources "+
+						"%s was a list and this update would replace it with a non-list value - this is the "+
+							"signature of a caller mis-encoding a list, like a {\"item\": [...]}-wrapped array is "+
+							"(the exact failure that turned grafana-kustomize's crossplaneProviders.grafana.datasources "+
 							"from [] into \"\"); if you really mean to empty this list, send an explicit [], not a "+
 							"string", badPath)}
 				}
