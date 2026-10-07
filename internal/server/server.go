@@ -78,10 +78,17 @@ func (s *Server) Start(ctx context.Context) error {
 	)
 
 	s.main = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.config.Port),
-		Handler:      mainHandler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:        fmt.Sprintf(":%d", s.config.Port),
+		Handler:     mainHandler,
+		ReadTimeout: 15 * time.Second,
+		// Raised 30s -> 60s (2026-10-07): this is a blanket cutoff shared by
+		// every task type, but pv_usage's own worst case (every node timing
+		// out) was already close to - and on some real clusters, past - the
+		// old 30s value; see pv_usage.nodeStatsConcurrency's doc comment for
+		// the exact math. 60s gives headroom for that task's revised worst
+		// case plus genuinely large clusters, without being so long that a
+		// truly hung handler ties up a connection indefinitely.
+		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 

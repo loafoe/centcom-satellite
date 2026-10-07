@@ -27,7 +27,16 @@ const nodeStatsTimeout = 5 * time.Second
 // failure instead of a usage report. Bounded (rather than unlimited)
 // concurrency avoids hammering every kubelet/API-server-proxy connection
 // at once on very large clusters.
-const nodeStatsConcurrency = 30
+//
+// Raised 30 -> 100 (2026-10-07): the worst case (every node timing out) is
+// ceil(nodeCount/nodeStatsConcurrency) * nodeStatsTimeout - at 30, that's
+// ceil(187/30)*5s = 35s, which is already past this server's own 30s
+// WriteTimeout (see internal/server.Server's s.main, bumped alongside this
+// to 60s). At 100, the same cluster's worst case drops to
+// ceil(187/100)*5s = 10s, comfortably under either timeout. These are
+// bounded, bursty API-server-proxy calls (not sustained load), so 100
+// concurrent is still far short of hammering anything.
+const nodeStatsConcurrency = 100
 
 const TaskName = "pv_usage"
 
