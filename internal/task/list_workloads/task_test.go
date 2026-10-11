@@ -277,3 +277,85 @@ func TestExtractTopologySpreadConstraints_MatchLabelsOrderIsDeterministic(t *tes
 		require.Equal(t, first, got, "iteration %d produced a different order", i)
 	}
 }
+
+func TestExtractConfigRefs_VolumesEnvFromAndValueFrom(t *testing.T) {
+	spec := corev1.PodSpec{
+		Volumes: []corev1.Volume{
+			{
+				Name: "cfg",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"},
+					},
+				},
+			},
+			{
+				Name: "secret-vol",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{SecretName: "app-tls"},
+				},
+			},
+			{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "app-data"},
+				},
+			},
+			{
+				Name: "proj",
+				VolumeSource: corev1.VolumeSource{
+					Projected: &corev1.ProjectedVolumeSource{
+						Sources: []corev1.VolumeProjection{
+							{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "proj-config"}}},
+							{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "proj-secret"}}},
+						},
+					},
+				},
+			},
+		},
+		InitContainers: []corev1.Container{
+			{
+				Name: "init",
+				EnvFrom: []corev1.EnvFromSource{
+					{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "init-config"}}},
+				},
+			},
+		},
+		Containers: []corev1.Container{
+			{
+				Name: "main",
+				EnvFrom: []corev1.EnvFromSource{
+					{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "env-secret"}}},
+				},
+				Env: []corev1.EnvVar{
+					{
+						Name: "DB_PASSWORD",
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "app-tls"}, Key: "password"},
+						},
+					},
+					{
+						Name: "FEATURE_FLAG",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"}, Key: "flag"},
+						},
+					},
+					{Name: "PLAIN", Value: "no-ref-here"},
+				},
+			},
+		},
+	}
+
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(spec)
+
+	assert.Equal(t, []string{"app-config", "init-config", "proj-config"}, cmRefs)
+	assert.Equal(t, []string{"app-tls", "env-secret", "proj-secret"}, secretRefs)
+	assert.Equal(t, []string{"app-data"}, pvcRefs)
+}
+
+func TestExtractConfigRefs_EmptySpecReturnsNilSlices(t *testing.T) {
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(corev1.PodSpec{})
+	assert.Nil(t, cmRefs)
+	assert.Nil(t, secretRefs)
+	assert.Nil(t, pvcRefs)
+}

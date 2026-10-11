@@ -55,8 +55,17 @@ type WorkloadInfo struct {
 	Tolerations                []TolerationInfo             `json:"tolerations,omitempty"`
 	PDBs                       []PDBInfo                    `json:"pdbs,omitempty"`
 	HPA                        *HPAInfo                     `json:"hpa,omitempty"`
-	CreationTime               string                       `json:"creation_time"`
-	Age                        string                       `json:"age"`
+	// ConfigMapRefs/SecretRefs/PVCRefs are the names this workload's pod
+	// template references, sorted and deduplicated — via volumes
+	// (configMap/secret/persistentVolumeClaim sources) and, for ConfigMaps/
+	// Secrets, also envFrom and env[].valueFrom on every container. Needed
+	// for Phase 4's "uses" topology edge (centcom's Kubernetes Overview
+	// plan) — centcom has no other way to learn this.
+	ConfigMapRefs []string `json:"configmap_refs,omitempty"`
+	SecretRefs    []string `json:"secret_refs,omitempty"`
+	PVCRefs       []string `json:"pvc_refs,omitempty"`
+	CreationTime  string   `json:"creation_time"`
+	Age           string   `json:"age"`
 
 	// CronJob-specific fields, empty for other kinds.
 	Schedule           string `json:"schedule,omitempty"`
@@ -377,6 +386,7 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 	if deployment.Spec.Replicas != nil {
 		desired = *deployment.Spec.Replicas
 	}
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(deployment.Spec.Template.Spec)
 
 	info := WorkloadInfo{
 		Name:      deployment.Name,
@@ -392,6 +402,9 @@ func (t *Task) buildDeploymentInfo(deployment *appsv1.Deployment, includeMetadat
 		Affinity:                  extractAffinity(deployment.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(deployment.Spec.Template.Spec.TopologySpreadConstraints),
 		Tolerations:               extractTolerations(deployment.Spec.Template.Spec.Tolerations),
+		ConfigMapRefs:             cmRefs,
+		SecretRefs:                secretRefs,
+		PVCRefs:                   pvcRefs,
 		CreationTime:              deployment.CreationTimestamp.Format(time.RFC3339),
 		Age:                       formatAge(deployment.CreationTimestamp.Time),
 	}
@@ -414,6 +427,7 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 	if statefulset.Spec.Replicas != nil {
 		desired = *statefulset.Spec.Replicas
 	}
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(statefulset.Spec.Template.Spec)
 
 	info := WorkloadInfo{
 		Name:      statefulset.Name,
@@ -429,6 +443,9 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 		Affinity:                  extractAffinity(statefulset.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(statefulset.Spec.Template.Spec.TopologySpreadConstraints),
 		Tolerations:               extractTolerations(statefulset.Spec.Template.Spec.Tolerations),
+		ConfigMapRefs:             cmRefs,
+		SecretRefs:                secretRefs,
+		PVCRefs:                   pvcRefs,
 		CreationTime:              statefulset.CreationTimestamp.Format(time.RFC3339),
 		Age:                       formatAge(statefulset.CreationTimestamp.Time),
 	}
@@ -447,6 +464,7 @@ func (t *Task) buildStatefulSetInfo(statefulset *appsv1.StatefulSet, includeMeta
 
 func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata, includeProbes bool) WorkloadInfo {
 	images := extractImages(daemonset.Spec.Template.Spec.Containers)
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(daemonset.Spec.Template.Spec)
 
 	info := WorkloadInfo{
 		Name:      daemonset.Name,
@@ -462,6 +480,9 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata, 
 		Affinity:                  extractAffinity(daemonset.Spec.Template.Spec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(daemonset.Spec.Template.Spec.TopologySpreadConstraints),
 		Tolerations:               extractTolerations(daemonset.Spec.Template.Spec.Tolerations),
+		ConfigMapRefs:             cmRefs,
+		SecretRefs:                secretRefs,
+		PVCRefs:                   pvcRefs,
 		CreationTime:              daemonset.CreationTimestamp.Format(time.RFC3339),
 		Age:                       formatAge(daemonset.CreationTimestamp.Time),
 	}
@@ -481,6 +502,7 @@ func (t *Task) buildDaemonSetInfo(daemonset *appsv1.DaemonSet, includeMetadata, 
 func (t *Task) buildCronJobInfo(cronjob *batchv1.CronJob, includeMetadata, includeProbes bool) WorkloadInfo {
 	podSpec := cronjob.Spec.JobTemplate.Spec.Template.Spec
 	images := extractImages(podSpec.Containers)
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(podSpec)
 
 	info := WorkloadInfo{
 		Name:                      cronjob.Name,
@@ -491,6 +513,9 @@ func (t *Task) buildCronJobInfo(cronjob *batchv1.CronJob, includeMetadata, inclu
 		Affinity:                  extractAffinity(podSpec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(podSpec.TopologySpreadConstraints),
 		Tolerations:               extractTolerations(podSpec.Tolerations),
+		ConfigMapRefs:             cmRefs,
+		SecretRefs:                secretRefs,
+		PVCRefs:                   pvcRefs,
 		CreationTime:              cronjob.CreationTimestamp.Format(time.RFC3339),
 		Age:                       formatAge(cronjob.CreationTimestamp.Time),
 		Schedule:                  cronjob.Spec.Schedule,
@@ -520,6 +545,7 @@ func (t *Task) buildCronJobInfo(cronjob *batchv1.CronJob, includeMetadata, inclu
 func (t *Task) buildJobInfo(job *batchv1.Job, includeMetadata, includeProbes bool) WorkloadInfo {
 	podSpec := job.Spec.Template.Spec
 	images := extractImages(podSpec.Containers)
+	cmRefs, secretRefs, pvcRefs := extractConfigRefs(podSpec)
 
 	var completions int32 = 1
 	if job.Spec.Completions != nil {
@@ -543,6 +569,9 @@ func (t *Task) buildJobInfo(job *batchv1.Job, includeMetadata, includeProbes boo
 		Affinity:                  extractAffinity(podSpec.Affinity),
 		TopologySpreadConstraints: extractTopologySpreadConstraints(podSpec.TopologySpreadConstraints),
 		Tolerations:               extractTolerations(podSpec.Tolerations),
+		ConfigMapRefs:             cmRefs,
+		SecretRefs:                secretRefs,
+		PVCRefs:                   pvcRefs,
 		CreationTime:              job.CreationTimestamp.Format(time.RFC3339),
 		Age:                       formatAge(job.CreationTimestamp.Time),
 		JobCompletions:            completions,
@@ -752,6 +781,76 @@ func extractProbe(probe *corev1.Probe) *ProbeInfo {
 	}
 
 	return info
+}
+
+// extractConfigRefs scans a pod spec's volumes and every (init)container's
+// envFrom/env[].valueFrom for ConfigMap/Secret/PVC references, returning
+// sorted, deduplicated name lists. Needed for Phase 4's "uses" topology
+// edge (centcom's Kubernetes Overview plan) — centcom has no other way to
+// learn this.
+func extractConfigRefs(spec corev1.PodSpec) (configMaps, secrets, pvcs []string) {
+	cmSet := map[string]bool{}
+	secretSet := map[string]bool{}
+	pvcSet := map[string]bool{}
+
+	for _, v := range spec.Volumes {
+		if v.ConfigMap != nil {
+			cmSet[v.ConfigMap.Name] = true
+		}
+		if v.Secret != nil {
+			secretSet[v.Secret.SecretName] = true
+		}
+		if v.PersistentVolumeClaim != nil {
+			pvcSet[v.PersistentVolumeClaim.ClaimName] = true
+		}
+		if v.Projected != nil {
+			for _, src := range v.Projected.Sources {
+				if src.ConfigMap != nil {
+					cmSet[src.ConfigMap.Name] = true
+				}
+				if src.Secret != nil {
+					secretSet[src.Secret.Name] = true
+				}
+			}
+		}
+	}
+
+	allContainers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
+	for _, c := range allContainers {
+		for _, ef := range c.EnvFrom {
+			if ef.ConfigMapRef != nil {
+				cmSet[ef.ConfigMapRef.Name] = true
+			}
+			if ef.SecretRef != nil {
+				secretSet[ef.SecretRef.Name] = true
+			}
+		}
+		for _, e := range c.Env {
+			if e.ValueFrom == nil {
+				continue
+			}
+			if e.ValueFrom.ConfigMapKeyRef != nil {
+				cmSet[e.ValueFrom.ConfigMapKeyRef.Name] = true
+			}
+			if e.ValueFrom.SecretKeyRef != nil {
+				secretSet[e.ValueFrom.SecretKeyRef.Name] = true
+			}
+		}
+	}
+
+	return sortedSetKeys(cmSet), sortedSetKeys(secretSet), sortedSetKeys(pvcSet)
+}
+
+func sortedSetKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func extractTolerations(tolerations []corev1.Toleration) []TolerationInfo {
