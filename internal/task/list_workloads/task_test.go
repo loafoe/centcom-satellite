@@ -229,3 +229,51 @@ func TestTask_Execute_All_IncludesCronJobs(t *testing.T) {
 	require.Len(t, details.Workloads, 1)
 	assert.Equal(t, "CronJob", details.Workloads[0].Kind)
 }
+
+// TestConvertPodAffinityTerm_MatchLabelsOrderIsDeterministic is the
+// regression test for a real production incident: centcom's workload
+// change-timeline falsely reported a spec change on every single poll for
+// any workload with a multi-key matchLabels pod(anti)affinity selector,
+// because this function appended straight from a `range` over
+// LabelSelector.MatchLabels (a map) - Go map iteration order is
+// randomized per call, so the resulting []SelectorRequirement had a
+// different order every time even though MatchLabels itself never
+// changed. 50 repeated calls on the same multi-key input is enough to
+// almost certainly surface the bug if it regresses (3 keys = 6 possible
+// orderings; the odds of 50 random draws all landing on the same one by
+// chance are negligible).
+func TestConvertPodAffinityTerm_MatchLabelsOrderIsDeterministic(t *testing.T) {
+	term := corev1.PodAffinityTerm{
+		TopologyKey: "kubernetes.io/hostname",
+		LabelSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"app": "checkout", "tier": "backend", "env": "prod"},
+		},
+	}
+	first := convertPodAffinityTerm(term)
+	for i := 0; i < 50; i++ {
+		got := convertPodAffinityTerm(term)
+		require.Equal(t, first.LabelSelector, got.LabelSelector, "iteration %d produced a different order", i)
+	}
+	keys := make([]string, len(first.LabelSelector))
+	for i, r := range first.LabelSelector {
+		keys[i] = r.Key
+	}
+	assert.Equal(t, []string{"app", "env", "tier"}, keys, "expected alphabetical key order")
+}
+
+func TestExtractTopologySpreadConstraints_MatchLabelsOrderIsDeterministic(t *testing.T) {
+	constraints := []corev1.TopologySpreadConstraint{
+		{
+			MaxSkew:     1,
+			TopologyKey: "topology.kubernetes.io/zone",
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "checkout", "tier": "backend", "env": "prod"},
+			},
+		},
+	}
+	first := extractTopologySpreadConstraints(constraints)
+	for i := 0; i < 50; i++ {
+		got := extractTopologySpreadConstraints(constraints)
+		require.Equal(t, first, got, "iteration %d produced a different order", i)
+	}
+}

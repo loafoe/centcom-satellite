@@ -1027,11 +1027,24 @@ func convertPodAffinityTerm(term corev1.PodAffinityTerm) PodAffinityTerm {
 				Values:   expr.Values,
 			})
 		}
-		for k, v := range term.LabelSelector.MatchLabels {
+		// Sorted by key before appending: Go map iteration order is
+		// randomized per-call, so appending straight from the range loop
+		// made this slice's order (and therefore its JSON serialization)
+		// different on every single call to this function even when
+		// MatchLabels itself never changed - a real bug caught live via
+		// centcom's workload change-timeline falsely reporting spec
+		// changes on every poll for any workload with a multi-key
+		// matchLabels pod(anti)affinity selector.
+		keys := make([]string, 0, len(term.LabelSelector.MatchLabels))
+		for k := range term.LabelSelector.MatchLabels {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
 			result.LabelSelector = append(result.LabelSelector, SelectorRequirement{
 				Key:      k,
 				Operator: "In",
-				Values:   []string{v},
+				Values:   []string{term.LabelSelector.MatchLabels[k]},
 			})
 		}
 	}
@@ -1057,11 +1070,18 @@ func extractTopologySpreadConstraints(constraints []corev1.TopologySpreadConstra
 					Values:   expr.Values,
 				})
 			}
-			for k, v := range c.LabelSelector.MatchLabels {
+			// Sorted by key — same non-determinism bug and reasoning as
+			// convertPodAffinityTerm above.
+			keys := make([]string, 0, len(c.LabelSelector.MatchLabels))
+			for k := range c.LabelSelector.MatchLabels {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
 				tsc.LabelSelector = append(tsc.LabelSelector, SelectorRequirement{
 					Key:      k,
 					Operator: "In",
-					Values:   []string{v},
+					Values:   []string{c.LabelSelector.MatchLabels[k]},
 				})
 			}
 		}
