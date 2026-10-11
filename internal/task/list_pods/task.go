@@ -33,20 +33,29 @@ type PodList struct {
 
 // PodInfo contains pod details.
 type PodInfo struct {
-	Name           string            `json:"name"`
-	Namespace      string            `json:"namespace"`
-	Status         string            `json:"status"`
-	Node           string            `json:"node"`
-	Restarts       int32             `json:"restarts"`
-	Age            string            `json:"age"`
-	MemoryUsage    string            `json:"memory_usage,omitempty"`
-	MemoryRequest  string            `json:"memory_request,omitempty"`
-	MemoryLimit    string            `json:"memory_limit,omitempty"`
-	MemoryPercent  float64           `json:"memory_percent,omitempty"`
-	Containers     []ContainerInfo   `json:"containers"`
-	NodeSelector   map[string]string `json:"node_selector,omitempty"`
-	Affinity       *AffinityInfo     `json:"affinity,omitempty"`
-	Tolerations    []TolerationInfo  `json:"tolerations,omitempty"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Status    string `json:"status"`
+	Node      string `json:"node"`
+	Restarts  int32  `json:"restarts"`
+	// OwnerKind/OwnerName identify the workload that owns this pod — the
+	// FINAL controller workload, with a ReplicaSet owner resolved one
+	// further hop to the Deployment that owns it. Empty for a bare pod
+	// with no controller owner. Added for centcom's Phase 6 restart-rate
+	// baseline, which needs every pod's current restart count attributed
+	// to its owning workload, not just the ones cluster_health already
+	// flags as unhealthy.
+	OwnerKind     string            `json:"owner_kind,omitempty"`
+	OwnerName     string            `json:"owner_name,omitempty"`
+	Age           string            `json:"age"`
+	MemoryUsage   string            `json:"memory_usage,omitempty"`
+	MemoryRequest string            `json:"memory_request,omitempty"`
+	MemoryLimit   string            `json:"memory_limit,omitempty"`
+	MemoryPercent float64           `json:"memory_percent,omitempty"`
+	Containers    []ContainerInfo   `json:"containers"`
+	NodeSelector  map[string]string `json:"node_selector,omitempty"`
+	Affinity      *AffinityInfo     `json:"affinity,omitempty"`
+	Tolerations   []TolerationInfo  `json:"tolerations,omitempty"`
 }
 
 // AffinityInfo contains affinity scheduling constraints.
@@ -168,6 +177,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
+	rsOwners, err := t.resolveReplicaSetOwners(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve ReplicaSet owners: %w", err)
+	}
+
 	result := &PodList{
 		Total: len(pods.Items),
 		Pods:  make([]PodInfo, 0, len(pods.Items)),
@@ -179,6 +193,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		podInfo := t.buildPodInfo(pod)
+		podInfo.OwnerKind, podInfo.OwnerName = resolvePodOwner(pod, rsOwners)
 		t.enrichWithMemory(pod, &podInfo, metricsMap)
 		result.Pods = append(result.Pods, podInfo)
 	}
@@ -193,6 +208,57 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		msg = fmt.Sprintf("Found %d pods across all namespaces", result.Total)
 	}
 	return task.NewSuccessResultWithDetails(msg, result), nil
+}
+
+// rsOwnerKey disambiguates ReplicaSets with the same name in different
+// namespaces when namespace is metav1.NamespaceAll — a bare name alone
+// would collide across namespaces (two Deployments can produce
+// identically-named ReplicaSets).
+func rsOwnerKey(namespace, name string) string {
+	return namespace + "/" + name
+}
+
+// resolveReplicaSetOwners maps a ReplicaSet's namespace/name -> its own
+// controller owner's Kind/Name (normally the Deployment that created it),
+// so a pod's OwnerReferences chain can be resolved to the FINAL workload
+// in one extra List() call rather than per-pod API round trips. A
+// ReplicaSet with no controller owner (standalone, not Deployment-managed)
+// is simply absent from the map — callers fall back to reporting
+// "ReplicaSet"/its own name.
+func (t *Task) resolveReplicaSetOwners(ctx context.Context, namespace string) (map[string]metav1.OwnerReference, error) {
+	rsList, err := t.clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	owners := make(map[string]metav1.OwnerReference, len(rsList.Items))
+	for _, rs := range rsList.Items {
+		for _, ref := range rs.OwnerReferences {
+			if ref.Controller != nil && *ref.Controller {
+				owners[rsOwnerKey(rs.Namespace, rs.Name)] = ref
+				break
+			}
+		}
+	}
+	return owners, nil
+}
+
+// resolvePodOwner returns the FINAL controller workload for pod: its own
+// controller owner reference, with a ReplicaSet owner further resolved to
+// the Deployment that owns the ReplicaSet (via rsOwners). Returns empty
+// strings for a bare pod with no controller owner.
+func resolvePodOwner(pod *corev1.Pod, rsOwners map[string]metav1.OwnerReference) (kind, name string) {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Controller == nil || !*ref.Controller {
+			continue
+		}
+		if ref.Kind == "ReplicaSet" {
+			if owner, ok := rsOwners[rsOwnerKey(pod.Namespace, ref.Name)]; ok {
+				return owner.Kind, owner.Name
+			}
+		}
+		return ref.Kind, ref.Name
+	}
+	return "", ""
 }
 
 func (t *Task) buildPodInfo(pod *corev1.Pod) PodInfo {
@@ -348,7 +414,20 @@ type metricsPod struct {
 	} `json:"containers"`
 }
 
-func (t *Task) getPodMetricsMap(ctx context.Context, namespace string) map[string]int64 {
+func (t *Task) getPodMetricsMap(ctx context.Context, namespace string) (metricsMap map[string]int64) {
+	// fake.Clientset (used by this package's own tests, and anywhere a
+	// metrics-server-less test cluster is simulated) returns a
+	// *rest.RESTClient whose internal fields panic on first use, not a
+	// nil interface a plain nil check would catch. This is explicitly a
+	// best-effort fetch (see the doc comment at the call site) — a panic
+	// here must degrade to "no metrics" exactly like the existing DoRaw
+	// error path below, not crash the whole task.
+	defer func() {
+		if recover() != nil {
+			metricsMap = nil
+		}
+	}()
+
 	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods", namespace)
 	if namespace == metav1.NamespaceAll {
 		path = "/apis/metrics.k8s.io/v1beta1/pods"
