@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -266,4 +267,87 @@ func TestTask_Execute_NonProbeWarnings_StillReportedByDefault(t *testing.T) {
 
 	require.Len(t, report.RecentEvents, 1)
 	assert.Equal(t, "FailedScheduling", report.RecentEvents[0].Reason)
+}
+
+// TestTask_Execute_UnhealthyPod_ResolvesDeploymentOwnerThroughReplicaSet is
+// the regression test for Phase 2 of the Kubernetes Overview plan (the
+// Issues model's "re-parent to the owning workload" mechanic, which needs
+// this field and didn't exist before): a Deployment-managed pod's direct
+// OwnerReference points at its ReplicaSet, not the Deployment — this must
+// resolve one hop further to the FINAL controller.
+func TestTask_Execute_UnhealthyPod_ResolvesDeploymentOwnerThroughReplicaSet(t *testing.T) {
+	truthy := true
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "checkout-7d8f9c6b5d",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "Deployment", Name: "checkout", Controller: &truthy},
+			},
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "checkout-7d8f9c6b5d-x9z2k",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "ReplicaSet", Name: "checkout-7d8f9c6b5d", Controller: &truthy},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
+	}
+
+	task := New(fake.NewSimpleClientset(rs, pod))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.UnhealthyPods, 1)
+	assert.Equal(t, "Deployment", report.UnhealthyPods[0].OwnerKind)
+	assert.Equal(t, "checkout", report.UnhealthyPods[0].OwnerName)
+}
+
+func TestTask_Execute_UnhealthyPod_StatefulSetOwnerResolvedDirectly(t *testing.T) {
+	truthy := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "redis-2",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "StatefulSet", Name: "redis", Controller: &truthy},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
+	}
+
+	task := New(fake.NewSimpleClientset(pod))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.UnhealthyPods, 1)
+	assert.Equal(t, "StatefulSet", report.UnhealthyPods[0].OwnerKind)
+	assert.Equal(t, "redis", report.UnhealthyPods[0].OwnerName)
+}
+
+func TestTask_Execute_UnhealthyPod_BarePodHasNoOwner(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-pod", Namespace: "default"},
+		Status:     corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
+	}
+
+	task := New(fake.NewSimpleClientset(pod))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.UnhealthyPods, 1)
+	assert.Equal(t, "", report.UnhealthyPods[0].OwnerKind)
+	assert.Equal(t, "", report.UnhealthyPods[0].OwnerName)
 }

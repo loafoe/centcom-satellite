@@ -59,6 +59,12 @@ type UnhealthyPod struct {
 	LastRestartTime    *metav1.Time `json:"last_restart_time,omitempty"`
 	LastRestartReason  string       `json:"last_restart_reason,omitempty"`
 	LastRestartMessage string       `json:"last_restart_message,omitempty"`
+	// OwnerKind/OwnerName identify the workload that owns this pod — the
+	// FINAL controller, not an intermediate ReplicaSet, so a Deployment's
+	// own replica churn always resolves to the Deployment itself. Empty
+	// when the pod has no controller owner reference (bare pods).
+	OwnerKind string `json:"owner_kind,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 // WorkloadStatus summarizes deployment/statefulset/daemonset health.
@@ -186,15 +192,62 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	return task.NewSuccessResultWithDetails(report.Summary, report), nil
 }
 
+// resolveReplicaSetOwners maps ReplicaSet name -> its own controller
+// owner's Kind/Name (normally the Deployment that created it), so a pod's
+// OwnerReferences chain can be resolved to the FINAL workload in one extra
+// List() call rather than per-pod API round trips. A ReplicaSet with no
+// controller owner (standalone, not Deployment-managed) is simply absent
+// from the map — callers fall back to reporting "ReplicaSet"/its own name.
+func (t *Task) resolveReplicaSetOwners(ctx context.Context, namespace string) (map[string]metav1.OwnerReference, error) {
+	rsList, err := t.clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	owners := make(map[string]metav1.OwnerReference, len(rsList.Items))
+	for _, rs := range rsList.Items {
+		for _, ref := range rs.OwnerReferences {
+			if ref.Controller != nil && *ref.Controller {
+				owners[rs.Name] = ref
+				break
+			}
+		}
+	}
+	return owners, nil
+}
+
+// resolvePodOwner returns the FINAL controller workload for pod: its own
+// controller owner reference, with a ReplicaSet owner further resolved to
+// the Deployment that owns the ReplicaSet (via rsOwners). Returns empty
+// strings for a bare pod with no controller owner.
+func resolvePodOwner(pod *corev1.Pod, rsOwners map[string]metav1.OwnerReference) (kind, name string) {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Controller == nil || !*ref.Controller {
+			continue
+		}
+		if ref.Kind == "ReplicaSet" {
+			if owner, ok := rsOwners[ref.Name]; ok {
+				return owner.Kind, owner.Name
+			}
+		}
+		return ref.Kind, ref.Name
+	}
+	return "", ""
+}
+
 func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMinutes int) ([]UnhealthyPod, error) {
 	restartWindow := time.Duration(restartWindowMinutes) * time.Minute
 	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	rsOwners, err := t.resolveReplicaSetOwners(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
 
 	var unhealthy []UnhealthyPod
 	for _, pod := range pods.Items {
+		ownerKind, ownerName := resolvePodOwner(&pod, rsOwners)
 		// Skip completed pods
 		if pod.Status.Phase == corev1.PodSucceeded {
 			continue
@@ -206,6 +259,8 @@ func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMin
 				Namespace: pod.Namespace,
 				Name:      pod.Name,
 				Phase:     string(pod.Status.Phase),
+				OwnerKind: ownerKind,
+				OwnerName: ownerName,
 			}
 			if pod.Status.Reason != "" {
 				up.Reason = pod.Status.Reason
@@ -228,6 +283,8 @@ func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMin
 					Message:       cs.State.Waiting.Message,
 					ContainerName: cs.Name,
 					RestartCount:  cs.RestartCount,
+					OwnerKind:     ownerKind,
+					OwnerName:     ownerName,
 				}
 				if cs.LastTerminationState.Terminated != nil {
 					tTerm := cs.LastTerminationState.Terminated
@@ -256,6 +313,8 @@ func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMin
 						Reason:        fmt.Sprintf("%d restarts", cs.RestartCount),
 						ContainerName: cs.Name,
 						RestartCount:  cs.RestartCount,
+						OwnerKind:     ownerKind,
+						OwnerName:     ownerName,
 					}
 					if cs.LastTerminationState.Terminated != nil {
 						tTerm := cs.LastTerminationState.Terminated
