@@ -23,12 +23,14 @@ type Payload struct {
 	InvolvedObject string `json:"involved_object,omitempty"`
 	Type           string `json:"type,omitempty"`
 	SinceMinutes   int    `json:"since_minutes,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
 }
 
 // EventList contains the event listing.
 type EventList struct {
-	Total  int         `json:"total"`
-	Events []EventInfo `json:"events"`
+	Total     int         `json:"total"`
+	Truncated bool        `json:"truncated,omitempty"`
+	Events    []EventInfo `json:"events"`
 }
 
 // EventInfo contains event details.
@@ -65,10 +67,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	// Validate required fields
-	if payload.Namespace == "" {
-		return task.NewErrorResult("namespace is required"), nil
-	}
+	// An empty namespace means "all namespaces" — Events("") already lists
+	// cluster-wide in client-go, so this is deliberately not validated as
+	// required.
 
 	// Default since_minutes to 60 if not specified or <= 0
 	if payload.SinceMinutes <= 0 {
@@ -140,8 +141,28 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	result.Total = len(result.Events)
 
+	const (
+		defaultLimit = 200
+		maxLimit     = 1000
+	)
+	limit := payload.Limit
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	if len(result.Events) > limit {
+		result.Events = result.Events[:limit]
+		result.Truncated = true
+	}
+
+	scope := fmt.Sprintf("namespace %s", payload.Namespace)
+	if payload.Namespace == "" {
+		scope = "all namespaces"
+	}
 	return task.NewSuccessResultWithDetails(
-		fmt.Sprintf("Found %d events in namespace %s", result.Total, payload.Namespace),
+		fmt.Sprintf("Found %d events in %s", result.Total, scope),
 		result,
 	), nil
 }
