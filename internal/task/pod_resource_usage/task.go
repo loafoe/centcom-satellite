@@ -22,6 +22,17 @@ type Payload struct {
 	ThresholdPercent int    `json:"threshold_percent,omitempty"`
 	Resource         string `json:"resource,omitempty"`
 	Limit            int    `json:"limit,omitempty"`
+	// SortBy selects the ranking key: "" (default) sorts by percent of the
+	// pod's declared CPU/memory LIMIT — meaningful for finding pods close
+	// to being throttled/OOMKilled, but every pod with no limit set at all
+	// (common for cluster add-ons: cilium, cert-manager, etc.) ties at 0%
+	// and sorts arbitrarily regardless of how much it actually uses.
+	// "usage" instead sorts by absolute usage (CPU millicores, or memory
+	// bytes when Resource == "memory") — the correct key for a "top
+	// consumers" leaderboard, independent of whether a limit exists at
+	// all. Mirrors Versus's own `sort ∈ {cpu, memory}` (never a
+	// limit-relative percent) for this exact use case.
+	SortBy string `json:"sort_by,omitempty"`
 }
 
 type UsageReport struct {
@@ -33,15 +44,15 @@ type UsageReport struct {
 }
 
 type PodUsageInfo struct {
-	Namespace      string               `json:"namespace"`
-	Pod            string               `json:"pod"`
-	MemoryUsage    string               `json:"memory_usage"`
-	MemoryLimit    string               `json:"memory_limit"`
-	MemoryPercent  float64              `json:"memory_percent"`
-	CPUUsage       string               `json:"cpu_usage"`
-	CPULimit       string               `json:"cpu_limit"`
-	CPUPercent     float64              `json:"cpu_percent"`
-	Containers     []ContainerUsageInfo `json:"containers,omitempty"`
+	Namespace     string               `json:"namespace"`
+	Pod           string               `json:"pod"`
+	MemoryUsage   string               `json:"memory_usage"`
+	MemoryLimit   string               `json:"memory_limit"`
+	MemoryPercent float64              `json:"memory_percent"`
+	CPUUsage      string               `json:"cpu_usage"`
+	CPULimit      string               `json:"cpu_limit"`
+	CPUPercent    float64              `json:"cpu_percent"`
+	Containers    []ContainerUsageInfo `json:"containers,omitempty"`
 }
 
 type ContainerUsageInfo struct {
@@ -139,7 +150,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	var podUsages []PodUsageInfo
+	var scored []scoredPod
 	for _, mp := range metrics.Items {
 		podInfo := PodUsageInfo{
 			Namespace: mp.Metadata.Namespace,
@@ -216,27 +227,58 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			}
 		}
 
-		podUsages = append(podUsages, podInfo)
+		scored = append(scored, scoredPod{info: podInfo, cpuMilli: totalCPUUsage, memBytes: totalMemUsage})
 	}
 
-	sort.Slice(podUsages, func(i, j int) bool {
-		switch payload.Resource {
-		case "cpu":
-			return podUsages[i].CPUPercent > podUsages[j].CPUPercent
-		case "memory":
-			return podUsages[i].MemoryPercent > podUsages[j].MemoryPercent
-		default:
-			maxI := max(podUsages[i].CPUPercent, podUsages[i].MemoryPercent)
-			maxJ := max(podUsages[j].CPUPercent, podUsages[j].MemoryPercent)
-			return maxI > maxJ
-		}
-	})
+	report := rankPods(scored, payload)
+	return task.NewSuccessResultWithDetails(report.Summary, report), nil
+}
+
+// scoredPod carries a pod's already-filtered PodUsageInfo alongside its
+// raw absolute usage — kept separate from PodUsageInfo's JSON shape since
+// only rankPods' sort needs it.
+type scoredPod struct {
+	info     PodUsageInfo
+	cpuMilli int64
+	memBytes int64
+}
+
+// rankPods sorts scored per payload.Resource/SortBy, applies the limit,
+// and builds the final report — pure (no k8s/metrics dependency), so it's
+// unit-testable without a running cluster or metrics-server. Threshold
+// filtering already happened before scored was built (it needs
+// payload.Resource too, but not usage sorting), so this only sorts/limits/
+// summarizes.
+func rankPods(scored []scoredPod, payload Payload) *UsageReport {
+	if payload.SortBy == "usage" {
+		sort.Slice(scored, func(i, j int) bool {
+			if payload.Resource == "memory" {
+				return scored[i].memBytes > scored[j].memBytes
+			}
+			// "cpu" or unspecified/"all" — see Payload.SortBy's doc comment
+			// for why "usage" sort doesn't attempt to combine both axes.
+			return scored[i].cpuMilli > scored[j].cpuMilli
+		})
+	} else {
+		sort.Slice(scored, func(i, j int) bool {
+			switch payload.Resource {
+			case "cpu":
+				return scored[i].info.CPUPercent > scored[j].info.CPUPercent
+			case "memory":
+				return scored[i].info.MemoryPercent > scored[j].info.MemoryPercent
+			default:
+				maxI := max(scored[i].info.CPUPercent, scored[i].info.MemoryPercent)
+				maxJ := max(scored[j].info.CPUPercent, scored[j].info.MemoryPercent)
+				return maxI > maxJ
+			}
+		})
+	}
 
 	report := &UsageReport{
-		Total: len(podUsages),
+		Total: len(scored),
 	}
-	for _, p := range podUsages {
-		if p.MemoryPercent >= 80 || p.CPUPercent >= 80 {
+	for _, p := range scored {
+		if p.info.MemoryPercent >= 80 || p.info.CPUPercent >= 80 {
 			report.HighUsage++
 		}
 	}
@@ -248,11 +290,14 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if limit <= 0 && payload.Namespace == "" {
 		limit = 50
 	}
-	if limit > 0 && len(podUsages) > limit {
-		podUsages = podUsages[:limit]
+	if limit > 0 && len(scored) > limit {
+		scored = scored[:limit]
 		report.Truncated = true
 	}
-	report.Pods = podUsages
+	report.Pods = make([]PodUsageInfo, len(scored))
+	for i, p := range scored {
+		report.Pods[i] = p.info
+	}
 
 	scope := fmt.Sprintf("namespace %s", payload.Namespace)
 	if payload.Namespace == "" {
@@ -265,8 +310,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		report.Summary = fmt.Sprintf("%d pods in %s, all within limits",
 			report.Total, scope)
 	}
-
-	return task.NewSuccessResultWithDetails(report.Summary, report), nil
+	return report
 }
 
 // metricsPath returns the metrics-server pod-metrics URL for namespace, or
