@@ -21,11 +21,13 @@ type Payload struct {
 	Namespace        string `json:"namespace"`
 	ThresholdPercent int    `json:"threshold_percent,omitempty"`
 	Resource         string `json:"resource,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
 }
 
 type UsageReport struct {
 	Summary   string         `json:"summary"`
 	Total     int            `json:"total"`
+	Truncated bool           `json:"truncated,omitempty"`
 	HighUsage int            `json:"high_usage"`
 	Pods      []PodUsageInfo `json:"pods"`
 }
@@ -94,9 +96,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	if payload.Namespace == "" {
-		return task.NewErrorResult("namespace is required"), nil
-	}
+	// An empty namespace means "all namespaces" — Pods("") already lists
+	// cluster-wide in client-go, so this is deliberately not validated as
+	// required.
 
 	if payload.Resource == "" {
 		payload.Resource = "all"
@@ -232,7 +234,6 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	report := &UsageReport{
 		Total: len(podUsages),
-		Pods:  podUsages,
 	}
 	for _, p := range podUsages {
 		if p.MemoryPercent >= 80 || p.CPUPercent >= 80 {
@@ -240,19 +241,46 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
+	// All-namespaces mode feeds a "Top N" UI card, not a browse view, so it
+	// gets a small default limit; a specific namespace keeps the old
+	// unbounded behavior unless the caller explicitly asks for a limit.
+	limit := payload.Limit
+	if limit <= 0 && payload.Namespace == "" {
+		limit = 50
+	}
+	if limit > 0 && len(podUsages) > limit {
+		podUsages = podUsages[:limit]
+		report.Truncated = true
+	}
+	report.Pods = podUsages
+
+	scope := fmt.Sprintf("namespace %s", payload.Namespace)
+	if payload.Namespace == "" {
+		scope = "all namespaces"
+	}
 	if report.HighUsage > 0 {
-		report.Summary = fmt.Sprintf("%d pods in namespace %s, %d at >=80%% resource usage",
-			report.Total, payload.Namespace, report.HighUsage)
+		report.Summary = fmt.Sprintf("%d pods in %s, %d at >=80%% resource usage",
+			report.Total, scope, report.HighUsage)
 	} else {
-		report.Summary = fmt.Sprintf("%d pods in namespace %s, all within limits",
-			report.Total, payload.Namespace)
+		report.Summary = fmt.Sprintf("%d pods in %s, all within limits",
+			report.Total, scope)
 	}
 
 	return task.NewSuccessResultWithDetails(report.Summary, report), nil
 }
 
+// metricsPath returns the metrics-server pod-metrics URL for namespace, or
+// the real all-namespaces endpoint when namespace is empty — NOT
+// "/namespaces//pods", which 404s.
+func metricsPath(namespace string) string {
+	if namespace == "" {
+		return "/apis/metrics.k8s.io/v1beta1/pods"
+	}
+	return fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods", namespace)
+}
+
 func (t *Task) getPodMetrics(ctx context.Context, namespace string) (*MetricsPodList, error) {
-	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods", namespace)
+	path := metricsPath(namespace)
 
 	data, err := t.clientset.CoreV1().RESTClient().Get().
 		AbsPath(path).
