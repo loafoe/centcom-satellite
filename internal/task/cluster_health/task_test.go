@@ -428,3 +428,79 @@ func TestTask_Execute_FreshNode_MemoryPressureStillFlagged(t *testing.T) {
 	require.Len(t, report.NodeIssues, 1, "the grace period only exempts NotReady, not other pressure conditions")
 	assert.Contains(t, report.NodeIssues[0].Conditions, "MemoryPressure")
 }
+
+func disruptedNotReadyNode(name string) *corev1.Node {
+	node := notReadyNode(name, 10*time.Minute) // past the default grace period
+	node.Spec.Taints = []corev1.Taint{
+		{Key: "karpenter.sh/disrupted", Effect: corev1.TaintEffectNoSchedule},
+	}
+	return node
+}
+
+func TestTask_Execute_KarpenterDisruptedNode_NotFlaggedByDefault(t *testing.T) {
+	node := disruptedNotReadyNode("being-consolidated")
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	assert.Empty(t, report.NodeIssues, "a node Karpenter has already tainted karpenter.sh/disrupted must not be flagged NotReady")
+}
+
+func TestTask_Execute_KarpenterDisruptedNode_FlaggedWhenIncluded(t *testing.T) {
+	node := disruptedNotReadyNode("being-consolidated")
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{"include_karpenter_disrupted":true}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1, "include_karpenter_disrupted:true must restore the NotReady flag")
+	assert.Equal(t, "being-consolidated", report.NodeIssues[0].Name)
+}
+
+func TestTask_Execute_NotReadyNode_WithoutTaint_StillFlaggedPastGracePeriod(t *testing.T) {
+	// Guards against the taint check accidentally subsuming the grace
+	// period check (or vice versa): a genuinely stuck node with NO
+	// Karpenter taint, past its grace period, must still be flagged.
+	node := notReadyNode("genuinely-stuck-no-taint", 10*time.Minute)
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1)
+	assert.Contains(t, report.NodeIssues[0].Conditions, "NotReady")
+}
+
+func TestTask_Execute_KarpenterDisruptedNode_MemoryPressureStillFlagged(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "disrupted-but-pressured",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+		},
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{{Key: "karpenter.sh/disrupted", Effect: corev1.TaintEffectNoSchedule}},
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+				{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1, "the disrupted taint only exempts NotReady, not other pressure conditions")
+	assert.Equal(t, []string{"MemoryPressure"}, report.NodeIssues[0].Conditions)
+}

@@ -44,6 +44,36 @@ type Payload struct {
 	// PIDPressure/NetworkUnavailable on a brand-new node would still be
 	// worth surfacing.
 	NodeGracePeriodMinutes int `json:"node_grace_period_minutes,omitempty"`
+	// IncludeKarpenterDisrupted includes the NotReady condition on a node
+	// Karpenter has already tainted karpenter.sh/disrupted. Default false:
+	// this taint is applied by Karpenter's disruption and termination
+	// controllers (sigs.k8s.io/karpenter pkg/apis/v1/taints.go) the moment
+	// a node is chosen for consolidation, drift, expiration, or spot
+	// interruption, well before it actually goes NotReady — flagging that
+	// NotReady is a false positive, not a real problem, same reasoning as
+	// NodeGracePeriodMinutes. Only NotReady is suppressed; other
+	// conditions (MemoryPressure etc.) on a disrupted node still get
+	// flagged.
+	IncludeKarpenterDisrupted bool `json:"include_karpenter_disrupted,omitempty"`
+}
+
+// karpenterDisruptedTaintKey is Karpenter's own marker for "this node is
+// being disrupted" - see sigs.k8s.io/karpenter's pkg/apis/v1/taints.go
+// (DisruptedTaintKey = apis.Group + "/disrupted", apis.Group =
+// "karpenter.sh"). Applied by both the disruption controller
+// (consolidation/drift/expiration) and the termination controller, so it
+// covers every disruption reason, not just consolidation specifically.
+const karpenterDisruptedTaintKey = "karpenter.sh/disrupted"
+
+// nodeHasTaint reports whether node carries a taint with the given key,
+// regardless of value/effect.
+func nodeHasTaint(node *corev1.Node, key string) bool {
+	for _, t := range node.Spec.Taints {
+		if t.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // HealthReport contains the cluster health summary.
@@ -181,7 +211,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// Check node conditions (only for cluster-wide queries)
 	if payload.Namespace == "" {
-		nodeIssues, err := t.checkNodes(ctx, payload.NodeGracePeriodMinutes)
+		nodeIssues, err := t.checkNodes(ctx, payload.NodeGracePeriodMinutes, payload.IncludeKarpenterDisrupted)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check nodes: %w", err)
 		}
@@ -434,7 +464,7 @@ func (t *Task) summarizeDaemonSets(list *appsv1.DaemonSetList) WorkloadSummary {
 	return summary
 }
 
-func (t *Task) checkNodes(ctx context.Context, gracePeriodMinutes int) ([]NodeIssue, error) {
+func (t *Task) checkNodes(ctx context.Context, gracePeriodMinutes int, includeKarpenterDisrupted bool) ([]NodeIssue, error) {
 	nodes, err := t.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -446,6 +476,7 @@ func (t *Task) checkNodes(ctx context.Context, gracePeriodMinutes int) ([]NodeIs
 	var issues []NodeIssue
 	for _, node := range nodes.Items {
 		withinGracePeriod := now.Sub(node.CreationTimestamp.Time) < gracePeriod
+		disrupted := !includeKarpenterDisrupted && nodeHasTaint(&node, karpenterDisruptedTaintKey)
 		var conditions []string
 		for _, cond := range node.Status.Conditions {
 			switch cond.Type {
@@ -453,8 +484,12 @@ func (t *Task) checkNodes(ctx context.Context, gracePeriodMinutes int) ([]NodeIs
 				// A node still inside its grace period is routinely
 				// NotReady for its first ~1-3 minutes while kubelet/CNI
 				// finish registering (e.g. a Karpenter node spinning up)
-				// - that's expected, not a cluster health issue.
-				if cond.Status != corev1.ConditionTrue && !withinGracePeriod {
+				// - that's expected, not a cluster health issue. Likewise
+				// a node Karpenter has already tainted karpenter.sh/
+				// disrupted is intentionally on its way out (consolidation/
+				// drift/expiration/interruption) - its NotReady is the
+				// expected end of that process, not a new problem.
+				if cond.Status != corev1.ConditionTrue && !withinGracePeriod && !disrupted {
 					conditions = append(conditions, "NotReady")
 				}
 			case corev1.NodeMemoryPressure:
