@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/loafoe/centcom-satellite/internal/redact"
 	"github.com/loafoe/centcom-satellite/internal/task"
 	"github.com/loafoe/centcom-satellite/internal/task/resourceaccess"
 )
@@ -127,57 +126,19 @@ func (t *Task) Execute(ctx context.Context, payloadBytes json.RawMessage) (*task
 
 	switch output {
 	case "json":
-		// Layer 3: redact secret-shaped values inside the object graph, e.g.
-		// a plaintext password in a Pod's env or a bearer token in a
-		// webhook's clientConfig - values that leak through an otherwise
-		// legitimately-readable object rather than as a Secret resource,
-		// which neither Layer 1 (RBAC) nor Layer 2 (kind denylist) can catch.
-		redacted, n := redact.WalkObject(obj.Object)
 		return task.NewSuccessResultWithDetails(
-			redactedMessage(payload.Kind, payload.Name, n),
-			redacted,
+			fmt.Sprintf("Retrieved %s %q", payload.Kind, payload.Name),
+			obj.Object,
 		), nil
 	case "summary":
 		summary := ExtractSummary(obj, isNamespaced)
-		n := redactSummary(summary)
 		return task.NewSuccessResultWithDetails(
-			redactedMessage(payload.Kind, payload.Name, n),
+			fmt.Sprintf("Retrieved %s %q", payload.Kind, payload.Name),
 			summary,
 		), nil
 	default:
 		return task.NewErrorResult(NewInvalidRequestError("output must be 'summary' or 'json'").Error()), nil
 	}
-}
-
-// redactedMessage builds the success message, noting how many values were
-// masked so a caller isn't left wondering why a field looks odd.
-func redactedMessage(kind, name string, redactedCount int) string {
-	if redactedCount == 0 {
-		return fmt.Sprintf("Retrieved %s %q", kind, name)
-	}
-	return fmt.Sprintf("Retrieved %s %q (%d value(s) redacted)", kind, name, redactedCount)
-}
-
-// redactSummary applies Layer 3 redaction to the parts of a Summary that
-// carry free-form or passthrough content: Status (a curated but arbitrary
-// map of status fields) and each Condition's Message (free text from the
-// resource's own status.conditions). The rest of Summary (name, labels,
-// timestamps) is structural metadata, not passthrough content, so it's left
-// alone. Returns the number of values redacted.
-func redactSummary(s *Summary) int {
-	count := 0
-	if s.Status != nil {
-		redacted, n := redact.WalkObject(s.Status)
-		s.Status = redacted.(map[string]any)
-		count += n
-	}
-	for i, c := range s.Conditions {
-		if reason := redact.Check("message", c.Message); reason != "" {
-			s.Conditions[i].Message = fmt.Sprintf("[REDACTED: %s, %d chars]", reason, len(c.Message))
-			count++
-		}
-	}
-	return count
 }
 
 func (t *Task) errorResult(err *StructuredError) *task.Result {

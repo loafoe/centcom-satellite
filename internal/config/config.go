@@ -95,10 +95,11 @@ type FeaturesConfig struct {
 	// GetResourceEnabled enables the get_resource task for fetching arbitrary resources.
 	// Enabled by default: the RBAC it requires is the built-in `view` ClusterRole
 	// (Layer 1), which already excludes Secrets, and the task itself adds a
-	// configurable GVK denylist (Layer 2, ResourceAccessDeny below) and
-	// content-based redaction of secret-shaped values (Layer 3, internal/redact) -
-	// defense in depth rather than a single RBAC gate. Set GET_RESOURCE_ENABLED=false
-	// to disable.
+	// configurable GVK denylist (Layer 2, ResourceAccessDeny below) on top of
+	// that. A third layer, content-based redaction of secret-shaped values
+	// inside otherwise-readable objects, existed and was removed per explicit
+	// request - get_resource/list_resources/helm_application now return
+	// object content unmodified. Set GET_RESOURCE_ENABLED=false to disable.
 	GetResourceEnabled bool
 
 	// HelmApplicationWriteEnabled gates all three write tasks -

@@ -56,9 +56,8 @@ type ListResult struct {
 // ResourceRef is a lightweight reference to a discovered resource: enough to
 // pass straight into get_resource. Status is intentionally limited to
 // condition type/status pairs (no message/reason free text) — a listing
-// covers potentially many objects at once, so unlike get_resource's Layer 3
-// redaction of a single object, the leaner shape here avoids the need for
-// per-item redaction entirely.
+// covers potentially many objects at once, so this leaner shape avoids
+// returning a full object graph per item.
 type ResourceRef struct {
 	Name       string      `json:"name"`
 	Namespace  string      `json:"namespace,omitempty"`

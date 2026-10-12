@@ -242,21 +242,22 @@ func TestTask_Execute_Success(t *testing.T) {
 			t.Errorf("expected kind 'Pod', got %v", obj["kind"])
 		}
 
-		// Layer 3: a plaintext password in the Pod's env must be redacted in
-		// the raw json output, while a benign sibling value passes through.
+		// No content-based redaction (removed per explicit request): every
+		// env value, including a plaintext password, passes through exactly
+		// as stored.
 		spec := obj["spec"].(map[string]interface{})
 		containers := spec["containers"].([]interface{})
 		env := containers[0].(map[string]interface{})["env"].([]interface{})
 		dbPassword := env[0].(map[string]interface{})["value"].(string)
 		logLevel := env[1].(map[string]interface{})["value"].(string)
-		if !strings.HasPrefix(dbPassword, "[REDACTED:") {
-			t.Errorf("expected DB_PASSWORD env value to be redacted, got %q", dbPassword)
+		if dbPassword != "hunter2" {
+			t.Errorf("expected DB_PASSWORD env value to pass through unchanged, got %q", dbPassword)
 		}
 		if logLevel != "info" {
 			t.Errorf("expected benign LOG_LEVEL value to pass through unchanged, got %q", logLevel)
 		}
-		if !strings.Contains(result.Message, "redacted") {
-			t.Errorf("expected the result message to note a redaction occurred, got %q", result.Message)
+		if strings.Contains(result.Message, "redacted") {
+			t.Errorf("expected no mention of redaction in the result message, got %q", result.Message)
 		}
 	})
 }

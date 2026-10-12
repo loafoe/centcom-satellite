@@ -272,8 +272,7 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		// ConfigMap metadata listing (names, key names, sizes, age - never
 		// values). Unconditional: its RBAC (configmaps get/list) is part of
 		// the base ClusterRole, same as the other list_* tasks below. Reading
-		// actual values goes through get_resource (kind: ConfigMap), which
-		// applies Layer 3 redaction.
+		// actual values goes through get_resource (kind: ConfigMap).
 		registry.Register(list_configmaps.New(k8sClient.Clientset))
 		registry.Register(list_pods.New(k8sClient.Clientset))
 		registry.Register(list_pvcs.New(k8sClient.Clientset))

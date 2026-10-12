@@ -2,8 +2,7 @@
 //
 // This task returns metadata only — names, namespaces, key names, per-key data
 // sizes, and age. It never returns ConfigMap values. Use get_resource
-// (apiVersion: v1, kind: ConfigMap) to read values; it applies the same
-// secret-shaped-value redaction.
+// (apiVersion: v1, kind: ConfigMap) to read values.
 package list_configmaps
 
 import (
