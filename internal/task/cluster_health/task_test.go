@@ -351,3 +351,80 @@ func TestTask_Execute_UnhealthyPod_BarePodHasNoOwner(t *testing.T) {
 	assert.Equal(t, "", report.UnhealthyPods[0].OwnerKind)
 	assert.Equal(t, "", report.UnhealthyPods[0].OwnerName)
 }
+
+func notReadyNode(name string, age time.Duration) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-age)),
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+			},
+		},
+	}
+}
+
+func TestTask_Execute_NotReadyNode_WithinGracePeriod_NotFlagged(t *testing.T) {
+	node := notReadyNode("karpenter-fresh", 2*time.Minute)
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	assert.Empty(t, report.NodeIssues, "a NotReady node still inside its default 5m grace period must not be flagged")
+}
+
+func TestTask_Execute_NotReadyNode_PastGracePeriod_Flagged(t *testing.T) {
+	node := notReadyNode("genuinely-stuck", 10*time.Minute)
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1)
+	assert.Equal(t, "genuinely-stuck", report.NodeIssues[0].Name)
+	assert.Contains(t, report.NodeIssues[0].Conditions, "NotReady")
+}
+
+func TestTask_Execute_NotReadyNode_CustomGracePeriodHonored(t *testing.T) {
+	node := notReadyNode("karpenter-fresh", 2*time.Minute)
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{"node_grace_period_minutes":1}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1, "a 1m grace period must not cover a 2m-old node")
+	assert.Equal(t, "karpenter-fresh", report.NodeIssues[0].Name)
+}
+
+func TestTask_Execute_FreshNode_MemoryPressureStillFlagged(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "fresh-but-pressured",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-1 * time.Minute)),
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	task := New(fake.NewSimpleClientset(node))
+	result, err := task.Execute(context.Background(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	require.Len(t, report.NodeIssues, 1, "the grace period only exempts NotReady, not other pressure conditions")
+	assert.Contains(t, report.NodeIssues[0].Conditions, "MemoryPressure")
+}

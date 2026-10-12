@@ -35,6 +35,15 @@ type Payload struct {
 	// making buildSummary report "Cluster has issues" purely from
 	// len(RecentEvents) > 0 even when nothing else was actually wrong.
 	IncludeProbeWarnings bool `json:"include_probe_warnings,omitempty"`
+	// NodeGracePeriodMinutes suppresses the NotReady condition on a node
+	// younger than this (default: 5). A Karpenter-provisioned node is
+	// legitimately NotReady for the first ~1-3 minutes while it boots and
+	// the kubelet/CNI finish registering — flagging that as a cluster
+	// health issue is a false positive, not a real problem. Only
+	// NotReady is grace-perioded: MemoryPressure/DiskPressure/
+	// PIDPressure/NetworkUnavailable on a brand-new node would still be
+	// worth surfacing.
+	NodeGracePeriodMinutes int `json:"node_grace_period_minutes,omitempty"`
 }
 
 // HealthReport contains the cluster health summary.
@@ -137,6 +146,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.RestartWindowMinutes == 0 {
 		payload.RestartWindowMinutes = 180
 	}
+	if payload.NodeGracePeriodMinutes == 0 {
+		payload.NodeGracePeriodMinutes = 5
+	}
 
 	report := &HealthReport{
 		Healthy: true,
@@ -169,7 +181,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	// Check node conditions (only for cluster-wide queries)
 	if payload.Namespace == "" {
-		nodeIssues, err := t.checkNodes(ctx)
+		nodeIssues, err := t.checkNodes(ctx, payload.NodeGracePeriodMinutes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check nodes: %w", err)
 		}
@@ -422,19 +434,27 @@ func (t *Task) summarizeDaemonSets(list *appsv1.DaemonSetList) WorkloadSummary {
 	return summary
 }
 
-func (t *Task) checkNodes(ctx context.Context) ([]NodeIssue, error) {
+func (t *Task) checkNodes(ctx context.Context, gracePeriodMinutes int) ([]NodeIssue, error) {
 	nodes, err := t.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
+	gracePeriod := time.Duration(gracePeriodMinutes) * time.Minute
+	now := time.Now()
+
 	var issues []NodeIssue
 	for _, node := range nodes.Items {
+		withinGracePeriod := now.Sub(node.CreationTimestamp.Time) < gracePeriod
 		var conditions []string
 		for _, cond := range node.Status.Conditions {
 			switch cond.Type {
 			case corev1.NodeReady:
-				if cond.Status != corev1.ConditionTrue {
+				// A node still inside its grace period is routinely
+				// NotReady for its first ~1-3 minutes while kubelet/CNI
+				// finish registering (e.g. a Karpenter node spinning up)
+				// - that's expected, not a cluster health issue.
+				if cond.Status != corev1.ConditionTrue && !withinGracePeriod {
 					conditions = append(conditions, "NotReady")
 				}
 			case corev1.NodeMemoryPressure:
