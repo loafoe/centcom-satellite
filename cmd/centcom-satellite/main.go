@@ -44,11 +44,13 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/list_configmaps"
 	"github.com/loafoe/centcom-satellite/internal/task/list_endpoints"
 	"github.com/loafoe/centcom-satellite/internal/task/list_gateways"
+	"github.com/loafoe/centcom-satellite/internal/task/list_hpas"
 	"github.com/loafoe/centcom-satellite/internal/task/list_ingresses"
 	"github.com/loafoe/centcom-satellite/internal/task/list_namespaces"
 	"github.com/loafoe/centcom-satellite/internal/task/list_network_policies"
 	"github.com/loafoe/centcom-satellite/internal/task/list_nodeclaims"
 	"github.com/loafoe/centcom-satellite/internal/task/list_nodepools"
+	"github.com/loafoe/centcom-satellite/internal/task/list_pdbs"
 	"github.com/loafoe/centcom-satellite/internal/task/list_pods"
 	"github.com/loafoe/centcom-satellite/internal/task/list_pvcs"
 	"github.com/loafoe/centcom-satellite/internal/task/list_resources"
@@ -288,6 +290,8 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
 		registry.Register(list_nodepools.New(k8sClient.DynamicClient))
 		registry.Register(list_vpas.New(k8sClient.Clientset, k8sClient.DynamicClient))
+		registry.Register(list_hpas.New(k8sClient.Clientset))
+		registry.Register(list_pdbs.New(k8sClient.Clientset))
 
 		// Optional: get_resource task (requires expanded RBAC - see the
 		// chart's view ClusterRoleBinding). denylist always blocks Secret
