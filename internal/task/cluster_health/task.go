@@ -55,6 +55,16 @@ type Payload struct {
 	// conditions (MemoryPressure etc.) on a disrupted node still get
 	// flagged.
 	IncludeKarpenterDisrupted bool `json:"include_karpenter_disrupted,omitempty"`
+	// PendingGracePeriodMinutes suppresses a Pending pod younger than this
+	// (default: 5). A pod is Pending from creation until it runs, so its
+	// age is how long it has been pending; a minute or two of that is
+	// normal (scheduling, a Karpenter scale-up, image pull, container
+	// creation) and flagging it made every rollout and every scale-up show
+	// up as a cluster health issue. Only a still-starting pod is
+	// grace-perioded: a Pending pod with a container already stuck on an
+	// error (ErrImagePull, ImagePullBackOff, CreateContainerConfigError,
+	// ...) is flagged immediately - that is a failure, not slowness.
+	PendingGracePeriodMinutes int `json:"pending_grace_period_minutes,omitempty"`
 }
 
 // karpenterDisruptedTaintKey is Karpenter's own marker for "this node is
@@ -179,6 +189,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.NodeGracePeriodMinutes == 0 {
 		payload.NodeGracePeriodMinutes = 5
 	}
+	if payload.PendingGracePeriodMinutes == 0 {
+		payload.PendingGracePeriodMinutes = 5
+	}
 
 	report := &HealthReport{
 		Healthy: true,
@@ -190,7 +203,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	// Check pods
-	unhealthyPods, err := t.checkPods(ctx, namespace, payload.RestartWindowMinutes)
+	unhealthyPods, err := t.checkPods(ctx, namespace, payload.RestartWindowMinutes, payload.PendingGracePeriodMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check pods: %w", err)
 	}
@@ -276,8 +289,9 @@ func resolvePodOwner(pod *corev1.Pod, rsOwners map[string]metav1.OwnerReference)
 	return "", ""
 }
 
-func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMinutes int) ([]UnhealthyPod, error) {
+func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMinutes, pendingGracePeriodMinutes int) ([]UnhealthyPod, error) {
 	restartWindow := time.Duration(restartWindowMinutes) * time.Minute
+	pendingGrace := time.Duration(pendingGracePeriodMinutes) * time.Minute
 	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -292,6 +306,13 @@ func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMin
 		ownerKind, ownerName := resolvePodOwner(&pod, rsOwners)
 		// Skip completed pods
 		if pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+
+		// A pod still starting up within its grace period isn't a problem yet
+		// (see Payload.PendingGracePeriodMinutes).
+		if pod.Status.Phase == corev1.PodPending && time.Since(pod.CreationTimestamp.Time) < pendingGrace &&
+			!hasFailingContainer(&pod) {
 			continue
 		}
 
@@ -373,6 +394,33 @@ func (t *Task) checkPods(ctx context.Context, namespace string, restartWindowMin
 	}
 
 	return unhealthy, nil
+}
+
+// failingWaitReasons are container waiting reasons that mean a container
+// cannot start, as opposed to one that simply hasn't yet (ContainerCreating,
+// PodInitializing).
+var failingWaitReasons = map[string]bool{
+	"ErrImagePull":               true,
+	"ImagePullBackOff":           true,
+	"InvalidImageName":           true,
+	"ErrImageNeverPull":          true,
+	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"RunContainerError":          true,
+	"CrashLoopBackOff":           true,
+}
+
+// hasFailingContainer reports whether any (init) container of pod is waiting
+// on a failure rather than still starting.
+func hasFailingContainer(pod *corev1.Pod) bool {
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, cs := range statuses {
+			if cs.State.Waiting != nil && failingWaitReasons[cs.State.Waiting.Reason] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (t *Task) checkWorkloads(ctx context.Context, namespace string) (WorkloadStatus, error) {
