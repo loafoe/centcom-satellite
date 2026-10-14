@@ -123,3 +123,16 @@ func TestRegisterTasks_AWSOnlyModeSkipsKubernetesWriteTasks(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterTasks_CloudTrailFlag(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		cfg := &config.Config{}
+		cfg.Features.CloudTrailEnabled = enabled
+		registry := registerTasks(cfg, newFakeK8sClient(), false, cluster_info.Capabilities{})
+		for _, name := range []string{"cloudtrail_lookup_events", "cloudtrail_logins"} {
+			if _, ok := registry.Get(name); ok != enabled {
+				t.Errorf("%s present=%v with CloudTrailEnabled=%v", name, ok, enabled)
+			}
+		}
+	}
+}

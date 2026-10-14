@@ -191,6 +191,12 @@ type FeaturesConfig struct {
 	// default; requires the write IAM policy in
 	// deploy/iam-policy-securityhub-write.json.
 	SecurityHubWriteEnabled bool
+
+	// CloudTrailEnabled enables the read-only CloudTrail event-history tasks
+	// (cloudtrail_lookup_events, cloudtrail_logins). Disabled by default; requires
+	// AWS credentials and cloudtrail:LookupEvents (see
+	// deploy/iam-policy-cloudtrail.json).
+	CloudTrailEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -254,6 +260,7 @@ func Load() (*Config, error) {
 			GuardDutyEnabled:        getEnvBool("GUARDDUTY_ENABLED", false),
 			SecurityHubEnabled:      getEnvBool("SECURITYHUB_ENABLED", false),
 			SecurityHubWriteEnabled: getEnvBool("SECURITYHUB_WRITE_ENABLED", false),
+			CloudTrailEnabled:       getEnvBool("CLOUDTRAIL_ENABLED", false),
 		},
 		AWSAssumeRole: AWSAssumeRoleConfig{
 			ARN:         os.Getenv("AWS_ASSUME_ROLE_ARN"),

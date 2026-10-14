@@ -327,3 +327,18 @@ func TestLoad_SPIREFederationRequiresEndpointPerTrustDomain(t *testing.T) {
 		t.Fatal("expected error when SPIRE_FEDERATION_BUNDLE_ENDPOINTS is missing an entry for partner.com, got nil")
 	}
 }
+
+func TestLoad_CloudTrailFlag(t *testing.T) {
+	t.Setenv("ALLOW_UNAUTHENTICATED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Features.CloudTrailEnabled {
+		t.Fatal("CloudTrailEnabled must default to false")
+	}
+	t.Setenv("CLOUDTRAIL_ENABLED", "true")
+	if cfg, _ = Load(); !cfg.Features.CloudTrailEnabled {
+		t.Fatal("CloudTrailEnabled = false, want true")
+	}
+}

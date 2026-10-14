@@ -19,6 +19,8 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/spire"
 	"github.com/loafoe/centcom-satellite/internal/task"
 	"github.com/loafoe/centcom-satellite/internal/task/account_info"
+	"github.com/loafoe/centcom-satellite/internal/task/cloudtrail_logins"
+	"github.com/loafoe/centcom-satellite/internal/task/cloudtrail_lookup_events"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_health"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 	"github.com/loafoe/centcom-satellite/internal/task/connectivity_test"
@@ -172,6 +174,7 @@ func main() {
 		GuardDuty:            cfg.Features.GuardDutyEnabled,
 		SecurityHub:          cfg.Features.SecurityHubEnabled,
 		SecurityHubWrite:     cfg.Features.SecurityHubWriteEnabled,
+		CloudTrail:           cfg.Features.CloudTrailEnabled,
 		HelmApplicationWrite: cfg.Features.HelmApplicationWriteEnabled,
 	}
 
@@ -419,6 +422,14 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 	if cfg.Features.SecurityHubWriteEnabled {
 		registry.Register(securityhub_update_findings.New())
 		slog.Info("securityhub_update_findings task enabled")
+	}
+
+	// Optional: CloudTrail event-history tasks (read-only; require AWS
+	// credentials + cloudtrail:LookupEvents, see deploy/iam-policy-cloudtrail.json).
+	if cfg.Features.CloudTrailEnabled {
+		registry.Register(cloudtrail_lookup_events.New())
+		registry.Register(cloudtrail_logins.New())
+		slog.Info("cloudtrail tasks enabled", "tasks", "cloudtrail_lookup_events,cloudtrail_logins")
 	}
 
 	return registry
