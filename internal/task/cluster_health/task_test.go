@@ -11,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -503,4 +504,76 @@ func TestTask_Execute_KarpenterDisruptedNode_MemoryPressureStillFlagged(t *testi
 	require.True(t, ok)
 	require.Len(t, report.NodeIssues, 1, "the disrupted taint only exempts NotReady, not other pressure conditions")
 	assert.Equal(t, []string{"MemoryPressure"}, report.NodeIssues[0].Conditions)
+}
+
+func pendingPod(name string, age time.Duration, waitingReason string) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-age)),
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	if waitingReason != "" {
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:  "app",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: waitingReason}},
+		}}
+	}
+	return pod
+}
+
+func runHealth(t *testing.T, payload string, objs ...runtime.Object) *HealthReport {
+	t.Helper()
+	result, err := New(fake.NewSimpleClientset(objs...)).Execute(context.Background(), json.RawMessage(payload))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	report, ok := result.Details.(*HealthReport)
+	require.True(t, ok)
+	return report
+}
+
+func TestTask_Execute_PendingPod_WithinGracePeriod_NotFlagged(t *testing.T) {
+	for _, reason := range []string{"", "ContainerCreating", "PodInitializing"} {
+		report := runHealth(t, `{}`, pendingPod("starting", 2*time.Minute, reason))
+		assert.Empty(t, report.UnhealthyPods, "a pod pending for 2m (%q) is still starting, not unhealthy", reason)
+		assert.True(t, report.Healthy)
+	}
+}
+
+func TestTask_Execute_PendingPod_PastGracePeriod_Flagged(t *testing.T) {
+	report := runHealth(t, `{}`, pendingPod("stuck", 6*time.Minute, ""))
+	require.Len(t, report.UnhealthyPods, 1)
+	assert.Equal(t, "stuck", report.UnhealthyPods[0].Name)
+	assert.Equal(t, "Pending", report.UnhealthyPods[0].Phase)
+	assert.False(t, report.Healthy)
+}
+
+func TestTask_Execute_PendingPod_FailingContainer_FlaggedImmediately(t *testing.T) {
+	for _, reason := range []string{"ErrImagePull", "ImagePullBackOff", "CreateContainerConfigError"} {
+		report := runHealth(t, `{}`, pendingPod("broken", 30*time.Second, reason))
+		require.Len(t, report.UnhealthyPods, 1, "a pending pod stuck on %s is a failure, not slowness", reason)
+	}
+	// Same for a failing init container.
+	pod := pendingPod("broken-init", 30*time.Second, "")
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+		Name:  "init",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
+	}}
+	require.Len(t, runHealth(t, `{}`, pod).UnhealthyPods, 1)
+}
+
+func TestTask_Execute_PendingPod_CustomGracePeriodHonored(t *testing.T) {
+	pod := pendingPod("starting", 2*time.Minute, "")
+	assert.Len(t, runHealth(t, `{"pending_grace_period_minutes":1}`, pod).UnhealthyPods, 1)
+	assert.Empty(t, runHealth(t, `{"pending_grace_period_minutes":10}`, pendingPod("starting", 8*time.Minute, "")).UnhealthyPods)
+}
+
+// The grace period is only about pending: a Failed pod of the same age is
+// flagged straight away.
+func TestTask_Execute_FailedPod_NotGracePerioded(t *testing.T) {
+	pod := pendingPod("failed", time.Minute, "")
+	pod.Status.Phase = corev1.PodFailed
+	assert.Len(t, runHealth(t, `{}`, pod).UnhealthyPods, 1)
 }
