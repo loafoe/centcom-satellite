@@ -44,6 +44,7 @@ type Capabilities struct {
 	GuardDuty        bool `json:"guardduty"`
 	SecurityHub      bool `json:"securityhub"`
 	SecurityHubWrite bool `json:"securityhub_write"`
+	CloudTrail       bool `json:"cloudtrail"`
 	// HelmApplication and HelmApplicationVersion are deliberately NOT set via
 	// WithCapabilities like the fields above — they're computed live on every
 	// Execute() call (see discoverHelmApplicationVersion) because whether the

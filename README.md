@@ -31,6 +31,8 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `get_events` | Get Kubernetes events with filtering |
 | `get_logs` | Retrieve pod container logs |
 | `get_resource` | Get a specific Kubernetes resource |
+| `cloudtrail_lookup_events` | Query CloudTrail event history (management events, 90 days, one region) by one lookup attribute + time range, with client-side principal matching (feature `CLOUDTRAIL_ENABLED`) |
+| `cloudtrail_logins` | Who logged into the account / did user X log in: console sign-ins (`ConsoleLogin`, full 90 days) and IAM Identity Center sessions (`AssumeRoleWithSAML`, capped window), aggregated per principal (feature `CLOUDTRAIL_ENABLED`) |
 | `guardduty_findings` | List + hydrate GuardDuty findings in one call (dashboard table) |
 | `guardduty_get_findings` | Retrieve full detail for a batch of GuardDuty finding IDs |
 | `guardduty_get_findings_statistics` | Aggregate GuardDuty finding counts (by severity/type/date/resource/account) |
