@@ -69,6 +69,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/pv_usage"
 	"github.com/loafoe/centcom-satellite/internal/task/resource_pressure"
 	"github.com/loafoe/centcom-satellite/internal/task/resourceaccess"
+	"github.com/loafoe/centcom-satellite/internal/task/running_image_vulnerabilities"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_findings_statistics"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_get_insight_statistics"
@@ -413,6 +414,13 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		registry.Register(securityhub_get_insight_statistics.New())
 		slog.Info("securityhub tasks enabled",
 			"tasks", "securityhub_list_standards,securityhub_get_findings,securityhub_get_findings_statistics,securityhub_get_insight_statistics")
+		// Inspector findings for the images running in this cluster (same
+		// findings Security Hub aggregates, joined with the cluster's pods;
+		// needs ecr:BatchGetImage + inspector2:ListFindings/ListCoverage).
+		if !awsOnlyMode {
+			registry.Register(running_image_vulnerabilities.New(k8sClient.Clientset))
+			slog.Info("running_image_vulnerabilities task enabled")
+		}
 	}
 
 	// Optional: Security Hub write task (BatchUpdateFindings). Gated

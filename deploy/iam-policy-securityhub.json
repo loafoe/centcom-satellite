@@ -11,7 +11,19 @@
         "securityhub:GetFindings",
         "securityhub:GetInsights",
         "securityhub:CreateInsight",
-        "securityhub:GetInsightResults"
+        "securityhub:GetInsightResults",
+        "securityhub:UpdateInsight",
+        "securityhub:DeleteInsight"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CentcomRunningImageVulnerabilitiesRead",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "inspector2:ListFindings",
+        "inspector2:ListCoverage"
       ],
       "Resource": "*"
     }

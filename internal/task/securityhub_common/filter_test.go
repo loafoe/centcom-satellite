@@ -3,6 +3,7 @@ package securityhub_common
 import (
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub/types"
 )
 
@@ -160,5 +161,18 @@ func TestSortCriteria_AscendingCustomField(t *testing.T) {
 	}
 	if sc[0].SortOrder != types.SortOrderAscending {
 		t.Errorf("order = %q, want asc", sc[0].SortOrder)
+	}
+}
+
+func TestBuildFilters_ExploitAndFixAvailable(t *testing.T) {
+	out := Filter{ExploitAvailable: "YES", FixAvailable: "PARTIAL"}.BuildFilters()
+	if len(out.VulnerabilitiesExploitAvailable) != 1 || aws.ToString(out.VulnerabilitiesExploitAvailable[0].Value) != "YES" {
+		t.Errorf("VulnerabilitiesExploitAvailable = %+v", out.VulnerabilitiesExploitAvailable)
+	}
+	if len(out.VulnerabilitiesFixAvailable) != 1 || aws.ToString(out.VulnerabilitiesFixAvailable[0].Value) != "PARTIAL" {
+		t.Errorf("VulnerabilitiesFixAvailable = %+v", out.VulnerabilitiesFixAvailable)
+	}
+	if empty := (Filter{}).BuildFilters(); empty.VulnerabilitiesExploitAvailable != nil || empty.VulnerabilitiesFixAvailable != nil {
+		t.Error("unset exploit/fix filters must be omitted")
 	}
 }

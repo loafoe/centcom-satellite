@@ -10,7 +10,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.61.1
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.78.2
 	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.65.3
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.66.4
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.82.0
+	github.com/aws/aws-sdk-go-v2/service/inspector2 v1.61.3
 	github.com/aws/aws-sdk-go-v2/service/securityhub v1.75.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5
 	github.com/aws/smithy-go v1.28.5
