@@ -32,6 +32,11 @@ type Filter struct {
 	// to a known set of resources (e.g. every node in a Karpenter NodePool)
 	// instead of paging through a broad, unfiltered result set.
 	ResourceIDs []string `json:"resource_ids,omitempty"`
+	// ExploitAvailable / FixAvailable keep vulnerability findings (e.g.
+	// Inspector's) whose exploit / fix availability is this value: YES or NO
+	// (FixAvailable also PARTIAL).
+	ExploitAvailable string `json:"exploit_available,omitempty"`
+	FixAvailable     string `json:"fix_available,omitempty"`
 	// AWSAccountID keeps findings for this account ID.
 	AWSAccountID string `json:"aws_account_id,omitempty"`
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
@@ -83,6 +88,12 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 	}
 	for _, id := range f.ResourceIDs {
 		out.ResourceId = append(out.ResourceId, equalsFilter(id))
+	}
+	if f.ExploitAvailable != "" {
+		out.VulnerabilitiesExploitAvailable = []types.StringFilter{equalsFilter(f.ExploitAvailable)}
+	}
+	if f.FixAvailable != "" {
+		out.VulnerabilitiesFixAvailable = []types.StringFilter{equalsFilter(f.FixAvailable)}
 	}
 	if f.AWSAccountID != "" {
 		out.AwsAccountId = []types.StringFilter{equalsFilter(f.AWSAccountID)}

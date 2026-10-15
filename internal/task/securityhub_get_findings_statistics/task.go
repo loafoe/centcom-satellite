@@ -66,6 +66,15 @@ var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 		}
 		return aws.ToString(f.Resources[0].Type)
 	},
+	"TITLE": func(f types.AwsSecurityFinding) string {
+		return aws.ToString(f.Title)
+	},
+	"RESOURCE_ID": func(f types.AwsSecurityFinding) string {
+		if len(f.Resources) == 0 {
+			return ""
+		}
+		return aws.ToString(f.Resources[0].Id)
+	},
 }
 
 // severityBuckets are the fixed SeverityLabel values queried directly when
@@ -185,7 +194,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	default:
 		extract, ok := groupByExtractors[groupByStr]
 		if !ok {
-			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE)", groupByStr)), nil
+			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID)", groupByStr)), nil
 		}
 		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract)
 	}

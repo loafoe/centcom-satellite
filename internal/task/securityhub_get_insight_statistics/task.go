@@ -1,37 +1,39 @@
 // Package securityhub_get_insight_statistics gets exact Security Hub finding
-// counts via a reused, named Insight (CreateInsight + GetInsightResults)
-// rather than the capped-per-bucket or exhaustive-pagination approaches in
+// counts via an AWS Insight (GetInsightResults) rather than the
+// capped-per-bucket or exhaustive-pagination approaches in
 // securityhub_get_findings_statistics. Insight results are computed live by
 // AWS on every GetInsightResults call — verified empirically against a real
 // account (34,010 MEDIUM findings from an Insight matched an independent
-// 19-page exhaustive GetFindings scan run at the same moment) — so this task
-// trades one extra one-time CreateInsight call for exact, uncapped counts in
-// a small, fixed number of calls per request thereafter.
+// 19-page exhaustive GetFindings scan run at the same moment) — so counts
+// are exact in a few calls, even for millions of findings.
 //
-// The Insight is found-or-created by a deterministic name
-// ("centcom-satellite-stats-<group_by>-<region>-<filter key>", lowercased,
-// where <region> is the AWS region the client factory actually resolved to
-// and <filter key> a short hash of the caller's filter — see insightName)
-// and reused across calls to the same (group_by, region, filter) rather than
-// recreated every time. An Insight's Filters are fixed at CreateInsight, so
-// the filter must be part of the name: matching on (group_by, region) alone
-// would answer a later call with a different filter using the first
-// caller's filter. Each distinct filter therefore costs one of the account's
-// custom Insight slots (quota exhaustion is reported as a clear error). The region is baked into both the name and the
-// Insight's Filters (see securityhub_common.Filter.Region): Security Hub's
-// cross-region finding aggregation means an Insight's GetInsightResults can
-// otherwise silently include findings from every linked region, not just
-// the one this satellite runs in — and since matching is by name alone, an
-// older Insight created before this region-scoping existed must never be
-// matched and reused with its stale, unregioned filter. AWS does not enforce
-// unique Insight names (verified empirically: calling CreateInsight twice
-// with the same name creates two distinct Insights), so on a name collision
-// this task uses the first match by list order and leaves any extras alone
-// rather than erroring or attempting cleanup. DeleteInsight is commonly
-// blocked by account/org policy (verified empirically via an explicit SCP
-// deny even under AdministratorAccess), so this task never deletes an
-// Insight — Insights it creates are meant to be permanent, reused
-// infrastructure, not scoped to one request's lifetime.
+// Custom Insights are a scarce, account-wide resource (100 per account and
+// region, shared with every human and tool), so this task uses exactly ONE
+// Insight per account and region — its "slot" — for every query:
+//
+//   - The slot is named "centcom-satellite-stats-<region>#<fingerprint>",
+//     where the fingerprint identifies the query (group_by + a hash of the
+//     normalized filter). An Insight's filter is part of the Insight, so the
+//     name tells exactly which query the slot currently answers.
+//   - A call whose query is already in the slot reads the results directly.
+//     Otherwise it rewrites the slot (UpdateInsight: filters, group-by
+//     attribute and fingerprinted name) and then reads the results.
+//   - After reading, it reads the slot's name back. If another caller (a
+//     second replica, or another satellite in the same account) rewrote the
+//     slot in between, the results may belong to that caller's query, so it
+//     retries (maxAttempts). Calls within one process are serialized per
+//     region, so retries are only needed across processes.
+//   - Once per process and region, it deletes this task's other Insights:
+//     ones from older versions (one per group_by, region or filter) and
+//     duplicate slots from a create race. DeleteInsight is commonly blocked
+//     by account/org policy (verified empirically via an explicit SCP deny
+//     even under AdministratorAccess); that is logged and otherwise ignored
+//     — those slots then stay used, but no new ones are taken.
+//
+// Insights only ever see their own region's findings: the Region filter is
+// always set (see securityhub_common.Filter.Region), because Security Hub's
+// cross-region finding aggregation can otherwise merge every linked region's
+// findings into one region's results.
 package securityhub_get_insight_statistics
 
 import (
@@ -41,8 +43,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub"
@@ -55,23 +59,23 @@ import (
 
 const TaskName = "securityhub_get_insight_statistics"
 
-// insightNamePrefix identifies Insights this task owns, distinguishing them
-// from a user's own custom Insights of the same account/region.
+// insightNamePrefix identifies Insights this task owns (current slot and
+// any left over from older versions), distinguishing them from a user's
+// own custom Insights of the same account/region.
 const insightNamePrefix = "centcom-satellite-stats-"
 
-// insightName returns the deterministic name for a (group_by, region) pair.
-// The region is part of the name — not just the Filters — because
-// findOrCreateInsight matches by name alone: an Insight created before this
-// task applied a Region filter (or one created against a different resolved
-// region) must never be matched and reused with the wrong scope. Baking the
-// region into the name guarantees a stale, unregioned Insight is left
-// untouched and a fresh, correctly-filtered one is created instead.
-//
-// The filter key is part of the name for the same reason: an Insight's
-// Filters are only set at creation, so a name shared by two different
-// filters would serve one caller the other's counts.
-func insightName(groupBy, region string, filter shc.Filter) string {
-	return insightNamePrefix + strings.ToLower(groupBy) + "-" + strings.ToLower(region) + "-" + filterKey(filter)
+// maxAttempts bounds retries when another process rewrites the slot
+// between our update and our read.
+const maxAttempts = 3
+
+// slotPrefix is the name prefix of the region's one slot.
+func slotPrefix(region string) string {
+	return insightNamePrefix + strings.ToLower(region) + "#"
+}
+
+// slotName is the slot's name while it answers (groupBy, filter).
+func slotName(region, groupBy string, filter shc.Filter) string {
+	return slotPrefix(region) + strings.ToLower(groupBy) + "-" + filterKey(filter)
 }
 
 // filterKey is a short, stable hash of filter. Filters that select the same
@@ -101,11 +105,22 @@ var groupByAttributes = map[string]string{
 	"WORKFLOW_STATUS": "WorkflowStatus",
 	"PRODUCT":         "ProductName",
 	"RESOURCE_TYPE":   "ResourceType",
+	// Finding title (for Inspector: "<CVE> - <package>") and resource ID
+	// (e.g. one ECR image or EC2 instance). AWS returns at most the top 100
+	// values for an Insight, so these two can be truncated.
+	"TITLE":       "Title",
+	"RESOURCE_ID": "ResourceId",
 }
+
+// maxInsightValues is how many result values GetInsightResults returns at
+// most; more distinct values than this means the result is truncated.
+const maxInsightValues = 100
 
 type api interface {
 	GetInsights(context.Context, *securityhub.GetInsightsInput, ...func(*securityhub.Options)) (*securityhub.GetInsightsOutput, error)
 	CreateInsight(context.Context, *securityhub.CreateInsightInput, ...func(*securityhub.Options)) (*securityhub.CreateInsightOutput, error)
+	UpdateInsight(context.Context, *securityhub.UpdateInsightInput, ...func(*securityhub.Options)) (*securityhub.UpdateInsightOutput, error)
+	DeleteInsight(context.Context, *securityhub.DeleteInsightInput, ...func(*securityhub.Options)) (*securityhub.DeleteInsightOutput, error)
 	GetInsightResults(context.Context, *securityhub.GetInsightResultsInput, ...func(*securityhub.Options)) (*securityhub.GetInsightResultsOutput, error)
 }
 
@@ -119,20 +134,22 @@ type Payload struct {
 // Statistics is the task result payload. Unlike
 // securityhub_get_findings_statistics, counts here are always exact —
 // Insight results have no per-bucket cap — so there is no Capped field.
+// Truncated is set when AWS returned its maximum number of values
+// (possible for TITLE / RESOURCE_ID): only the top values are listed and
+// Total covers those only.
 type Statistics struct {
 	GroupBy    string          `json:"group_by"`
 	InsightArn string          `json:"insight_arn"`
 	Total      int32           `json:"total"`
+	Truncated  bool            `json:"truncated,omitempty"`
 	Counts     []shc.StatCount `json:"counts"`
 }
 
 type Task struct {
 	// clientFactory returns the securityhub client plus the AWS region it
-	// actually resolved to — Execute both constrains the Insight's Filters to
-	// that region (see securityhub_common.Filter.Region) and folds it into
-	// the Insight's name (see insightName), so a Security Hub cross-region
-	// finding aggregator can't leak other regions' findings into these
-	// counts.
+	// actually resolved to — Execute uses it both for the Region filter and
+	// for the slot's name, so a Security Hub cross-region finding aggregator
+	// can't leak other regions' findings into these counts.
 	clientFactory func(ctx context.Context, region string) (api, string, error)
 }
 
@@ -152,6 +169,23 @@ func NewWithClientFactory(f func(ctx context.Context, region string) (api, strin
 
 func (t *Task) Name() string { return TaskName }
 
+// regionLocks serializes slot use per region within this process; cleaned
+// records which regions' leftover Insights were already cleaned up.
+var (
+	regionLocksMu sync.Mutex
+	regionLocks   = map[string]*sync.Mutex{}
+	cleaned       = map[string]bool{}
+)
+
+func regionLock(region string) *sync.Mutex {
+	regionLocksMu.Lock()
+	defer regionLocksMu.Unlock()
+	if regionLocks[region] == nil {
+		regionLocks[region] = &sync.Mutex{}
+	}
+	return regionLocks[region]
+}
+
 func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.Result, error) {
 	var payload Payload
 	if len(rawPayload) > 0 {
@@ -160,13 +194,13 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 	}
 
-	groupByStr := payload.GroupBy
+	groupByStr := strings.ToUpper(payload.GroupBy)
 	if groupByStr == "" {
 		groupByStr = "SEVERITY"
 	}
 	attribute, ok := groupByAttributes[groupByStr]
 	if !ok {
-		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE)", groupByStr)), nil
+		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID)", groupByStr)), nil
 	}
 
 	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)
@@ -175,64 +209,152 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	filter := payload.Filter.WithResolvedRegion(resolvedRegion)
-	name := insightName(groupByStr, resolvedRegion, filter)
 	filters := filter.BuildFilters()
-	insightArn, err := findOrCreateInsight(ctx, client, name, attribute, filters)
-	if err != nil {
-		var limitExceeded *types.LimitExceededException
-		if errors.As(err, &limitExceeded) {
-			return task.NewErrorResult(fmt.Sprintf("cannot create insight %q: account's custom insight quota is exhausted; use securityhub_get_findings_statistics instead", name)), nil
+	name := slotName(resolvedRegion, groupByStr, filter)
+
+	lock := regionLock(resolvedRegion)
+	lock.Lock()
+	defer lock.Unlock()
+
+	for attempt := 1; ; attempt++ {
+		arn, err := useSlot(ctx, client, resolvedRegion, name, attribute, filters)
+		if err != nil {
+			var limitExceeded *types.LimitExceededException
+			if errors.As(err, &limitExceeded) {
+				return task.NewErrorResult("cannot create the statistics insight: the account's custom insight quota (100 per region) is exhausted; use securityhub_get_findings_statistics instead"), nil
+			}
+			if isNotFound(err) && attempt < maxAttempts {
+				continue // slot deleted under us (a duplicate cleaned up elsewhere)
+			}
+			return nil, fmt.Errorf("prepare insight: %w", err)
 		}
-		return nil, fmt.Errorf("find or create insight: %w", err)
-	}
 
-	out, err := client.GetInsightResults(ctx, &securityhub.GetInsightResultsInput{InsightArn: aws.String(insightArn)})
-	if err != nil {
-		return nil, fmt.Errorf("get insight results: %w", err)
-	}
-
-	result := Statistics{GroupBy: groupByStr, InsightArn: insightArn, Counts: []shc.StatCount{}}
-	if out.InsightResults != nil {
-		for _, v := range out.InsightResults.ResultValues {
-			count := aws.ToInt32(v.Count)
-			result.Counts = append(result.Counts, shc.StatCount{Key: aws.ToString(v.GroupByAttributeValue), Count: count})
-			result.Total += count
+		out, err := client.GetInsightResults(ctx, &securityhub.GetInsightResultsInput{InsightArn: aws.String(arn)})
+		if err != nil {
+			if isNotFound(err) && attempt < maxAttempts {
+				continue
+			}
+			return nil, fmt.Errorf("get insight results: %w", err)
 		}
-	}
+		// The results are only ours if the slot still holds our query.
+		current, err := insightNameOf(ctx, client, arn)
+		if err != nil && !isNotFound(err) {
+			return nil, fmt.Errorf("verify insight: %w", err)
+		}
+		if current != name {
+			if attempt < maxAttempts {
+				continue
+			}
+			return task.NewErrorResult("the statistics insight is busy (other callers keep changing it); retry in a few seconds"), nil
+		}
 
-	return task.NewSuccessResultWithDetails(fmt.Sprintf("insight statistics grouped by %s: %d buckets", groupByStr, len(result.Counts)), result), nil
+		result := Statistics{GroupBy: groupByStr, InsightArn: arn, Counts: []shc.StatCount{}}
+		if out.InsightResults != nil {
+			for _, v := range out.InsightResults.ResultValues {
+				count := aws.ToInt32(v.Count)
+				result.Counts = append(result.Counts, shc.StatCount{Key: aws.ToString(v.GroupByAttributeValue), Count: count})
+				result.Total += count
+			}
+			result.Truncated = len(out.InsightResults.ResultValues) >= maxInsightValues
+		}
+		msg := fmt.Sprintf("insight statistics grouped by %s: %d buckets", groupByStr, len(result.Counts))
+		if result.Truncated {
+			msg += fmt.Sprintf(" (top %d only)", maxInsightValues)
+		}
+		return task.NewSuccessResultWithDetails(msg, result), nil
+	}
 }
 
-// findOrCreateInsight returns the ARN of the first existing custom Insight
-// named name, or creates one with the given group-by attribute and filters
-// if none exists. AWS does not enforce unique Insight names, so on multiple
-// matches (e.g. a rare create race) this deterministically uses the first
-// one returned by GetInsights and leaves any others untouched.
-func findOrCreateInsight(ctx context.Context, client api, name, attribute string, filters *types.AwsSecurityFindingFilters) (string, error) {
+// useSlot returns the region's slot ARN with the slot set to answer name:
+// it finds the slot (creating it if this task has none), rewrites it if it
+// currently holds a different query, and — once per process and region —
+// deletes this task's other, leftover Insights.
+func useSlot(ctx context.Context, client api, region, name, attribute string, filters *types.AwsSecurityFindingFilters) (string, error) {
+	var slot *types.Insight
+	var leftovers []types.Insight
 	var nextToken *string
 	for {
 		out, err := client.GetInsights(ctx, &securityhub.GetInsightsInput{NextToken: nextToken})
 		if err != nil {
 			return "", fmt.Errorf("get insights: %w", err)
 		}
-		for _, insight := range out.Insights {
-			if aws.ToString(insight.Name) == name {
-				return aws.ToString(insight.InsightArn), nil
+		for i := range out.Insights {
+			in := out.Insights[i]
+			n := aws.ToString(in.Name)
+			switch {
+			case slot == nil && strings.HasPrefix(n, slotPrefix(region)):
+				slot = &in
+			case strings.HasPrefix(n, insightNamePrefix):
+				leftovers = append(leftovers, in)
 			}
 		}
-		if out.NextToken == nil || aws.ToString(out.NextToken) == "" {
+		if aws.ToString(out.NextToken) == "" {
 			break
 		}
 		nextToken = out.NextToken
 	}
 
-	created, err := client.CreateInsight(ctx, &securityhub.CreateInsightInput{
-		Name:             aws.String(name),
-		GroupByAttribute: aws.String(attribute),
-		Filters:          filters,
-	})
-	if err != nil {
-		return "", fmt.Errorf("create insight: %w", err)
+	var arn string
+	switch {
+	case slot == nil:
+		created, err := client.CreateInsight(ctx, &securityhub.CreateInsightInput{
+			Name: aws.String(name), GroupByAttribute: aws.String(attribute), Filters: filters,
+		})
+		if err != nil {
+			return "", fmt.Errorf("create insight: %w", err)
+		}
+		arn = aws.ToString(created.InsightArn)
+	case aws.ToString(slot.Name) != name:
+		arn = aws.ToString(slot.InsightArn)
+		if _, err := client.UpdateInsight(ctx, &securityhub.UpdateInsightInput{
+			InsightArn: aws.String(arn), Name: aws.String(name), GroupByAttribute: aws.String(attribute), Filters: filters,
+		}); err != nil {
+			return "", fmt.Errorf("update insight: %w", err)
+		}
+	default:
+		arn = aws.ToString(slot.InsightArn)
 	}
-	return aws.ToString(created.InsightArn), nil
+
+	cleanupOnce(ctx, client, region, leftovers)
+	return arn, nil
+}
+
+// cleanupOnce deletes leftover Insights of this task once per process and
+// region, returning their quota slots. Failures (typically DeleteInsight
+// denied by policy) are logged, never returned.
+func cleanupOnce(ctx context.Context, client api, region string, leftovers []types.Insight) {
+	regionLocksMu.Lock()
+	done := cleaned[region]
+	cleaned[region] = true
+	regionLocksMu.Unlock()
+	if done || len(leftovers) == 0 {
+		return
+	}
+	deleted := 0
+	for _, in := range leftovers {
+		if _, err := client.DeleteInsight(ctx, &securityhub.DeleteInsightInput{InsightArn: in.InsightArn}); err != nil {
+			slog.Warn("could not delete leftover statistics insight; it keeps using a custom insight slot",
+				"region", region, "insight", aws.ToString(in.Name), "error", err)
+			continue
+		}
+		deleted++
+	}
+	slog.Info("cleaned up leftover statistics insights", "region", region, "deleted", deleted, "found", len(leftovers))
+}
+
+// insightNameOf reads one Insight's current name.
+func insightNameOf(ctx context.Context, client api, arn string) (string, error) {
+	out, err := client.GetInsights(ctx, &securityhub.GetInsightsInput{InsightArns: []string{arn}})
+	if err != nil {
+		return "", err
+	}
+	if len(out.Insights) == 0 {
+		return "", nil
+	}
+	return aws.ToString(out.Insights[0].Name), nil
+}
+
+func isNotFound(err error) bool {
+	var nf *types.ResourceNotFoundException
+	return errors.As(err, &nf)
 }
