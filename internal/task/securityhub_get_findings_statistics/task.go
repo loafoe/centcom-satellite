@@ -12,7 +12,7 @@
 // remain available via the securityhub_get_findings task (paginated) or the
 // UI/MCP tooling built on it.
 //
-// TYPE and PRODUCT are open-ended free-form strings with no enumerable value
+// TYPE, PRODUCT and RESOURCE_TYPE are open-ended free-form strings with no enumerable value
 // set, so they keep the exhaustive client-side aggregation: page through
 // GetFindings and count every matching finding, paced by interPageDelay to
 // stay under AWS's throttling limit.
@@ -47,7 +47,7 @@ const pageSize int32 = 100
 const interPageDelay = 200 * time.Millisecond
 
 // groupByExtractors covers the exhaustive-scan group_by values (TYPE,
-// PRODUCT): open-ended strings with no fixed value set to query per-bucket.
+// PRODUCT, RESOURCE_TYPE): open-ended strings with no fixed value set to query per-bucket.
 var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 	"TYPE": func(f types.AwsSecurityFinding) string {
 		if len(f.Types) == 0 {
@@ -57,6 +57,14 @@ var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 	},
 	"PRODUCT": func(f types.AwsSecurityFinding) string {
 		return aws.ToString(f.ProductName)
+	},
+	// The first resource, like the console's and the CLI's
+	// Findings[].Resources[0].Type.
+	"RESOURCE_TYPE": func(f types.AwsSecurityFinding) string {
+		if len(f.Resources) == 0 {
+			return ""
+		}
+		return aws.ToString(f.Resources[0].Type)
 	},
 }
 
@@ -177,7 +185,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	default:
 		extract, ok := groupByExtractors[groupByStr]
 		if !ok {
-			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT)", groupByStr)), nil
+			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE)", groupByStr)), nil
 		}
 		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract)
 	}

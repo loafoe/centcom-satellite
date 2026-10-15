@@ -9,10 +9,15 @@
 // a small, fixed number of calls per request thereafter.
 //
 // The Insight is found-or-created by a deterministic name
-// ("centcom-satellite-stats-<group_by>-<region>", lowercased, where <region>
-// is the AWS region the client factory actually resolved to — see
-// insightName) and reused across calls to the same (group_by, region) rather
-// than recreated every time. The region is baked into both the name and the
+// ("centcom-satellite-stats-<group_by>-<region>-<filter key>", lowercased,
+// where <region> is the AWS region the client factory actually resolved to
+// and <filter key> a short hash of the caller's filter — see insightName)
+// and reused across calls to the same (group_by, region, filter) rather than
+// recreated every time. An Insight's Filters are fixed at CreateInsight, so
+// the filter must be part of the name: matching on (group_by, region) alone
+// would answer a later call with a different filter using the first
+// caller's filter. Each distinct filter therefore costs one of the account's
+// custom Insight slots (quota exhaustion is reported as a clear error). The region is baked into both the name and the
 // Insight's Filters (see securityhub_common.Filter.Region): Security Hub's
 // cross-region finding aggregation means an Insight's GetInsightResults can
 // otherwise silently include findings from every linked region, not just
@@ -31,9 +36,12 @@ package securityhub_get_insight_statistics
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -58,8 +66,30 @@ const insightNamePrefix = "centcom-satellite-stats-"
 // region) must never be matched and reused with the wrong scope. Baking the
 // region into the name guarantees a stale, unregioned Insight is left
 // untouched and a fresh, correctly-filtered one is created instead.
-func insightName(groupBy, region string) string {
-	return insightNamePrefix + strings.ToLower(groupBy) + "-" + strings.ToLower(region)
+//
+// The filter key is part of the name for the same reason: an Insight's
+// Filters are only set at creation, so a name shared by two different
+// filters would serve one caller the other's counts.
+func insightName(groupBy, region string, filter shc.Filter) string {
+	return insightNamePrefix + strings.ToLower(groupBy) + "-" + strings.ToLower(region) + "-" + filterKey(filter)
+}
+
+// filterKey is a short, stable hash of filter. Filters that select the same
+// findings hash the same: list order is irrelevant (values are OR'd) and an
+// empty RecordState means ACTIVE.
+func filterKey(filter shc.Filter) string {
+	f := filter
+	if f.RecordState == "" {
+		f.RecordState = "ACTIVE"
+	}
+	for _, l := range []*[]string{&f.SeverityLabels, &f.Types, &f.WorkflowStatus, &f.ResourceIDs} {
+		*l = slices.Clone(*l)
+		slices.Sort(*l)
+		*l = slices.Compact(*l)
+	}
+	b, _ := json.Marshal(f) // a struct of strings and string slices: cannot fail
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:6])
 }
 
 // groupByAttributes maps the same group_by vocabulary used by
@@ -70,6 +100,7 @@ var groupByAttributes = map[string]string{
 	"TYPE":            "Type",
 	"WORKFLOW_STATUS": "WorkflowStatus",
 	"PRODUCT":         "ProductName",
+	"RESOURCE_TYPE":   "ResourceType",
 }
 
 type api interface {
@@ -135,7 +166,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	attribute, ok := groupByAttributes[groupByStr]
 	if !ok {
-		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT)", groupByStr)), nil
+		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE)", groupByStr)), nil
 	}
 
 	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)
@@ -143,8 +174,9 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return nil, fmt.Errorf("failed to build securityhub client: %w", err)
 	}
 
-	name := insightName(groupByStr, resolvedRegion)
-	filters := payload.Filter.WithResolvedRegion(resolvedRegion).BuildFilters()
+	filter := payload.Filter.WithResolvedRegion(resolvedRegion)
+	name := insightName(groupByStr, resolvedRegion, filter)
+	filters := filter.BuildFilters()
 	insightArn, err := findOrCreateInsight(ctx, client, name, attribute, filters)
 	if err != nil {
 		var limitExceeded *types.LimitExceededException

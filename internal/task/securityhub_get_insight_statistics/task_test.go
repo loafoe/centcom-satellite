@@ -8,7 +8,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub/types"
+
+	shc "github.com/loafoe/centcom-satellite/internal/task/securityhub_common"
 )
+
+// defaultName is the name this task gives the SEVERITY Insight for an empty
+// filter in the fake's resolved region.
+var defaultName = insightName("SEVERITY", "us-east-1", shc.Filter{Region: "us-east-1"})
 
 type fakeAPI struct {
 	insightPages   [][]types.Insight
@@ -80,7 +86,7 @@ func TestExecute_ReusesExistingInsightByName(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{{
 			insight("some-other-insight", "arn:other"),
-			insight("centcom-satellite-stats-severity-us-east-1", "arn:existing"),
+			insight(defaultName, "arn:existing"),
 		}},
 		resultValues: []types.InsightResultValue{
 			resultValue("CRITICAL", 3521), resultValue("HIGH", 19837), resultValue("MEDIUM", 34010),
@@ -138,8 +144,8 @@ func TestExecute_CreatesInsightWhenMissing(t *testing.T) {
 	if fake.createCalled != 1 {
 		t.Fatalf("CreateInsight called %d times, want 1", fake.createCalled)
 	}
-	if got := aws.ToString(fake.created.Name); got != "centcom-satellite-stats-severity-us-east-1" {
-		t.Errorf("insight name = %q, want centcom-satellite-stats-severity-us-east-1", got)
+	if got := aws.ToString(fake.created.Name); got != defaultName {
+		t.Errorf("insight name = %q, want %s", got, defaultName)
 	}
 	if got := aws.ToString(fake.created.GroupByAttribute); got != "SeverityLabel" {
 		t.Errorf("group by attribute = %q, want SeverityLabel", got)
@@ -155,8 +161,8 @@ func TestExecute_CreatesInsightWhenMissing(t *testing.T) {
 func TestExecute_MultipleNameMatchesUsesFirst(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{{
-			insight("centcom-satellite-stats-severity-us-east-1", "arn:first-match"),
-			insight("centcom-satellite-stats-severity-us-east-1", "arn:second-match"),
+			insight(defaultName, "arn:first-match"),
+			insight(defaultName, "arn:second-match"),
 		}},
 		resultValues: []types.InsightResultValue{resultValue("HIGH", 1)},
 	}
@@ -178,7 +184,7 @@ func TestExecute_PaginatesInsightLookupAcrossPages(t *testing.T) {
 	fake := &fakeAPI{
 		insightPages: [][]types.Insight{
 			{insight("page1-a", "arn:p1a")},
-			{insight("centcom-satellite-stats-severity-us-east-1", "arn:p2-match")},
+			{insight(defaultName, "arn:p2-match")},
 		},
 		insightTokens: []string{"more", ""},
 		resultValues:  []types.InsightResultValue{resultValue("HIGH", 1)},
@@ -284,5 +290,73 @@ func TestExecute_InvalidPayload(t *testing.T) {
 	}
 	if res.Success {
 		t.Fatal("expected success=false for invalid payload")
+	}
+}
+
+// TestExecute_PreFilterKeyNameNotReused verifies an Insight named without the
+// filter key (as this task named Insights before the key was added) is never
+// reused: its Filters are whatever its first caller asked for.
+func TestExecute_PreFilterKeyNameNotReused(t *testing.T) {
+	fake := &fakeAPI{
+		insightPages: [][]types.Insight{{insight("centcom-satellite-stats-severity-us-east-1", "arn:stale")}},
+		createdArn:   "arn:new",
+	}
+	if _, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.createCalled != 1 || fake.lastResultsArn != "arn:new" {
+		t.Errorf("createCalled=%d lastResultsArn=%q, want a fresh insight", fake.createCalled, fake.lastResultsArn)
+	}
+}
+
+// TestExecute_DifferentFilterGetsOwnInsight is the regression test for
+// reusing one (group_by, region) Insight across filters: a CRITICAL-only
+// call must not be answered by the unfiltered Insight.
+func TestExecute_DifferentFilterGetsOwnInsight(t *testing.T) {
+	fake := &fakeAPI{
+		insightPages: [][]types.Insight{{insight(defaultName, "arn:unfiltered")}},
+		createdArn:   "arn:critical",
+	}
+	payload := `{"filter":{"severity_labels":["CRITICAL"],"workflow_status":["NEW","NOTIFIED"]}}`
+	if _, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(payload)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.createCalled != 1 || fake.lastResultsArn != "arn:critical" {
+		t.Fatalf("createCalled=%d lastResultsArn=%q, want a new insight for the new filter", fake.createCalled, fake.lastResultsArn)
+	}
+	sev := fake.created.Filters.SeverityLabel
+	if len(sev) != 1 || aws.ToString(sev[0].Value) != "CRITICAL" {
+		t.Errorf("created insight SeverityLabel filter = %+v, want [CRITICAL]", sev)
+	}
+	if len(fake.created.Filters.WorkflowStatus) != 2 {
+		t.Errorf("created insight WorkflowStatus filter = %+v, want NEW and NOTIFIED", fake.created.Filters.WorkflowStatus)
+	}
+}
+
+func TestFilterKey_EquivalentFiltersMatch(t *testing.T) {
+	a := shc.Filter{WorkflowStatus: []string{"NEW", "NOTIFIED"}, SeverityLabels: []string{"CRITICAL"}, Region: "us-east-1"}
+	b := shc.Filter{WorkflowStatus: []string{"NOTIFIED", "NEW", "NEW"}, SeverityLabels: []string{"CRITICAL"}, RecordState: "ACTIVE", Region: "us-east-1"}
+	if filterKey(a) != filterKey(b) {
+		t.Errorf("equivalent filters hash differently: %s vs %s", filterKey(a), filterKey(b))
+	}
+	if filterKey(a) == filterKey(shc.Filter{Region: "us-east-1"}) {
+		t.Error("different filters hash the same")
+	}
+	if a.WorkflowStatus[0] != "NEW" || b.WorkflowStatus[0] != "NOTIFIED" {
+		t.Error("filterKey mutated its input")
+	}
+}
+
+func TestExecute_GroupByResourceType(t *testing.T) {
+	fake := &fakeAPI{resultValues: []types.InsightResultValue{resultValue("AwsEc2Instance", 7), resultValue("AwsS3Bucket", 2)}}
+	res, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{"group_by":"RESOURCE_TYPE"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	if got := aws.ToString(fake.created.GroupByAttribute); got != "ResourceType" {
+		t.Errorf("GroupByAttribute = %q, want ResourceType", got)
+	}
+	if stats := res.Details.(Statistics); stats.Total != 9 || len(stats.Counts) != 2 {
+		t.Errorf("stats = %+v, want 2 buckets totalling 9", stats)
 	}
 }
