@@ -321,3 +321,29 @@ func TestExecute_Product_ContextCancelledDuringPagination(t *testing.T) {
 		t.Fatal("expected an error when context is cancelled mid-scan")
 	}
 }
+
+func TestExecute_ResourceType_CountsFirstResource(t *testing.T) {
+	api := &pagedFakeAPI{
+		pages:  [][]types.AwsSecurityFinding{{resourceFinding("AwsEc2Instance", "AwsEc2Volume"), resourceFinding("AwsEc2Instance")}, {resourceFinding("AwsS3Bucket"), resourceFinding()}},
+		tokens: []string{"p2", ""},
+	}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"group_by":"RESOURCE_TYPE"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	got := statCounts(res.Details.(Statistics))
+	want := map[string]int32{"AwsEc2Instance": 2, "AwsS3Bucket": 1, "": 1}
+	for k, v := range want {
+		if got[k].Count != v {
+			t.Errorf("counts[%q] = %d, want %d (all: %+v)", k, got[k].Count, v, got)
+		}
+	}
+}
+
+func resourceFinding(resourceTypes ...string) types.AwsSecurityFinding {
+	f := types.AwsSecurityFinding{}
+	for _, rt := range resourceTypes {
+		f.Resources = append(f.Resources, types.Resource{Type: aws.String(rt)})
+	}
+	return f
+}
