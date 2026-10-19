@@ -9,7 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
-	"github.com/loafoe/centcom-satellite/internal/task"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 )
 
@@ -75,38 +74,6 @@ func TestExecute_PropagatesSTSError(t *testing.T) {
 	_, err := newTestTask("", api).Execute(context.Background(), json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected error to propagate, got nil")
-	}
-}
-
-func TestExecute_NoCredentialsAvailable_ReturnsErrTaskNotFound(t *testing.T) {
-	// A satellite with no AWS integration at all (e.g. a homelab/on-prem
-	// cluster: no IMDS, no IRSA, no explicit keys) must fail distinctly from
-	// a real STS error — ErrTaskNotFound is what internal/server/handlers.go
-	// maps to a graceful 404 "not available" rather than a 500.
-	tsk := newTestTask("", &fakeAPI{out: &sts.GetCallerIdentityOutput{Account: aws.String("should-not-be-used")}})
-	tsk.credsAvailable = func(context.Context) error {
-		return errors.New("no EC2 IMDS role found")
-	}
-	_, err := tsk.Execute(context.Background(), json.RawMessage(`{}`))
-	if !errors.Is(err, task.ErrTaskNotFound) {
-		t.Fatalf("Execute() error = %v, want errors.Is(err, task.ErrTaskNotFound)", err)
-	}
-}
-
-func TestExecute_CredentialsAvailable_StillCallsSTS(t *testing.T) {
-	// A credsAvailable check that succeeds must not short-circuit the real
-	// call — the credentials-available case has to still resolve the
-	// account normally.
-	api := &fakeAPI{out: &sts.GetCallerIdentityOutput{Account: aws.String("009160061746")}}
-	tsk := newTestTask("", api)
-	tsk.credsAvailable = func(context.Context) error { return nil }
-	res, err := tsk.Execute(context.Background(), json.RawMessage(`{}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	info := res.Details.(Info)
-	if info.AWSAccountID != "009160061746" {
-		t.Errorf("AWSAccountID = %q, want 009160061746", info.AWSAccountID)
 	}
 }
 

@@ -142,6 +142,24 @@ func main() {
 	}
 	awsOnlyMode := cfg.AWSAssumeRole.ARN != ""
 
+	// account_info is otherwise unconditionally registered below regardless
+	// of whether this satellite has any AWS integration at all. On a
+	// satellite with none (e.g. a homelab/on-prem cluster: no IRSA, no
+	// IMDS, no explicit keys), every account_info call used to ride out the
+	// AWS SDK's full IMDS retry/timeout chain (~5s) before failing - and
+	// still showed up in list_tasks as if it worked. awsOnlyMode already
+	// proves credentials are real here (Init's own verifyCallerIdentity
+	// call above would have os.Exit(1) otherwise); HasCredentials() is the
+	// cheap, synchronous, no-network-call signal for every other case -
+	// IRSA/Pod Identity env vars or token file, matching how every
+	// satellite in this fleet actually gets AWS credentials (no fleet
+	// satellite relies on a bare EC2 instance-profile role via node-level
+	// IMDS passthrough).
+	awsCredentialsAvailable := awsOnlyMode || awshelper.HasCredentials()
+	if !awsCredentialsAvailable {
+		slog.Info("no AWS credentials detected: account_info task will not be registered")
+	}
+
 	// Setup Kubernetes client (instrumented with Prometheus metrics), unless
 	// AssumeRole put this satellite in AWS-only mode.
 	var k8sClient *k8s.Client
@@ -157,8 +175,9 @@ func main() {
 
 	// capabilities advertises which optional task groups are enabled on this
 	// agent. Purely config-derived (no Kubernetes dependency), so it's
-	// computed once and reported by both account_info (always registered)
-	// and cluster_info (Kubernetes mode only) — account_info is the only
+	// computed once and reported by both account_info (registered whenever
+	// awsCredentialsAvailable, see below) and cluster_info (Kubernetes mode
+	// only) — account_info is the only
 	// capabilities source on a cluster-less (AWS-only AssumeRole) satellite.
 	capabilities := cluster_info.Capabilities{
 		WorkloadRestart:      cfg.Features.WorkloadRestartEnabled,
@@ -184,7 +203,7 @@ func main() {
 	// task is only reachable when its own Features.*Enabled flag is true)
 	// is covered by an automated test instead of relying on manual code
 	// review - see TestRegisterTasks_* in main_test.go.
-	registry := registerTasks(cfg, k8sClient, awsOnlyMode, capabilities)
+	registry := registerTasks(cfg, k8sClient, awsOnlyMode, awsCredentialsAvailable, capabilities)
 
 	// Setup SPIRE client if enabled
 	var spireClient *spire.Client
@@ -260,9 +279,20 @@ func main() {
 // tasks themselves. See TestRegisterTasks_* in main_test.go, which locks
 // this behavior in per-flag and against install.sh's READ_ONLY=true default
 // feature set.
-func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, capabilities cluster_info.Capabilities) *task.Registry {
+//
+// awsCredentialsAvailable gates account_info specifically: unlike every
+// other task here, it has no Features.*Enabled flag of its own - it's meant
+// to always be on, but only actually makes sense when this satellite has
+// some AWS identity to report. Deciding this once at startup (not inside
+// account_info.Execute itself) keeps list_tasks honest - a task that isn't
+// registered doesn't appear in the catalog at all, and a call for it fails
+// immediately via the same task.ErrTaskNotFound path every other
+// not-registered task already uses, with no per-call credential probe.
+func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, awsCredentialsAvailable bool, capabilities cluster_info.Capabilities) *task.Registry {
 	registry := task.NewRegistry()
-	registry.Register(account_info.New(cfg.AWSAssumeRole.ARN).WithCapabilities(capabilities))
+	if awsCredentialsAvailable {
+		registry.Register(account_info.New(cfg.AWSAssumeRole.ARN).WithCapabilities(capabilities))
+	}
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())
 

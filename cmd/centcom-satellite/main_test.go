@@ -52,7 +52,7 @@ func TestRegisterTasks_WriteOperationFlags(t *testing.T) {
 				cfg := &config.Config{}
 				tt.setFlag(&cfg.Features, enabled)
 
-				registry := registerTasks(cfg, newFakeK8sClient(), false, cluster_info.Capabilities{})
+				registry := registerTasks(cfg, newFakeK8sClient(), false, true, cluster_info.Capabilities{})
 
 				_, ok := registry.Get(tt.taskName)
 				if ok != enabled {
@@ -82,7 +82,7 @@ func TestRegisterTasks_ReadOnlyDefaultExcludesAllWriteTasks(t *testing.T) {
 		},
 	}
 
-	registry := registerTasks(cfg, newFakeK8sClient(), false, cluster_info.Capabilities{})
+	registry := registerTasks(cfg, newFakeK8sClient(), false, true, cluster_info.Capabilities{})
 
 	for _, tt := range writeCapableFlags {
 		if _, ok := registry.Get(tt.taskName); ok {
@@ -110,7 +110,7 @@ func TestRegisterTasks_AWSOnlyModeSkipsKubernetesWriteTasks(t *testing.T) {
 		},
 	}
 
-	registry := registerTasks(cfg, nil, true, cluster_info.Capabilities{})
+	registry := registerTasks(cfg, nil, true, true, cluster_info.Capabilities{})
 
 	k8sTasks := []string{
 		"workload_restart", "workload_scale", "pod_evict", "pod_resize",
@@ -124,11 +124,27 @@ func TestRegisterTasks_AWSOnlyModeSkipsKubernetesWriteTasks(t *testing.T) {
 	}
 }
 
+// TestRegisterTasks_AccountInfoRequiresAWSCredentials proves account_info is
+// only registered when awsCredentialsAvailable is true - the fix for a
+// satellite with no AWS integration at all (e.g. a homelab/on-prem cluster)
+// otherwise always advertising a task that could only ever 404. Unlike every
+// other task gated in this file, account_info has no Features.*Enabled flag
+// of its own; this parameter is its only gate.
+func TestRegisterTasks_AccountInfoRequiresAWSCredentials(t *testing.T) {
+	for _, available := range []bool{true, false} {
+		cfg := &config.Config{}
+		registry := registerTasks(cfg, newFakeK8sClient(), false, available, cluster_info.Capabilities{})
+		if _, ok := registry.Get("account_info"); ok != available {
+			t.Errorf("account_info present=%v, want %v (awsCredentialsAvailable=%v)", ok, available, available)
+		}
+	}
+}
+
 func TestRegisterTasks_CloudTrailFlag(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		cfg := &config.Config{}
 		cfg.Features.CloudTrailEnabled = enabled
-		registry := registerTasks(cfg, newFakeK8sClient(), false, cluster_info.Capabilities{})
+		registry := registerTasks(cfg, newFakeK8sClient(), false, true, cluster_info.Capabilities{})
 		for _, name := range []string{"cloudtrail_lookup_events", "cloudtrail_logins"} {
 			if _, ok := registry.Get(name); ok != enabled {
 				t.Errorf("%s present=%v with CloudTrailEnabled=%v", name, ok, enabled)
