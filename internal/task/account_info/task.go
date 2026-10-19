@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -19,6 +20,15 @@ import (
 )
 
 const TaskName = "account_info"
+
+// credsProbeTimeout bounds the credential-availability pre-check in
+// Execute. A satellite with no AWS integration at all (no IRSA, no IMDS, no
+// explicit keys - e.g. a homelab/on-prem cluster) would otherwise ride out
+// the AWS SDK's full IMDS retry/timeout chain (~5s, confirmed live on the
+// rpi homelab satellite) on every single poll before failing - this caps
+// that at 2s, and more importantly lets Execute tell "no AWS here at all"
+// apart from a real STS/API error. See Execute's use of credsAvailable.
+const credsProbeTimeout = 2 * time.Second
 
 type api interface {
 	GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdentityInput, optFns ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
@@ -48,6 +58,12 @@ type Task struct {
 	// applies the shared cross-account AssumeRole credentials when
 	// configured — this task never needs its own AssumeRole logic.
 	clientFactory func(ctx context.Context) (api, string, error)
+	// credsAvailable reports whether AWS credentials can be resolved at
+	// all, checked with a short bounded timeout before the real STS call
+	// (see Execute and credsProbeTimeout). nil — the default for
+	// NewWithClientFactory, used by every existing test — skips the check
+	// entirely and always proceeds straight to clientFactory/the API call.
+	credsAvailable func(ctx context.Context) error
 }
 
 func New(assumeRoleARN string) *Task {
@@ -59,6 +75,16 @@ func New(assumeRoleARN string) *Task {
 				return nil, "", err
 			}
 			return sts.NewFromConfig(cfg), cfg.Region, nil
+		},
+		credsAvailable: func(ctx context.Context) error {
+			cfg, err := awshelper.LoadConfig(ctx, awshelper.Options{})
+			if err != nil {
+				return err
+			}
+			probeCtx, cancel := context.WithTimeout(ctx, credsProbeTimeout)
+			defer cancel()
+			_, err = cfg.Credentials.Retrieve(probeCtx)
+			return err
 		},
 	}
 }
@@ -77,6 +103,20 @@ func (t *Task) WithCapabilities(caps cluster_info.Capabilities) *Task {
 func (t *Task) Name() string { return TaskName }
 
 func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, error) {
+	if t.credsAvailable != nil {
+		if err := t.credsAvailable(ctx); err != nil {
+			// No AWS credentials resolvable at all - this satellite isn't
+			// running against AWS (e.g. a homelab/on-prem cluster with no
+			// IMDS/IRSA/explicit keys configured). Report it the same way
+			// internal/server/handlers.go already reports a Kubernetes task
+			// on an AWS-only satellite: ErrTaskNotFound -> a 404 "not
+			// available", logged at Info level and counted as
+			// not_available, not a 500 every poll for infrastructure that
+			// was never there in the first place.
+			return nil, fmt.Errorf("account_info not available on this satellite (no AWS credentials resolvable: %v): %w", err, task.ErrTaskNotFound)
+		}
+	}
+
 	client, region, err := t.clientFactory(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build sts client: %w", err)
