@@ -75,12 +75,12 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list detectors: %w", err)
+			return awshelper.WrapError("list detectors", err)
 		}
 		for _, id := range page.DetectorIds {
 			det, err := client.GetDetector(ctx, &guardduty.GetDetectorInput{DetectorId: aws.String(id)})
 			if err != nil {
-				return nil, fmt.Errorf("get detector %s: %w", id, err)
+				return awshelper.WrapError(fmt.Sprintf("get detector %s", id), err)
 			}
 			result.Detectors = append(result.Detectors, normalizeDetector(id, det))
 		}

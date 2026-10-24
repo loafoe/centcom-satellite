@@ -3,12 +3,12 @@ package guardduty_list_findings
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/guardduty"
+	gdtypes "github.com/aws/aws-sdk-go-v2/service/guardduty/types"
 )
 
 type fakeAPI struct {
@@ -98,9 +98,13 @@ func TestExecute_InvalidPayload(t *testing.T) {
 // path. It must come back as a normal unsuccessful Result carrying the real
 // AWS error text, so the client actually learns what went wrong.
 func TestExecute_AWSErrorSurfacesAsResultNotGoError(t *testing.T) {
+	// A real typed GuardDuty exception, not a bare errors.New: ErrorFault()
+	// is what the production code (awshelper.WrapError) actually
+	// classifies on, so the fake must implement smithy.APIError the same
+	// way the live SDK call would for this exact scenario to be caught.
 	api := &fakeAPI{
 		listDetectorsOut: &guardduty.ListDetectorsOutput{DetectorIds: []string{"det-x"}},
-		listFindingsErr:  errors.New("InvalidInputException: Invalid NextToken"),
+		listFindingsErr:  &gdtypes.BadRequestException{Message: aws.String("Invalid NextToken")},
 	}
 	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"next_token":"corrupted"}`))
 	if err != nil {

@@ -3,7 +3,6 @@ package securityhub_get_findings
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -114,7 +113,12 @@ func TestExecute_InvalidPayload(t *testing.T) {
 // path. It must come back as a normal unsuccessful Result carrying the real
 // AWS error text, so the client actually learns what went wrong.
 func TestExecute_AWSErrorSurfacesAsResultNotGoError(t *testing.T) {
-	api := &fakeAPI{getFindingsErr: errors.New("InvalidInputException: Invalid NextToken")}
+	// A real typed Security Hub exception, not a bare errors.New:
+	// ErrorFault() is what the production code (awshelper.WrapError)
+	// actually classifies on, so the fake must implement smithy.APIError
+	// the same way the live SDK call would for this exact scenario to be
+	// caught.
+	api := &fakeAPI{getFindingsErr: &types.InvalidInputException{Message: aws.String("Invalid NextToken")}}
 	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"next_token":"corrupted"}`))
 	if err != nil {
 		t.Fatalf("expected a Result, not a Go error: %v", err)

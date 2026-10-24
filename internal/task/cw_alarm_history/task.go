@@ -107,7 +107,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		MaxRecords:      aws.Int32(maxRecords),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("describe alarm history: %w", err)
+		return awshelper.WrapError("describe alarm history", err)
 	}
 
 	result := HistoryList{AlarmName: payload.AlarmName, Items: []HistoryItem{}}

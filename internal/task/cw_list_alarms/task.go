@@ -104,7 +104,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("describe alarms: %w", err)
+			return awshelper.WrapError("describe alarms", err)
 		}
 		for _, a := range page.MetricAlarms {
 			if !wanted[string(a.StateValue)] {

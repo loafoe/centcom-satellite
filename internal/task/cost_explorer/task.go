@@ -180,7 +180,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	out, err := client.GetCostAndUsage(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("get cost and usage: %w", err)
+		return awshelper.WrapError("get cost and usage", err)
 	}
 
 	for _, r := range out.ResultsByTime {

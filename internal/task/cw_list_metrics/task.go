@@ -93,7 +93,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list metrics: %w", err)
+			return awshelper.WrapError("list metrics", err)
 		}
 		for _, m := range page.Metrics {
 			dims := map[string]string{}

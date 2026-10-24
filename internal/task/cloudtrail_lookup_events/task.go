@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 
+	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
 	ctc "github.com/loafoe/centcom-satellite/internal/task/cloudtrail_common"
 )
@@ -90,7 +91,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	res, err := ctc.Run(ctx, client, q)
 	if err != nil {
-		return task.NewErrorResult(err.Error()), nil
+		return awshelper.WrapError("lookup events", err)
 	}
 
 	out := Output{Result: res, Region: p.Region}

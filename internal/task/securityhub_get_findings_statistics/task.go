@@ -199,7 +199,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract)
 	}
 	if err != nil {
-		return nil, err
+		return awshelper.WrapError("get findings statistics", err)
 	}
 
 	return task.NewSuccessResultWithDetails(fmt.Sprintf("statistics grouped by %s: %d buckets", groupByStr, len(result.Counts)), result), nil

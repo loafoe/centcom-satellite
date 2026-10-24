@@ -137,7 +137,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		MetricDataQueries: []cwtypes.MetricDataQuery{query},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get metric data: %w", err)
+		return awshelper.WrapError("get metric data", err)
 	}
 
 	result := MetricResult{Series: []Series{}}

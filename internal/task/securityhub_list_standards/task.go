@@ -71,7 +71,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	hubOut, err := client.DescribeHub(ctx, &securityhub.DescribeHubInput{})
 	if err != nil {
-		return nil, fmt.Errorf("describe hub: %w", err)
+		return awshelper.WrapError("describe hub", err)
 	}
 
 	statusByArn := map[string]string{}
@@ -79,7 +79,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for subPaginator.HasMorePages() {
 		page, err := subPaginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("get enabled standards: %w", err)
+			return awshelper.WrapError("get enabled standards", err)
 		}
 		for _, sub := range page.StandardsSubscriptions {
 			statusByArn[aws.ToString(sub.StandardsArn)] = string(sub.StandardsStatus)
@@ -100,7 +100,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for stdPaginator.HasMorePages() {
 		page, err := stdPaginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("describe standards: %w", err)
+			return awshelper.WrapError("describe standards", err)
 		}
 		for _, s := range page.Standards {
 			arn := aws.ToString(s.StandardsArn)

@@ -103,7 +103,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		GroupBy:         groupBy,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get findings statistics: %w", err)
+		return awshelper.WrapError("get findings statistics", err)
 	}
 
 	result := Statistics{DetectorID: detectorID, GroupBy: groupByStr, Counts: []gdc.StatCount{}}

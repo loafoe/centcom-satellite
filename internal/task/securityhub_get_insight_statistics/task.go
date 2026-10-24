@@ -226,7 +226,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			if isNotFound(err) && attempt < maxAttempts {
 				continue // slot deleted under us (a duplicate cleaned up elsewhere)
 			}
-			return nil, fmt.Errorf("prepare insight: %w", err)
+			return awshelper.WrapError("prepare insight", err)
 		}
 
 		out, err := client.GetInsightResults(ctx, &securityhub.GetInsightResultsInput{InsightArn: aws.String(arn)})
@@ -234,12 +234,12 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			if isNotFound(err) && attempt < maxAttempts {
 				continue
 			}
-			return nil, fmt.Errorf("get insight results: %w", err)
+			return awshelper.WrapError("get insight results", err)
 		}
 		// The results are only ours if the slot still holds our query.
 		current, err := insightNameOf(ctx, client, arn)
 		if err != nil && !isNotFound(err) {
-			return nil, fmt.Errorf("verify insight: %w", err)
+			return awshelper.WrapError("verify insight", err)
 		}
 		if current != name {
 			if attempt < maxAttempts {

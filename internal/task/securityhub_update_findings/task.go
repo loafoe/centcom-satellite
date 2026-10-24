@@ -120,7 +120,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	out, err := client.BatchUpdateFindings(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("batch update findings: %w", err)
+		return awshelper.WrapError("batch update findings", err)
 	}
 
 	result := UpdateResult{Processed: []FindingRef{}, Unprocessed: []UnprocessedFinding{}}

@@ -3,6 +3,7 @@ package guardduty_get_findings_statistics
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,6 +14,7 @@ import (
 type fakeAPI struct {
 	lastIn *guardduty.GetFindingsStatisticsInput
 	out    *guardduty.GetFindingsStatisticsOutput
+	err    error
 }
 
 func (f *fakeAPI) ListDetectors(_ context.Context, _ *guardduty.ListDetectorsInput, _ ...func(*guardduty.Options)) (*guardduty.ListDetectorsOutput, error) {
@@ -21,6 +23,9 @@ func (f *fakeAPI) ListDetectors(_ context.Context, _ *guardduty.ListDetectorsInp
 
 func (f *fakeAPI) GetFindingsStatistics(_ context.Context, in *guardduty.GetFindingsStatisticsInput, _ ...func(*guardduty.Options)) (*guardduty.GetFindingsStatisticsOutput, error) {
 	f.lastIn = in
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.out, nil
 }
 
@@ -76,6 +81,46 @@ func TestExecute_RejectsBadGroupBy(t *testing.T) {
 	res, _ := newTestTask(&fakeAPI{}).Execute(context.Background(), json.RawMessage(`{"group_by":"BOGUS"}`))
 	if res.Success {
 		t.Fatal("expected failure for unsupported group_by")
+	}
+}
+
+// TestExecute_DetectorRegionMismatchSurfacesAsResultNotGoError is the
+// regression test for the 2026-10-24 ops-sandbox incident: a detector ID
+// paired with the wrong region made GuardDuty correctly reject the call
+// with a 400 BadRequestException ("detectorId is not owned by the current
+// account"), but the task turned that into a generic Go error, which
+// HandleTask collapsed into an opaque HTTP 500 — hiding the real,
+// immediately-actionable AWS message and making a one-off input mistake
+// look like a persistent satellite fault. It must come back as a normal
+// unsuccessful Result instead.
+func TestExecute_DetectorRegionMismatchSurfacesAsResultNotGoError(t *testing.T) {
+	api := &fakeAPI{err: &gdtypes.BadRequestException{
+		Message: aws.String("The request is rejected because the input detectorId is not owned by the current account"),
+	}}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"detector_id":"acc8776c-wrong-region"}`))
+	if err != nil {
+		t.Fatalf("expected a Result, not a Go error (must not become an opaque 500): %v", err)
+	}
+	if res.Success {
+		t.Fatal("expected success=false when GuardDuty rejects the detector/region pairing")
+	}
+	if !strings.Contains(res.Error, "BadRequestException") || !strings.Contains(res.Error, "not owned by the current account") {
+		t.Fatalf("expected the real AWS error to be preserved, got %q", res.Error)
+	}
+}
+
+// TestExecute_ServerFaultStillProducesGoError is the inverse check: a
+// genuine server-side GuardDuty error must still produce a real Go error so
+// HandleTask responds with a real 500 — the correct "retry later" signal,
+// unlike the client-fault case above.
+func TestExecute_ServerFaultStillProducesGoError(t *testing.T) {
+	api := &fakeAPI{err: &gdtypes.InternalServerErrorException{Message: aws.String("internal error")}}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{}`))
+	if res != nil {
+		t.Fatalf("expected nil result for a server fault, got %+v", res)
+	}
+	if err == nil {
+		t.Fatal("expected a real Go error for a server fault (must still produce a 500)")
 	}
 }
 

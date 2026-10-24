@@ -84,7 +84,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 
 	out, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return nil, fmt.Errorf("get caller identity: %w", err)
+		return awshelper.WrapError("get caller identity", err)
 	}
 
 	info := Info{

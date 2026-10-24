@@ -91,7 +91,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("describe log groups: %w", err)
+			return awshelper.WrapError("describe log groups", err)
 		}
 		for _, g := range page.LogGroups {
 			lg := LogGroup{

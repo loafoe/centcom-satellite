@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 
+	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
 	ctc "github.com/loafoe/centcom-satellite/internal/task/cloudtrail_common"
 )
@@ -249,7 +250,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	console, err := t.scan(ctx, client, region, "ConsoleLogin", p.User, now.AddDate(0, 0, -consoleDays), maxPages, keepConsole, firstOnly, deadline)
 	if err != nil {
-		return task.NewErrorResult(err.Error()), nil
+		return awshelper.WrapError("lookup ConsoleLogin events", err)
 	}
 	out := Output{User: p.User, Region: region, ConsoleLogins: console,
 		Note: "MFA is enforced by the identity provider / IAM Identity Center, not recorded on these events. Identity Center's own sign-in happens in the management account and is not visible here; IAM users with access keys have no login event."}
@@ -264,7 +265,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		}
 		sessions, err := t.scan(ctx, client, region, "AssumeRoleWithSAML", p.User, now.Add(-time.Duration(sessionHours)*time.Hour), maxPages, keep, firstOnly, deadline)
 		if err != nil {
-			return task.NewErrorResult(err.Error()), nil
+			return awshelper.WrapError("lookup AssumeRoleWithSAML events", err)
 		}
 		out.Sessions = &sessions
 		if len(sessions.Principals) > 0 && sessions.Principals[0].LastSeen > out.LastLogin {

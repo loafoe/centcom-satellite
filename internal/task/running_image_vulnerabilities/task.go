@@ -244,12 +244,15 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 }
 
 // partialOrError turns a budget/cancellation stop into a partial result and
-// anything else into an error.
+// anything else into an error — a client-fault error (e.g. a malformed
+// filter, access denied) becomes a self-describing Result rather than an
+// opaque 500; a genuine server-side/throttling error still produces a real
+// 500. See awshelper.WrapError.
 func (s *scan) partialOrError(err error) (*task.Result, error) {
 	if s.stopped {
 		return s.result(), nil
 	}
-	return nil, err
+	return awshelper.WrapError("running image vulnerabilities", err)
 }
 
 func (s *scan) result() *task.Result {

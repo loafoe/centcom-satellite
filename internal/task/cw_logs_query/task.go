@@ -123,7 +123,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		Limit:         aws.Int32(limit),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("start query: %w", err)
+		return awshelper.WrapError("start query", err)
 	}
 	queryID := aws.ToString(startOut.QueryId)
 
@@ -142,7 +142,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 				stopQuery(ctx, client, queryID)
 				return task.NewErrorResult(fmt.Sprintf("query timed out after %s", timeout)), nil
 			}
-			return nil, fmt.Errorf("get query results: %w", err)
+			return awshelper.WrapError("get query results", err)
 		}
 
 		switch out.Status {

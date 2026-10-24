@@ -88,7 +88,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		FindingIds: payload.FindingIDs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("get findings: %w", err)
+		return awshelper.WrapError("get findings", err)
 	}
 
 	result := FindingList{DetectorID: detectorID, Findings: []gdc.Finding{}}
