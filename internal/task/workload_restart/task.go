@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -93,7 +94,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("namespace not found: %s", payload.Namespace)), nil
 		}
-		return nil, fmt.Errorf("failed to get namespace: %w", err)
+		return k8sclient.WrapError("failed to get namespace", err)
 	}
 
 	if hasNoRestartAnnotation(ns.Annotations) {
@@ -154,7 +155,7 @@ func (t *Task) restartDeployment(ctx context.Context, payload *Payload) (*task.R
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("%s: deployment %s/%s", ErrWorkloadNotFound, payload.Namespace, payload.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get deployment: %w", err)
+		return k8sclient.WrapError("failed to get deployment", err)
 	}
 
 	// Check workload annotation for no-restart
@@ -201,7 +202,7 @@ func (t *Task) restartDeployment(ctx context.Context, payload *Payload) (*task.R
 		metav1.PatchOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to patch deployment: %w", err)
+		return k8sclient.WrapError("failed to patch deployment", err)
 	}
 
 	slog.Info("deployment restarted",
@@ -228,7 +229,7 @@ func (t *Task) restartStatefulSet(ctx context.Context, payload *Payload) (*task.
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("%s: statefulset %s/%s", ErrWorkloadNotFound, payload.Namespace, payload.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get statefulset: %w", err)
+		return k8sclient.WrapError("failed to get statefulset", err)
 	}
 
 	// Check workload annotation for no-restart
@@ -275,7 +276,7 @@ func (t *Task) restartStatefulSet(ctx context.Context, payload *Payload) (*task.
 		metav1.PatchOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to patch statefulset: %w", err)
+		return k8sclient.WrapError("failed to patch statefulset", err)
 	}
 
 	slog.Info("statefulset restarted",
@@ -302,7 +303,7 @@ func (t *Task) restartDaemonSet(ctx context.Context, payload *Payload) (*task.Re
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("%s: daemonset %s/%s", ErrWorkloadNotFound, payload.Namespace, payload.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get daemonset: %w", err)
+		return k8sclient.WrapError("failed to get daemonset", err)
 	}
 
 	// Check workload annotation for no-restart
@@ -344,7 +345,7 @@ func (t *Task) restartDaemonSet(ctx context.Context, payload *Payload) (*task.Re
 		metav1.PatchOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to patch daemonset: %w", err)
+		return k8sclient.WrapError("failed to patch daemonset", err)
 	}
 
 	slog.Info("daemonset restarted",

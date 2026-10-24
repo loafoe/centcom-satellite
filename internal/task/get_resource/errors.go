@@ -3,6 +3,7 @@ package get_resource
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,6 +21,7 @@ const (
 	ErrInvalidRequest    ErrorCode = "INVALID_REQUEST"
 	ErrNamespaceRequired ErrorCode = "NAMESPACE_REQUIRED"
 	ErrTimeout           ErrorCode = "TIMEOUT"
+	ErrServerError       ErrorCode = "SERVER_ERROR"
 )
 
 // StructuredError represents an error with code, message, and hint.
@@ -101,6 +103,33 @@ func NewTimeoutError() *StructuredError {
 	}
 }
 
+// NewServerError creates a SERVER_ERROR error for a transient apiserver-side
+// failure (5xx, 429 flow control, or a transport-level failure with no
+// APIStatus at all - connection refused, TLS, etc.). Unlike
+// NewInvalidRequestError's hint ("check apiVersion format"), this is never a
+// request mistake, so the hint says to retry instead of misleadingly
+// pointing at the request shape.
+func NewServerError(err error) *StructuredError {
+	return &StructuredError{
+		Code:    ErrServerError,
+		Message: err.Error(),
+		Hint:    "Transient apiserver problem, not a request mistake; retry",
+	}
+}
+
+// IsServerFault reports whether err is a 5xx/429/transport-level failure
+// rather than a definite 4xx client mistake — same classification
+// k8sclient.WrapError uses (every apiserver error implements
+// apierrors.APIStatus, whose Status().Code carries the real HTTP status).
+func IsServerFault(err error) bool {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		code := status.Status().Code
+		return !(code >= 400 && code < 500 && code != 429)
+	}
+	return true
+}
+
 // MapAPIError converts a Kubernetes API error to a StructuredError.
 func MapAPIError(err error, kind, name, apiVersion string) *StructuredError {
 	if apierrors.IsNotFound(err) {
@@ -116,6 +145,11 @@ func MapAPIError(err error, kind, name, apiVersion string) *StructuredError {
 	if _, ok := err.(*meta.NoKindMatchError); ok {
 		return NewAPINotFoundError(apiVersion, kind)
 	}
-	// Default to invalid request for other errors
+	// A genuine server-side/throttling/transport failure is not a request
+	// mistake - don't mislabel it as one.
+	if IsServerFault(err) {
+		return NewServerError(err)
+	}
+	// Default to invalid request for other (definite 4xx client-fault) errors
 	return NewInvalidRequestError(err.Error())
 }

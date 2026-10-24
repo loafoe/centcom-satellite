@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -116,7 +117,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 				result,
 			), nil
 		}
-		return nil, fmt.Errorf("failed to list gateways: %w", err)
+		return k8sclient.WrapError("failed to list gateways", err)
 	}
 
 	result := &GatewayList{

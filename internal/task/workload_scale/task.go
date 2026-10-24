@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -72,7 +73,7 @@ func (t *Task) Execute(ctx context.Context, payload json.RawMessage) (*task.Resu
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("namespace not found: %s", p.Namespace)), nil
 		}
-		return nil, fmt.Errorf("failed to get namespace: %w", err)
+		return k8sclient.WrapError("failed to get namespace", err)
 	}
 
 	if hasNoScaleAnnotation(ns.Annotations) {
@@ -130,7 +131,7 @@ func (t *Task) scaleDeployment(ctx context.Context, p *Payload) (*task.Result, e
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("deployment not found: %s/%s", p.Namespace, p.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get deployment: %w", err)
+		return k8sclient.WrapError("failed to get deployment", err)
 	}
 
 	// Check workload annotation
@@ -151,7 +152,7 @@ func (t *Task) scaleDeployment(ctx context.Context, p *Payload) (*task.Result, e
 	// Check for HPA
 	hpaWarning, err := t.checkHPA(ctx, p.Namespace, p.Name, "Deployment")
 	if err != nil {
-		return nil, fmt.Errorf("failed to check for HPA: %w", err)
+		return k8sclient.WrapError("failed to check for HPA", err)
 	}
 
 	details := &ScaleDetails{
@@ -182,7 +183,7 @@ func (t *Task) scaleDeployment(ctx context.Context, p *Payload) (*task.Result, e
 
 	_, err = t.clientset.AppsV1().Deployments(p.Namespace).UpdateScale(ctx, p.Name, scale, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to scale deployment: %w", err)
+		return k8sclient.WrapError("failed to scale deployment", err)
 	}
 
 	return task.NewSuccessResultWithDetails(
@@ -198,7 +199,7 @@ func (t *Task) scaleStatefulSet(ctx context.Context, p *Payload) (*task.Result, 
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("statefulset not found: %s/%s", p.Namespace, p.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get statefulset: %w", err)
+		return k8sclient.WrapError("failed to get statefulset", err)
 	}
 
 	// Check workload annotation
@@ -219,7 +220,7 @@ func (t *Task) scaleStatefulSet(ctx context.Context, p *Payload) (*task.Result, 
 	// Check for HPA
 	hpaWarning, err := t.checkHPA(ctx, p.Namespace, p.Name, "StatefulSet")
 	if err != nil {
-		return nil, fmt.Errorf("failed to check for HPA: %w", err)
+		return k8sclient.WrapError("failed to check for HPA", err)
 	}
 
 	details := &ScaleDetails{
@@ -250,7 +251,7 @@ func (t *Task) scaleStatefulSet(ctx context.Context, p *Payload) (*task.Result, 
 
 	_, err = t.clientset.AppsV1().StatefulSets(p.Namespace).UpdateScale(ctx, p.Name, scale, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to scale statefulset: %w", err)
+		return k8sclient.WrapError("failed to scale statefulset", err)
 	}
 
 	return task.NewSuccessResultWithDetails(

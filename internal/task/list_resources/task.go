@@ -251,6 +251,12 @@ func mapListError(err error, kind string) *get_resource.StructuredError {
 	if _, ok := err.(*meta.NoKindMatchError); ok {
 		return get_resource.NewAPINotFoundError("", kind)
 	}
+	// A genuine server-side/throttling/transport failure is not a request
+	// mistake - don't mislabel it as one (same classification
+	// get_resource.MapAPIError uses).
+	if get_resource.IsServerFault(err) {
+		return get_resource.NewServerError(err)
+	}
 	return get_resource.NewInvalidRequestError(err.Error())
 }
 

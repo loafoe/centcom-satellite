@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -134,7 +135,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("PVC not found: %s/%s", payload.Namespace, payload.PVCName)), nil
 		}
-		return nil, fmt.Errorf("failed to get PVC: %w", err)
+		return k8sclient.WrapError("failed to get PVC", err)
 	}
 
 	// Get sizes from PVC

@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -94,7 +95,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	services, err := t.clientset.CoreV1().Services(namespace).List(ctx, listOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list services: %w", err)
+		return k8sclient.WrapError("failed to list services", err)
 	}
 
 	// Build pod index only if pod counts are requested (avoids N+1 queries)

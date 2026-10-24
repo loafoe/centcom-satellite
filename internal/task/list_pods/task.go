@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -174,12 +175,12 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	pods, err := t.clientset.CoreV1().Pods(namespace).List(ctx, listOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
+		return k8sclient.WrapError("failed to list pods", err)
 	}
 
 	rsOwners, err := t.resolveReplicaSetOwners(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve ReplicaSet owners: %w", err)
+		return k8sclient.WrapError("failed to resolve ReplicaSet owners", err)
 	}
 
 	result := &PodList{

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -285,7 +286,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Kind == "deployment" || payload.Kind == "all" {
 		deployments, err := t.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list deployments: %w", err)
+			return k8sclient.WrapError("failed to list deployments", err)
 		}
 		for i := range deployments.Items {
 			workloads = append(workloads, t.buildDeploymentInfo(&deployments.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
@@ -297,7 +298,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Kind == "statefulset" || payload.Kind == "all" {
 		statefulsets, err := t.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list statefulsets: %w", err)
+			return k8sclient.WrapError("failed to list statefulsets", err)
 		}
 		for i := range statefulsets.Items {
 			workloads = append(workloads, t.buildStatefulSetInfo(&statefulsets.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
@@ -309,7 +310,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Kind == "daemonset" || payload.Kind == "all" {
 		daemonsets, err := t.clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list daemonsets: %w", err)
+			return k8sclient.WrapError("failed to list daemonsets", err)
 		}
 		for i := range daemonsets.Items {
 			workloads = append(workloads, t.buildDaemonSetInfo(&daemonsets.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
@@ -323,7 +324,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Kind == "cronjob" || payload.Kind == "all" {
 		cronjobs, err := t.clientset.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list cronjobs: %w", err)
+			return k8sclient.WrapError("failed to list cronjobs", err)
 		}
 		for i := range cronjobs.Items {
 			workloads = append(workloads, t.buildCronJobInfo(&cronjobs.Items[i], payload.IncludeMetadata, payload.IncludeProbes))
@@ -337,7 +338,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Kind == "job" {
 		jobs, err := t.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to list jobs: %w", err)
+			return k8sclient.WrapError("failed to list jobs", err)
 		}
 		for i := range jobs.Items {
 			workloads = append(workloads, t.buildJobInfo(&jobs.Items[i], payload.IncludeMetadata, payload.IncludeProbes))

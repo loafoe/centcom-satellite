@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -116,7 +117,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		if apierrors.IsNotFound(err) {
 			return task.NewErrorResult(fmt.Sprintf("%s: %s/%s", ErrPVCNotFound, payload.Namespace, payload.PVCName)), nil
 		}
-		return nil, fmt.Errorf("failed to get PVC: %w", err)
+		return k8sclient.WrapError("failed to get PVC", err)
 	}
 
 	// Check if expansion is allowed
@@ -167,7 +168,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	_, err = t.clientset.CoreV1().PersistentVolumeClaims(payload.Namespace).Update(ctx, pvc, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to update PVC: %w", err)
+		return k8sclient.WrapError("failed to update PVC", err)
 	}
 
 	slog.Info("PVC resize initiated",

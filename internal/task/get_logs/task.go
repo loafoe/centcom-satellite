@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -78,7 +79,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get pod to verify it exists and get first container name if not specified
 	pod, err := t.clientset.CoreV1().Pods(payload.Namespace).Get(ctx, payload.PodName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod: %w", err)
+		return k8sclient.WrapError("failed to get pod", err)
 	}
 
 	// Determine container name
@@ -106,7 +107,12 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get log stream
 	stream, err := t.clientset.CoreV1().Pods(payload.Namespace).GetLogs(payload.PodName, opts).Stream(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get log stream: %w", err)
+		// The most common case here is a client-fault: previous: true
+		// against a container with no previous terminated instance returns
+		// a 400 BadRequest ("previous terminated container ... not found")
+		// — not a satellite or apiserver problem, so it must not become an
+		// opaque 500. See k8sclient.WrapError.
+		return k8sclient.WrapError("failed to get log stream", err)
 	}
 	defer func() { _ = stream.Close() }()
 

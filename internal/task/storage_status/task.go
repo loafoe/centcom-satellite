@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -118,7 +119,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Check PVCs
 	pvcs, err := t.clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list PVCs: %w", err)
+		return k8sclient.WrapError("failed to list PVCs", err)
 	}
 
 	report.PVCSummary = t.summarizePVCs(pvcs, report)
@@ -126,7 +127,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Check PVs (cluster-wide resource)
 	pvs, err := t.clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list PVs: %w", err)
+		return k8sclient.WrapError("failed to list PVs", err)
 	}
 
 	report.PVSummary = t.summarizePVs(pvs, report)
@@ -134,7 +135,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get storage classes
 	scs, err := t.clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list storage classes: %w", err)
+		return k8sclient.WrapError("failed to list storage classes", err)
 	}
 
 	for _, sc := range scs.Items {

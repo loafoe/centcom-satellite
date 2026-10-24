@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -172,7 +173,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	// Get server version
 	version, err := t.discoveryClient.ServerVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get server version: %w", err)
+		return k8sclient.WrapError("failed to get server version", err)
 	}
 	info.Version = VersionInfo{
 		Server:   version.GitVersion,
@@ -182,13 +183,13 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	// Get nodes
 	nodes, err := t.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes: %w", err)
+		return k8sclient.WrapError("failed to list nodes", err)
 	}
 
 	// Get pods for resource utilization calculation
 	pods, err := t.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
+		return k8sclient.WrapError("failed to list pods", err)
 	}
 
 	// Calculate per-node resource requests
@@ -202,7 +203,7 @@ func (t *Task) Execute(ctx context.Context, _ json.RawMessage) (*task.Result, er
 	// Get namespace count
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+		return k8sclient.WrapError("failed to list namespaces", err)
 	}
 	info.Namespaces = len(namespaces.Items)
 	info.Capabilities = t.capabilities

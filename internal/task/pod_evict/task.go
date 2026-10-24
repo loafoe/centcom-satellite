@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -74,7 +75,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Check namespace annotation
 	namespace, err := t.clientset.CoreV1().Namespaces().Get(ctx, payload.Namespace, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get namespace: %w", err)
+		return k8sclient.WrapError("failed to get namespace", err)
 	}
 	if hasNoEvictAnnotation(namespace.Annotations) {
 		return task.NewErrorResult(fmt.Sprintf("namespace %s has %s annotation, eviction not allowed", payload.Namespace, NoEvictAnnotation)), nil
@@ -83,7 +84,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get pod
 	pod, err := t.clientset.CoreV1().Pods(payload.Namespace).Get(ctx, payload.PodName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod: %w", err)
+		return k8sclient.WrapError("failed to get pod", err)
 	}
 
 	// Check pod annotation
@@ -130,11 +131,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Execute eviction or deletion
 	if payload.Force {
 		if err := t.deletePod(ctx, payload.Namespace, payload.PodName, gracePeriod); err != nil {
-			return nil, fmt.Errorf("failed to delete pod: %w", err)
+			return k8sclient.WrapError("failed to delete pod", err)
 		}
 	} else {
 		if err := t.evictPod(ctx, payload.Namespace, payload.PodName, gracePeriod); err != nil {
-			return nil, fmt.Errorf("failed to evict pod: %w", err)
+			return k8sclient.WrapError("failed to evict pod", err)
 		}
 	}
 

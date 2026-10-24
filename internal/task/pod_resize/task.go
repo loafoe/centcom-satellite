@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/loafoe/centcom-satellite/internal/config"
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -105,7 +106,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get the pod
 	pod, err := t.clientset.CoreV1().Pods(payload.Namespace).Get(ctx, payload.Pod, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod: %w", err)
+		return k8sclient.WrapError("failed to get pod", err)
 	}
 
 	// Find container
@@ -289,7 +290,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 
 	if err := t.resizePod(ctx, payload.Namespace, payload.Pod, containerIdx, newMemory, newMemoryLimit, newCPU, newCPULimit); err != nil {
-		return nil, fmt.Errorf("failed to resize pod: %w", err)
+		return k8sclient.WrapError("failed to resize pod", err)
 	}
 
 	msg := fmt.Sprintf("Resized %s/%s container %s: %s (ephemeral until pod restart)",

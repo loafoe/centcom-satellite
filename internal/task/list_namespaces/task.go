@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -61,7 +62,7 @@ func (t *Task) Execute(ctx context.Context, payload json.RawMessage) (*task.Resu
 
 	namespaces, err := t.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+		return k8sclient.WrapError("failed to list namespaces", err)
 	}
 
 	result := &NamespaceList{

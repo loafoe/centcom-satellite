@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -205,7 +206,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Check pods
 	unhealthyPods, err := t.checkPods(ctx, namespace, payload.RestartWindowMinutes, payload.PendingGracePeriodMinutes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check pods: %w", err)
+		return k8sclient.WrapError("failed to check pods", err)
 	}
 	report.UnhealthyPods = unhealthyPods
 	if len(unhealthyPods) > 0 {
@@ -215,7 +216,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Check workloads
 	workloads, err := t.checkWorkloads(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check workloads: %w", err)
+		return k8sclient.WrapError("failed to check workloads", err)
 	}
 	report.Workloads = workloads
 	if workloads.Deployments.Unhealthy > 0 || workloads.StatefulSets.Unhealthy > 0 || workloads.DaemonSets.Unhealthy > 0 {
@@ -226,7 +227,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if payload.Namespace == "" {
 		nodeIssues, err := t.checkNodes(ctx, payload.NodeGracePeriodMinutes, payload.IncludeKarpenterDisrupted)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check nodes: %w", err)
+			return k8sclient.WrapError("failed to check nodes", err)
 		}
 		report.NodeIssues = nodeIssues
 		if len(nodeIssues) > 0 {
@@ -237,7 +238,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Get recent warning events
 	events, err := t.getWarningEvents(ctx, namespace, payload.EventsMinutes, payload.IncludeProbeWarnings)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get events: %w", err)
+		return k8sclient.WrapError("failed to get events", err)
 	}
 	report.RecentEvents = events
 

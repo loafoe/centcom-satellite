@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -90,7 +91,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			}
 			return task.NewErrorResult(fmt.Sprintf("%s: %s", ErrNodeClaimNotFound, payload.Name)), nil
 		}
-		return nil, fmt.Errorf("failed to get nodeclaim: %w", err)
+		return k8sclient.WrapError("failed to get nodeclaim", err)
 	}
 
 	// Extract details from the NodeClaim
@@ -115,7 +116,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	// Delete the NodeClaim
 	err = t.dynamicClient.Resource(nodeClaimGVR).Delete(ctx, payload.Name, metav1.DeleteOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to delete nodeclaim: %w", err)
+		return k8sclient.WrapError("failed to delete nodeclaim", err)
 	}
 
 	slog.Info("nodeclaim deletion initiated",

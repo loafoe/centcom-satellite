@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -113,13 +116,20 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		list, err = t.dynamicClient.Resource(vpaGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
-		// Gracefully handle missing CRD - return empty list with vpa_installed=false
-		result := &VPAList{
-			Total:        0,
-			VPAs:         []VPAInfo{},
-			VPAInstalled: false,
+		if isNotFoundOrNoKind(err) {
+			// Gracefully handle missing CRD - return empty list with vpa_installed=false
+			result := &VPAList{
+				Total:        0,
+				VPAs:         []VPAInfo{},
+				VPAInstalled: false,
+			}
+			return task.NewSuccessResultWithDetails("VPA CRD not installed", result), nil
 		}
-		return task.NewSuccessResultWithDetails("VPA CRD not installed", result), nil
+		// Any other error (RBAC denial, apiserver timeout, network failure,
+		// ...) must not be silently reported as "CRD not installed" - that
+		// would tell the LLM/user a confident, wrong reason for seeing zero
+		// VPAs. Convey the real error instead.
+		return k8sclient.WrapError("failed to list VPAs", err)
 	}
 
 	vpas := make([]VPAInfo, 0, len(list.Items))
@@ -234,4 +244,17 @@ func formatAge(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// isNotFoundOrNoKind reports whether err means the VPA CRD/API genuinely
+// isn't installed in this cluster, as opposed to some other failure (RBAC
+// denial, apiserver timeout, network failure) that happens to occur on the
+// same List call and must not be mistaken for "not installed".
+func isNotFoundOrNoKind(err error) bool {
+	if apierrors.IsNotFound(err) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "the server could not find the requested resource") ||
+		strings.Contains(errStr, "no matches for kind")
 }

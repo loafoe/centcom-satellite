@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	k8sclient "github.com/loafoe/centcom-satellite/internal/k8s"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -101,7 +102,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	slices, err := t.clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, listOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list endpoint slices: %w", err)
+		return k8sclient.WrapError("failed to list endpoint slices", err)
 	}
 
 	result := &EndpointSliceList{
