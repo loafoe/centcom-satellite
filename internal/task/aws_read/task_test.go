@@ -180,3 +180,55 @@ func TestAllowlist_OnlyReadOperations(t *testing.T) {
 		}
 	}
 }
+
+// Regression test for the 2026-10-27 ops-sandbox incident: one
+// GetAccountAuthorizationDetails page there marshaled to 23.75MB, and
+// toResponse's old unconditional map[string]any copy amplified that into a
+// ~183MB single-request spike that OOM-killed the satellite's 384Mi
+// container (taking down every other concurrent caller on that replica,
+// not just this one call) - see helpers.go's maxResponseBytes doc comment.
+// Shrinks the cap instead of needing a multi-MB fixture.
+func TestExecute_OversizedResponseIsRefusedNotAmplified(t *testing.T) {
+	// A ListGroupsForUser response with one large group name, well under
+	// Go's own string/slice limits but over a shrunk-for-test cap.
+	big := strings.Repeat("x", 2000)
+	body := `<ListGroupsForUserResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ListGroupsForUserResult>
+    <Groups><member><GroupName>` + big + `</GroupName><GroupId>AGPA1</GroupId><Path>/</Path><Arn>arn:aws:iam::123456789012:group/x</Arn><CreateDate>2026-01-01T00:00:00Z</CreateDate></member></Groups>
+    <IsTruncated>false</IsTruncated>
+  </ListGroupsForUserResult>
+  <ResponseMetadata><RequestId>r1</RequestId></ResponseMetadata>
+</ListGroupsForUserResponse>`
+	f := &fakeIAM{t: t, body: body}
+	tk := newTestTask(t, f)
+
+	restore := func(v int) func() { return func() { maxResponseBytes = v } }(maxResponseBytes)
+	maxResponseBytes = 500 // smaller than the fixture's ~2KB group name
+	defer restore()
+
+	res := run(t, tk, `{"service":"iam","operation":"ListGroupsForUser","params":{"UserName":"alice"}}`)
+	if res.Success {
+		t.Fatalf("expected a refusal, got success: %+v", res)
+	}
+	for _, want := range []string{"too large", "ListGroupsForUser", "MaxItems", "narrow"} {
+		if !strings.Contains(res.Error, want) {
+			t.Errorf("error message missing %q guidance: %s", want, res.Error)
+		}
+	}
+	// The call to AWS itself must have happened (this isn't a pre-call
+	// refusal) - the refusal is about the response, not the request.
+	if f.requests != 1 {
+		t.Fatalf("expected exactly 1 AWS call, got %d", f.requests)
+	}
+}
+
+// A response at or under the cap must still succeed normally - the cap is
+// a safety ceiling, not a general-purpose size reduction.
+func TestExecute_ResponseUnderCapStillSucceeds(t *testing.T) {
+	f := &fakeIAM{t: t, body: listGroupsForUserXML}
+	tk := newTestTask(t, f)
+	res := run(t, tk, `{"service":"iam","operation":"ListGroupsForUser","params":{"UserName":"alice"}}`)
+	if !res.Success {
+		t.Fatalf("expected success for a small response, got %+v", res)
+	}
+}

@@ -109,13 +109,45 @@ func limiterFor(service string) *rate.Limiter {
 	return l
 }
 
+// maxResponseBytes bounds a single page's marshaled JSON size. A var, not a
+// const, so tests can shrink it instead of needing a multi-MB fixture.
+//
+// Real incident, ops-sandbox, 2026-10-27: this account has 369 IAM roles and
+// 169+ customer-managed policies, and one GetAccountAuthorizationDetails
+// page landed a role/policy whose attached documents alone marshaled to
+// 23.75MB. toResponse's second copy - unmarshaling that into map[string]any
+// - amplified it to a ~183MB single-request spike (RSS 34MB -> 217MB, one
+// call), which OOM-killed the satellite's 384Mi container outright: not
+// just that one request, but every other concurrent caller on that replica
+// too, and a retry hit the second replica and OOM-killed it the same way.
+// Checking the size of the FIRST marshal (the SDK struct, before the
+// map[string]any amplification) and bailing before the second copy catches
+// this at ~23MB instead of ~183MB, with no fixture needed - see
+// TestToResponse_OversizedResponseIsRejectedNotAmplified.
+var maxResponseBytes = 5 * 1024 * 1024
+
+// errResponseTooLarge marks a response this task refuses to amplify into
+// map[string]any and return, rather than a transport/AWS failure - Execute
+// turns it into a self-describing task.Result (not a 500) so a bulk-reading
+// script gets something it can act on instead of taking down the satellite.
+type errResponseTooLarge struct{ size int }
+
+func (e *errResponseTooLarge) Error() string {
+	return fmt.Sprintf("response too large: %.1fMB exceeds the %.0fMB per-call cap", float64(e.size)/1e6, float64(maxResponseBytes)/1e6)
+}
+
 // toResponse converts an SDK output struct into plain JSON fields, dropping
 // the SDK's ResultMetadata and decoding the credential report from bytes to
-// CSV text so the caller doesn't have to base64-decode it.
+// CSV text so the caller doesn't have to base64-decode it. Refuses (via
+// errResponseTooLarge) before the map[string]any copy if the first marshal
+// already exceeds maxResponseBytes - see its doc comment.
 func toResponse(out any) (map[string]any, error) {
 	b, err := json.Marshal(out)
 	if err != nil {
 		return nil, err
+	}
+	if len(b) > maxResponseBytes {
+		return nil, &errResponseTooLarge{size: len(b)}
 	}
 	resp := map[string]any{}
 	if err := json.Unmarshal(b, &resp); err != nil {

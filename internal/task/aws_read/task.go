@@ -94,6 +94,18 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	resp, err := toResponse(out)
 	if err != nil {
+		var tooLarge *errResponseTooLarge
+		if errors.As(err, &tooLarge) {
+			return task.NewErrorResult(fmt.Sprintf(
+				"%s %s: %v. This page returned too much data to return safely on this satellite's memory budget. "+
+					"Request fewer items per page (pass a smaller \"MaxItems\" in params), narrow the result "+
+					"(e.g. {\"Filter\": [\"Role\"]} or [\"LocalManagedPolicy\"] for GetAccountAuthorizationDetails), "+
+					"or look up the specific oversized object individually (e.g. GetPolicyVersion for one policy) "+
+					"instead of the full account dump. If you were paging with a Marker, retry with the SAME Marker "+
+					"after narrowing - this page was refused before being returned, so nothing was skipped.",
+				service, operation, err,
+			)), nil
+		}
 		return nil, fmt.Errorf("encode %s %s response: %w", service, operation, err)
 	}
 	return task.NewSuccessResultWithDetails(
