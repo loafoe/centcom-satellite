@@ -3,7 +3,10 @@ package aws
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	smithy "github.com/aws/smithy-go"
 
 	"github.com/loafoe/centcom-satellite/internal/task"
@@ -39,9 +42,35 @@ func WrapError(context string, err error) (*task.Result, error) {
 	if err == nil {
 		return nil, nil
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) && apiErr.ErrorFault() == smithy.FaultClient {
+	if isClientFault(err) {
 		return task.NewErrorResult(fmt.Sprintf("%s: %v", context, err)), nil
 	}
 	return nil, fmt.Errorf("%s: %w", context, err)
+}
+
+// isClientFault trusts the modeled fault when there is one. Unmodeled errors
+// (e.g. IAM's AccessDenied, decoded as a smithy.GenericAPIError) report
+// FaultUnknown, so for those the HTTP status decides: 4xx other than 429 is
+// the caller's problem.
+func isClientFault(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorFault() {
+	case smithy.FaultClient:
+		return true
+	case smithy.FaultServer:
+		return false
+	}
+	// Query-protocol services (IAM, STS) report throttling as HTTP 400.
+	if _, throttle := retry.DefaultThrottleErrorCodes[apiErr.ErrorCode()]; throttle {
+		return false
+	}
+	var respErr *awshttp.ResponseError
+	if !errors.As(err, &respErr) {
+		return false
+	}
+	status := respErr.HTTPStatusCode()
+	return status >= 400 && status < 500 && status != http.StatusTooManyRequests
 }
