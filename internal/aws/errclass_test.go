@@ -3,11 +3,15 @@ package aws
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	gdtypes "github.com/aws/aws-sdk-go-v2/service/guardduty/types"
+	smithy "github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 func TestWrapError_Nil(t *testing.T) {
@@ -87,5 +91,46 @@ func TestWrapError_NonAPIError(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("WrapError non-API error: got nil error, want a real error")
+	}
+}
+
+func unmodeled(code string, status int) error {
+	return &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+		Err:      &smithy.GenericAPIError{Code: code, Message: "m"},
+	}
+}
+
+func awsResponseError(code string, status int) error {
+	return &awshttp.ResponseError{ResponseError: unmodeled(code, status).(*smithyhttp.ResponseError)}
+}
+
+// Unmodeled errors (IAM's AccessDenied, decoded as GenericAPIError with
+// FaultUnknown) are classified by HTTP status, except throttling, which
+// query-protocol services send as HTTP 400.
+func TestWrapError_UnmodeledErrorsUseHTTPStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantResult bool
+	}{
+		{"iam access denied 403", awsResponseError("AccessDenied", 403), true},
+		{"iam no such entity 404", awsResponseError("NoSuchEntity", 404), true},
+		{"iam throttling 400", awsResponseError("Throttling", 400), false},
+		{"429", awsResponseError("TooManyRequests", 429), false},
+		{"500", awsResponseError("ServiceFailure", 500), false},
+		{"no status at all", &smithy.GenericAPIError{Code: "X"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("operation error IAM: ListUsers, %w", tc.err)
+			result, err := WrapError("iam ListUsers", wrapped)
+			if tc.wantResult && (err != nil || result == nil || result.Success) {
+				t.Fatalf("want failed result, got (%+v, %v)", result, err)
+			}
+			if !tc.wantResult && (err == nil || result != nil) {
+				t.Fatalf("want real Go error (500), got (%+v, %v)", result, err)
+			}
+		})
 	}
 }

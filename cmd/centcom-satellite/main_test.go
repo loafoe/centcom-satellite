@@ -152,3 +152,20 @@ func TestRegisterTasks_CloudTrailFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterTasks_AWSReadFlag(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		cfg := &config.Config{}
+		cfg.Features.AWSReadEnabled = enabled
+		for _, awsOnly := range []bool{false, true} {
+			var k8sClient = newFakeK8sClient()
+			if awsOnly {
+				k8sClient = nil
+			}
+			registry := registerTasks(cfg, k8sClient, awsOnly, true, cluster_info.Capabilities{})
+			if _, ok := registry.Get("aws_read"); ok != enabled {
+				t.Errorf("aws_read present=%v with AWSReadEnabled=%v awsOnly=%v", ok, enabled, awsOnly)
+			}
+		}
+	}
+}

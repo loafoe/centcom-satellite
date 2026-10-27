@@ -19,6 +19,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/spire"
 	"github.com/loafoe/centcom-satellite/internal/task"
 	"github.com/loafoe/centcom-satellite/internal/task/account_info"
+	"github.com/loafoe/centcom-satellite/internal/task/aws_read"
 	"github.com/loafoe/centcom-satellite/internal/task/cloudtrail_logins"
 	"github.com/loafoe/centcom-satellite/internal/task/cloudtrail_lookup_events"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_health"
@@ -195,6 +196,7 @@ func main() {
 		SecurityHub:          cfg.Features.SecurityHubEnabled,
 		SecurityHubWrite:     cfg.Features.SecurityHubWriteEnabled,
 		CloudTrail:           cfg.Features.CloudTrailEnabled,
+		AWSRead:              cfg.Features.AWSReadEnabled,
 		HelmApplicationWrite: cfg.Features.HelmApplicationWriteEnabled,
 	}
 
@@ -468,6 +470,13 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		registry.Register(cloudtrail_lookup_events.New())
 		registry.Register(cloudtrail_logins.New())
 		slog.Info("cloudtrail tasks enabled", "tasks", "cloudtrail_lookup_events,cloudtrail_logins")
+	}
+
+	// Optional: aws_read (allowlisted read-only IAM / Identity Center calls;
+	// require AWS credentials + deploy/iam-policy-aws-read.json).
+	if cfg.Features.AWSReadEnabled {
+		registry.Register(aws_read.New())
+		slog.Info("aws_read task enabled", "services", aws_read.Services())
 	}
 
 	return registry

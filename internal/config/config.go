@@ -197,6 +197,14 @@ type FeaturesConfig struct {
 	// AWS credentials and cloudtrail:LookupEvents (see
 	// deploy/iam-policy-cloudtrail.json).
 	CloudTrailEnabled bool
+
+	// AWSReadEnabled enables aws_read: one allowlisted read-only IAM / IAM
+	// Identity Center / Identity Store API call per request (access reviews).
+	// Disabled by default; requires the IAM policy in
+	// deploy/iam-policy-aws-read.json. Explicit opt-in like CloudTrail: it
+	// exposes who has access to the account, and Identity Store user records
+	// carry names and emails.
+	AWSReadEnabled bool
 }
 
 // PodResizeConfig holds pod_resize task configuration.
@@ -261,6 +269,7 @@ func Load() (*Config, error) {
 			SecurityHubEnabled:      getEnvBool("SECURITYHUB_ENABLED", false),
 			SecurityHubWriteEnabled: getEnvBool("SECURITYHUB_WRITE_ENABLED", false),
 			CloudTrailEnabled:       getEnvBool("CLOUDTRAIL_ENABLED", false),
+			AWSReadEnabled:          getEnvBool("AWS_READ_ENABLED", false),
 		},
 		AWSAssumeRole: AWSAssumeRoleConfig{
 			ARN:         os.Getenv("AWS_ASSUME_ROLE_ARN"),
