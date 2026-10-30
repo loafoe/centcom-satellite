@@ -3,6 +3,8 @@ package securityhub_get_findings_statistics
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -356,6 +358,104 @@ func TestExecute_DefaultScanBudgetNeverTruncatesAFastScan(t *testing.T) {
 	}
 	if res.Details.(Statistics).Truncated {
 		t.Error("Truncated = true, want false for a fast, 2-page scan under the default 45s budget")
+	}
+}
+
+// tokenedFakeAPI serves pages keyed by the NextToken used to request them
+// ("" for the first page) — unlike pagedFakeAPI (which just serves pages in
+// call order and ignores the request), this lets a test prove a resume call
+// jumps straight to the right page instead of silently restarting from the
+// first one.
+type tokenedFakeAPI struct {
+	pages map[string]tokenedPage
+	calls []string // the NextToken requested on each call, in order
+}
+
+type tokenedPage struct {
+	findings  []types.AwsSecurityFinding
+	nextToken string // "" means no more pages
+}
+
+func (f *tokenedFakeAPI) GetFindings(_ context.Context, in *securityhub.GetFindingsInput, _ ...func(*securityhub.Options)) (*securityhub.GetFindingsOutput, error) {
+	key := aws.ToString(in.NextToken)
+	f.calls = append(f.calls, key)
+	page, ok := f.pages[key]
+	if !ok {
+		return nil, fmt.Errorf("tokenedFakeAPI: no page registered for token %q", key)
+	}
+	out := &securityhub.GetFindingsOutput{Findings: page.findings}
+	if page.nextToken != "" {
+		out.NextToken = aws.String(page.nextToken)
+	}
+	return out, nil
+}
+
+// TestExecute_ScanBudgetReturnsResumableNextToken is the regression test for
+// the continuation-cursor gap: a Truncated response used to discard AWS's
+// own NextToken, so a caller's only path forward was narrowing the filter —
+// repeating the same call just rescanned from page one and truncated at the
+// same point every time. Now NextToken is returned, and feeding it back as
+// Payload.NextToken resumes exactly where the previous call stopped.
+func TestExecute_ScanBudgetReturnsResumableNextToken(t *testing.T) {
+	fake := &tokenedFakeAPI{pages: map[string]tokenedPage{
+		"":   {findings: []types.AwsSecurityFinding{productFinding("GuardDuty")}, nextToken: "p1"},
+		"p1": {findings: []types.AwsSecurityFinding{productFinding("Inspector")}, nextToken: "p2"},
+		"p2": {findings: []types.AwsSecurityFinding{productFinding("Macie")}, nextToken: ""},
+	}}
+	tk := newTestTask(fake)
+	tk.scanBudget = 1 * time.Nanosecond
+
+	res, err := tk.Execute(context.Background(), json.RawMessage(`{"group_by":"PRODUCT"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("call 1: err=%v success=%v", err, res.Success)
+	}
+	stats := res.Details.(Statistics)
+	if !stats.Truncated {
+		t.Fatal("call 1: Truncated = false, want true")
+	}
+	if stats.NextToken != "p1" {
+		t.Errorf("call 1: NextToken = %q, want %q", stats.NextToken, "p1")
+	}
+	if stats.Total != 1 {
+		t.Errorf("call 1: Total = %d, want 1 (only the \"\" page before the budget check)", stats.Total)
+	}
+
+	res2, err := tk.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"group_by":"PRODUCT","next_token":%q}`, stats.NextToken)))
+	if err != nil || !res2.Success {
+		t.Fatalf("call 2 (resume): err=%v success=%v", err, res2.Success)
+	}
+	stats2 := res2.Details.(Statistics)
+	if !stats2.Truncated {
+		t.Fatal("call 2 (resume): Truncated = false, want true")
+	}
+	if stats2.NextToken != "p2" {
+		t.Errorf("call 2 (resume): NextToken = %q, want %q", stats2.NextToken, "p2")
+	}
+	if stats2.Total != 1 {
+		t.Errorf("call 2 (resume): Total = %d, want 1 (only the \"p1\" page — proves it resumed, didn't restart from \"\")", stats2.Total)
+	}
+
+	if want := []string{"", "p1"}; !reflect.DeepEqual(fake.calls, want) {
+		t.Errorf("GetFindings called with tokens %v, want %v (call 1 fetches \"\", call 2 resumes straight at \"p1\")", fake.calls, want)
+	}
+}
+
+// TestExecute_FinishedScanNeverReturnsANextToken guards against a resume
+// cursor being handed out when there is nothing left to resume — a client
+// that blindly retries on any Truncated==false response must never see a
+// stray NextToken either.
+func TestExecute_FinishedScanNeverReturnsANextToken(t *testing.T) {
+	fake := &pagedFakeAPI{
+		pages:  [][]types.AwsSecurityFinding{{productFinding("GuardDuty")}},
+		tokens: []string{""},
+	}
+	res, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{"group_by":"PRODUCT"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("err=%v success=%v", err, res.Success)
+	}
+	stats := res.Details.(Statistics)
+	if stats.Truncated || stats.NextToken != "" {
+		t.Errorf("Truncated=%v NextToken=%q, want false/\"\" for a scan that finished on its own", stats.Truncated, stats.NextToken)
 	}
 }
 

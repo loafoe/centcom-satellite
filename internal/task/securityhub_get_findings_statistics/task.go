@@ -117,6 +117,13 @@ type Payload struct {
 	Region  string     `json:"region,omitempty"`
 	Filter  shc.Filter `json:"filter,omitempty"`
 	GroupBy string     `json:"group_by,omitempty"` // default SEVERITY
+	// NextToken resumes an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/
+	// RESOURCE_ID) scan right after a previous call's Truncated response —
+	// pass that response's own NextToken back here, with the same
+	// group_by/filter/region, to scan the next up-to-45s slice instead of
+	// re-scanning from the start. Ignored for SEVERITY/WORKFLOW_STATUS,
+	// which never page across calls.
+	NextToken string `json:"next_token,omitempty"`
 }
 
 // Statistics is the task result payload. For SEVERITY/WORKFLOW_STATUS, a
@@ -126,13 +133,20 @@ type Payload struct {
 // counts, so it is a lower bound whenever any bucket is capped. Truncated
 // is set when an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/RESOURCE_ID)
 // scan hit defaultExhaustiveScanBudget before finishing — Total/Counts then
-// cover only the findings seen before the budget ran out, a lower bound
-// like a capped bucket. Narrow the filter (e.g. title_prefix) to make an
-// exhaustive group_by finish within budget.
+// cover only the findings seen in that one call's up-to-45s slice, not a
+// running sum across calls. NextToken is set alongside Truncated: feed it
+// back as Payload.NextToken (same group_by/filter/region) to scan the next
+// slice; a caller that wants a full exhaustive total across the whole scan
+// must sum Total/merge Counts by key across every call itself — this task
+// never accumulates state server-side between calls. NextToken is absent
+// (scan finished) or empty when there is nothing left to resume. Narrow the
+// filter (e.g. title_prefix) instead of resuming repeatedly when you only
+// need an exact count, not every distinct key.
 type Statistics struct {
 	GroupBy   string          `json:"group_by"`
 	Total     int32           `json:"total"`
 	Truncated bool            `json:"truncated,omitempty"`
+	NextToken string          `json:"next_token,omitempty"`
 	Counts    []shc.StatCount `json:"counts"`
 }
 
@@ -216,7 +230,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		if !ok {
 			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID)", groupByStr)), nil
 		}
-		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract)
+		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract, payload.NextToken)
 	}
 	if err != nil {
 		return awshelper.WrapError("get findings statistics", err)
@@ -224,7 +238,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 
 	msg := fmt.Sprintf("statistics grouped by %s: %d buckets", groupByStr, len(result.Counts))
 	if result.Truncated {
-		msg += " (partial — scan time-bounded; narrow the filter, e.g. title_prefix, for an exact count)"
+		if result.NextToken != "" {
+			msg += " (partial — scan time-bounded; pass next_token back to continue scanning, or narrow the filter, e.g. title_prefix, for an exact count in one call)"
+		} else {
+			msg += " (partial — scan time-bounded; narrow the filter, e.g. title_prefix, for an exact count)"
+		}
 	}
 	return task.NewSuccessResultWithDetails(msg, result), nil
 }
@@ -278,10 +296,13 @@ func (t *Task) cappedBucketStats(ctx context.Context, client api, filter shc.Fil
 // client-side — used for TYPE/PRODUCT, which have no fixed value set to query
 // per-bucket the way SEVERITY/WORKFLOW_STATUS do. Bounded by scanBudget (see
 // defaultExhaustiveScanBudget): once it elapses, pagination stops and the
-// result is returned as a partial, Truncated count rather than continuing to
-// page (potentially for minutes on an account with many findings and no
-// narrowing filter) or erroring out with nothing to show.
-func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filter, groupBy string, extract func(types.AwsSecurityFinding) string) (Statistics, error) {
+// result is returned as a partial, Truncated count (plus a NextToken to
+// resume from, when any progress was made) rather than continuing to page
+// (potentially for minutes on an account with many findings and no
+// narrowing filter) or erroring out with nothing to show. startToken
+// resumes a previous call's Truncated response (Payload.NextToken) instead
+// of starting over from the first page.
+func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filter, groupBy string, extract func(types.AwsSecurityFinding) string, startToken string) (Statistics, error) {
 	budget := t.scanBudget
 	if budget <= 0 {
 		budget = defaultExhaustiveScanBudget
@@ -293,6 +314,21 @@ func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filte
 	result := Statistics{GroupBy: groupBy, Counts: []shc.StatCount{}}
 
 	var nextToken *string
+	if startToken != "" {
+		nextToken = aws.String(startToken)
+	}
+	// truncate reports this call's result as partial, resumable from
+	// whatever nextToken currently holds (nil on a startToken=="" call that
+	// made no progress at all — nothing to resume, same as starting over).
+	truncate := func() (Statistics, error) {
+		result.Truncated = true
+		result.NextToken = aws.ToString(nextToken)
+		for key, count := range counts {
+			result.Counts = append(result.Counts, shc.StatCount{Key: key, Count: count})
+		}
+		return result, nil
+	}
+
 	for page := 0; ; page++ {
 		if page > 0 {
 			t.sleep(scanCtx, interPageDelay)
@@ -300,8 +336,7 @@ func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filte
 				if ctx.Err() != nil {
 					return Statistics{}, fmt.Errorf("get findings: %w", ctx.Err())
 				}
-				result.Truncated = true
-				break
+				return truncate()
 			}
 		}
 
@@ -317,9 +352,9 @@ func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filte
 		if err != nil {
 			if scanCtx.Err() != nil && ctx.Err() == nil {
 				// Our own scan budget elapsed mid-call, not the caller's own
-				// context — a partial result, not a failure.
-				result.Truncated = true
-				break
+				// context — a partial result, not a failure. nextToken still
+				// points at this (unfetched) page, so resuming retries it.
+				return truncate()
 			}
 			return Statistics{}, fmt.Errorf("get findings: %w", err)
 		}
