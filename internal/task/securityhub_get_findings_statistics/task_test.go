@@ -304,6 +304,61 @@ func TestExecute_InvalidPayload(t *testing.T) {
 // TestExecute_Product_ContextCancelledDuringPagination verifies a cancelled
 // context aborts the scan promptly rather than sitting through the remainder
 // of a long scan's inter-page delays.
+// TestExecute_ScanBudgetTruncatesExhaustiveScan is the regression test for
+// the live incident (2026-10-30): an unfiltered group_by=TITLE scan on a
+// real account paged for 4m59s before an external caller's own 5-minute
+// timeout killed it with no result at all. A scan whose own budget elapses
+// must stop pagination and return a partial, Truncated result instead.
+func TestExecute_ScanBudgetTruncatesExhaustiveScan(t *testing.T) {
+	pages := make([][]types.AwsSecurityFinding, 10)
+	tokens := make([]string, 10)
+	for i := range pages {
+		pages[i] = []types.AwsSecurityFinding{productFinding("GuardDuty")}
+		if i < len(pages)-1 {
+			tokens[i] = "more"
+		}
+	}
+	fake := &pagedFakeAPI{pages: pages, tokens: tokens}
+	tk := newTestTask(fake)
+	tk.scanBudget = 1 * time.Nanosecond
+
+	res, err := tk.Execute(context.Background(), json.RawMessage(`{"group_by":"PRODUCT"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success (partial), got error: %s", res.Error)
+	}
+	stats := res.Details.(Statistics)
+	if !stats.Truncated {
+		t.Error("Truncated = false, want true")
+	}
+	if fake.callIdx >= len(pages) {
+		t.Errorf("GetFindings called %d times, want fewer than all %d pages — budget should stop pagination early", fake.callIdx, len(pages))
+	}
+	if stats.Total == 0 {
+		t.Error("Total = 0, want at least the first page's worth of findings")
+	}
+}
+
+// TestExecute_DefaultScanBudgetNeverTruncatesAFastScan guards against a
+// regression where the budget fires on ordinary small scans — the default
+// (45s) must never trip for the handful of pages exercised by every other
+// test in this file.
+func TestExecute_DefaultScanBudgetNeverTruncatesAFastScan(t *testing.T) {
+	fake := &pagedFakeAPI{
+		pages:  [][]types.AwsSecurityFinding{{productFinding("GuardDuty")}, {productFinding("GuardDuty")}},
+		tokens: []string{"more", ""},
+	}
+	res, err := newTestTask(fake).Execute(context.Background(), json.RawMessage(`{"group_by":"PRODUCT"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("err=%v success=%v", err, res.Success)
+	}
+	if res.Details.(Statistics).Truncated {
+		t.Error("Truncated = true, want false for a fast, 2-page scan under the default 45s budget")
+	}
+}
+
 func TestExecute_Product_ContextCancelledDuringPagination(t *testing.T) {
 	fake := &pagedFakeAPI{
 		pages: [][]types.AwsSecurityFinding{

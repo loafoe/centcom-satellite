@@ -46,6 +46,18 @@ const pageSize int32 = 100
 // retry-after-throttle behavior.
 const interPageDelay = 200 * time.Millisecond
 
+// defaultExhaustiveScanBudget bounds how long exhaustiveStats (TYPE/PRODUCT/
+// RESOURCE_TYPE/TITLE/RESOURCE_ID group_by) pages through GetFindings before
+// giving up and returning a partial, Truncated result instead of a hard
+// error. Hit live 2026-10-30: an unfiltered group_by=TITLE scan on a real
+// account (ops-sandbox) was still paging past 25s when deliberately cut off,
+// and a real run ran a full 4m59s before an external caller's own 5-minute
+// timeout killed it with no result at all (hermes-agent's hardcoded MCP
+// tool-call timeout) — the task itself had no budget of its own. 45s matches
+// the CloudTrail tasks' own time-budget convention and leaves ample margin
+// under both the satellite's HTTP write timeout and any caller's timeout.
+const defaultExhaustiveScanBudget = 45 * time.Second
+
 // groupByExtractors covers the exhaustive-scan group_by values (TYPE,
 // PRODUCT, RESOURCE_TYPE): open-ended strings with no fixed value set to query per-bucket.
 var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
@@ -111,11 +123,17 @@ type Payload struct {
 // bucket's Count may be capped at pageSize (see StatCount.Capped) rather than
 // exhaustive; for TYPE/PRODUCT, counts are always exhaustive over every
 // finding matching the filter. Total sums the (possibly capped) bucket
-// counts, so it is a lower bound whenever any bucket is capped.
+// counts, so it is a lower bound whenever any bucket is capped. Truncated
+// is set when an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/RESOURCE_ID)
+// scan hit defaultExhaustiveScanBudget before finishing — Total/Counts then
+// cover only the findings seen before the budget ran out, a lower bound
+// like a capped bucket. Narrow the filter (e.g. title_prefix) to make an
+// exhaustive group_by finish within budget.
 type Statistics struct {
-	GroupBy string          `json:"group_by"`
-	Total   int32           `json:"total"`
-	Counts  []shc.StatCount `json:"counts"`
+	GroupBy   string          `json:"group_by"`
+	Total     int32           `json:"total"`
+	Truncated bool            `json:"truncated,omitempty"`
+	Counts    []shc.StatCount `json:"counts"`
 }
 
 type Task struct {
@@ -126,6 +144,8 @@ type Task struct {
 	// securityhub_common.Filter.Region's doc comment.
 	clientFactory func(ctx context.Context, region string) (api, string, error)
 	sleep         func(ctx context.Context, d time.Duration)
+	// scanBudget overrides defaultExhaustiveScanBudget when set (test seam).
+	scanBudget time.Duration
 }
 
 func New() *Task {
@@ -202,7 +222,11 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		return awshelper.WrapError("get findings statistics", err)
 	}
 
-	return task.NewSuccessResultWithDetails(fmt.Sprintf("statistics grouped by %s: %d buckets", groupByStr, len(result.Counts)), result), nil
+	msg := fmt.Sprintf("statistics grouped by %s: %d buckets", groupByStr, len(result.Counts))
+	if result.Truncated {
+		msg += " (partial — scan time-bounded; narrow the filter, e.g. title_prefix, for an exact count)"
+	}
+	return task.NewSuccessResultWithDetails(msg, result), nil
 }
 
 // addSeverityLabelFilter and addWorkflowStatusFilter constrain an
@@ -252,17 +276,32 @@ func (t *Task) cappedBucketStats(ctx context.Context, client api, filter shc.Fil
 
 // exhaustiveStats pages through every matching finding and aggregates counts
 // client-side — used for TYPE/PRODUCT, which have no fixed value set to query
-// per-bucket the way SEVERITY/WORKFLOW_STATUS do.
+// per-bucket the way SEVERITY/WORKFLOW_STATUS do. Bounded by scanBudget (see
+// defaultExhaustiveScanBudget): once it elapses, pagination stops and the
+// result is returned as a partial, Truncated count rather than continuing to
+// page (potentially for minutes on an account with many findings and no
+// narrowing filter) or erroring out with nothing to show.
 func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filter, groupBy string, extract func(types.AwsSecurityFinding) string) (Statistics, error) {
+	budget := t.scanBudget
+	if budget <= 0 {
+		budget = defaultExhaustiveScanBudget
+	}
+	scanCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
 	counts := map[string]int32{}
 	result := Statistics{GroupBy: groupBy, Counts: []shc.StatCount{}}
 
 	var nextToken *string
 	for page := 0; ; page++ {
 		if page > 0 {
-			t.sleep(ctx, interPageDelay)
-			if ctx.Err() != nil {
-				return Statistics{}, fmt.Errorf("get findings: %w", ctx.Err())
+			t.sleep(scanCtx, interPageDelay)
+			if scanCtx.Err() != nil {
+				if ctx.Err() != nil {
+					return Statistics{}, fmt.Errorf("get findings: %w", ctx.Err())
+				}
+				result.Truncated = true
+				break
 			}
 		}
 
@@ -274,8 +313,14 @@ func (t *Task) exhaustiveStats(ctx context.Context, client api, filter shc.Filte
 			input.NextToken = nextToken
 		}
 
-		out, err := client.GetFindings(ctx, input)
+		out, err := client.GetFindings(scanCtx, input)
 		if err != nil {
+			if scanCtx.Err() != nil && ctx.Err() == nil {
+				// Our own scan budget elapsed mid-call, not the caller's own
+				// context — a partial result, not a failure.
+				result.Truncated = true
+				break
+			}
 			return Statistics{}, fmt.Errorf("get findings: %w", err)
 		}
 		for _, f := range out.Findings {
