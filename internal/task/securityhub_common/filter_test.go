@@ -164,6 +164,23 @@ func TestSortCriteria_AscendingCustomField(t *testing.T) {
 	}
 }
 
+// TestBuildFilters_TitlePrefix verifies title_prefix translates to AWS's
+// native Title/PREFIX comparison (server-side prefix search, e.g. every
+// Inspector finding whose title starts with "CVE-2026"), and is omitted
+// entirely when unset.
+func TestBuildFilters_TitlePrefix(t *testing.T) {
+	out := Filter{TitlePrefix: "CVE-2026"}.BuildFilters()
+	if len(out.Title) != 1 || aws.ToString(out.Title[0].Value) != "CVE-2026" {
+		t.Fatalf("Title = %+v, want [CVE-2026]", out.Title)
+	}
+	if out.Title[0].Comparison != types.StringFilterComparisonPrefix {
+		t.Errorf("Title comparison = %v, want PREFIX", out.Title[0].Comparison)
+	}
+	if empty := (Filter{}).BuildFilters(); empty.Title != nil {
+		t.Error("unset title_prefix must be omitted")
+	}
+}
+
 func TestBuildFilters_ExploitAndFixAvailable(t *testing.T) {
 	out := Filter{ExploitAvailable: "YES", FixAvailable: "PARTIAL"}.BuildFilters()
 	if len(out.VulnerabilitiesExploitAvailable) != 1 || aws.ToString(out.VulnerabilitiesExploitAvailable[0].Value) != "YES" {

@@ -105,10 +105,19 @@ var groupByAttributes = map[string]string{
 	"WORKFLOW_STATUS": "WorkflowStatus",
 	"PRODUCT":         "ProductName",
 	"RESOURCE_TYPE":   "ResourceType",
-	// Finding title (for Inspector: "<CVE> - <package>") and resource ID
-	// (e.g. one ECR image or EC2 instance). AWS returns at most the top 100
-	// values for an Insight, so these two can be truncated.
-	"TITLE":       "Title",
+	// Resource ID (e.g. one ECR image or EC2 instance). AWS returns at most
+	// the top 100 values for an Insight, so this can be truncated.
+	//
+	// TITLE is deliberately absent: AWS rejects "Title" as an Insight
+	// GroupByAttribute (CreateInsight/UpdateInsight both fail with
+	// InvalidInputException: Invalid Aggregations — confirmed live against
+	// two real accounts), unlike every attribute above. To search or count
+	// findings by title, use the filter's title_prefix (AWS's native
+	// Title/PREFIX comparison, e.g. "CVE-2026") on this task, on
+	// securityhub_get_findings, or on securityhub_get_findings_statistics
+	// (whose TYPE/PRODUCT/RESOURCE_TYPE/TITLE/RESOURCE_ID group_by values are
+	// a separate, client-side aggregation that AWS's Insight restriction does
+	// not apply to).
 	"RESOURCE_ID": "ResourceId",
 }
 
@@ -135,8 +144,8 @@ type Payload struct {
 // securityhub_get_findings_statistics, counts here are always exact —
 // Insight results have no per-bucket cap — so there is no Capped field.
 // Truncated is set when AWS returned its maximum number of values
-// (possible for TITLE / RESOURCE_ID): only the top values are listed and
-// Total covers those only.
+// (possible for RESOURCE_ID): only the top values are listed and Total
+// covers those only.
 type Statistics struct {
 	GroupBy    string          `json:"group_by"`
 	InsightArn string          `json:"insight_arn"`
@@ -200,7 +209,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	attribute, ok := groupByAttributes[groupByStr]
 	if !ok {
-		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID)", groupByStr)), nil
+		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, RESOURCE_ID; TITLE is not supported by AWS Insights — use filter.title_prefix instead, or securityhub_get_findings_statistics's group_by=TITLE)", groupByStr)), nil
 	}
 
 	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)

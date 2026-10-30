@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -268,19 +269,40 @@ func TestExecute_QuotaExceededReturnsClearError(t *testing.T) {
 	}
 }
 
-func TestExecute_TitleGroupByTruncation(t *testing.T) {
+func TestExecute_ResourceIDGroupByTruncation(t *testing.T) {
 	var vals []types.InsightResultValue
 	for i := 0; i < maxInsightValues; i++ {
-		vals = append(vals, resultValue(fmt.Sprintf("CVE-%d - pkg", i), 1))
+		vals = append(vals, resultValue(fmt.Sprintf("arn:aws:ec2:eu-west-2:123456789012:instance/i-%d", i), 1))
 	}
-	fake := &fakeAPI{results: map[string][]types.InsightResultValue{"Title": vals}}
+	fake := &fakeAPI{results: map[string][]types.InsightResultValue{"ResourceId": vals}}
 	tk, _ := newTestTask(fake)
-	s := run(t, tk, `{"group_by":"TITLE"}`)
+	s := run(t, tk, `{"group_by":"RESOURCE_ID"}`)
+	if s.GroupBy != "RESOURCE_ID" {
+		t.Errorf("group_by = %s", s.GroupBy)
+	}
 	if !s.Truncated || len(s.Counts) != maxInsightValues {
 		t.Errorf("truncated=%v counts=%d, want true/%d", s.Truncated, len(s.Counts), maxInsightValues)
 	}
-	if s := run(t, tk, `{"group_by":"RESOURCE_ID"}`); s.GroupBy != "RESOURCE_ID" {
-		t.Errorf("group_by = %s", s.GroupBy)
+}
+
+// TestExecute_TitleGroupByRejectedBeforeAnyAPICall verifies group_by=TITLE
+// returns the satellite's own clear error (and points callers at
+// title_prefix) without ever calling CreateInsight/UpdateInsight — AWS
+// itself rejects "Title" as an Insight GroupByAttribute with
+// InvalidInputException: Invalid Aggregations, so this must be caught
+// before any AWS call, not surfaced as an opaque AWS error.
+func TestExecute_TitleGroupByRejectedBeforeAnyAPICall(t *testing.T) {
+	fake := &fakeAPI{}
+	tk, _ := newTestTask(fake)
+	res, err := tk.Execute(context.Background(), json.RawMessage(`{"group_by":"TITLE"}`))
+	if err != nil || res.Success {
+		t.Fatalf("err=%v success=%v, want a clear error result", err, res.Success)
+	}
+	if !strings.Contains(res.Error, "title_prefix") {
+		t.Errorf("error = %q, want it to mention title_prefix", res.Error)
+	}
+	if fake.createCalled != 0 || fake.updateCalled != 0 {
+		t.Errorf("createCalled=%d updateCalled=%d, want 0 (rejected before any AWS call)", fake.createCalled, fake.updateCalled)
 	}
 }
 

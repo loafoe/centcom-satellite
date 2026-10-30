@@ -37,6 +37,12 @@ type Filter struct {
 	// (FixAvailable also PARTIAL).
 	ExploitAvailable string `json:"exploit_available,omitempty"`
 	FixAvailable     string `json:"fix_available,omitempty"`
+	// TitlePrefix keeps findings whose Title starts with this string,
+	// case-sensitive — AWS's native Title/PREFIX comparison. For Inspector
+	// findings, Title is "<CVE-ID> - <package>", so e.g. "CVE-2026" scopes a
+	// query to every vulnerability finding reported that year, filtered
+	// server-side by Security Hub rather than paged and matched client-side.
+	TitlePrefix string `json:"title_prefix,omitempty"`
 	// AWSAccountID keeps findings for this account ID.
 	AWSAccountID string `json:"aws_account_id,omitempty"`
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
@@ -95,6 +101,9 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 	if f.FixAvailable != "" {
 		out.VulnerabilitiesFixAvailable = []types.StringFilter{equalsFilter(f.FixAvailable)}
 	}
+	if f.TitlePrefix != "" {
+		out.Title = []types.StringFilter{prefixFilter(f.TitlePrefix)}
+	}
 	if f.AWSAccountID != "" {
 		out.AwsAccountId = []types.StringFilter{equalsFilter(f.AWSAccountID)}
 	}
@@ -119,6 +128,13 @@ func equalsFilter(value string) types.StringFilter {
 	return types.StringFilter{
 		Value:      aws.String(value),
 		Comparison: types.StringFilterComparisonEquals,
+	}
+}
+
+func prefixFilter(value string) types.StringFilter {
+	return types.StringFilter{
+		Value:      aws.String(value),
+		Comparison: types.StringFilterComparisonPrefix,
 	}
 }
 
