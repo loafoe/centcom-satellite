@@ -3,57 +3,117 @@ package http_request
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestValidateClusterInternal(t *testing.T) {
-	task := New()
+	dns := map[string][]net.IP{
+		"my-svc.my-ns":                   {net.ParseIP("10.43.0.5")},
+		"my-svc.my-ns.svc.cluster.local": {net.ParseIP("10.43.0.5")},
+		"pod.eks-secondary":              {net.ParseIP("100.64.3.4")},
+		"example.com":                    {net.ParseIP("93.184.216.34")},
+		// An ExternalName service is a *.svc.cluster.local name for an
+		// outside host.
+		"ext.my-ns.svc.cluster.local": {net.ParseIP("52.1.2.3")},
+		"169.254.169.254":             {net.ParseIP("169.254.169.254")},
+		"split.my-ns":                 {net.ParseIP("10.0.0.1"), net.ParseIP("8.8.8.8")},
+	}
+	tk := &Task{resolver: func(ctx context.Context, host string) ([]net.IP, error) {
+		if ips, ok := dns[host]; ok {
+			return ips, nil
+		}
+		return nil, fmt.Errorf("no such host")
+	}}
 
 	tests := []struct {
-		name    string
 		host    string
 		wantErr bool
 	}{
-		{"k8s svc.cluster.local", "my-svc.my-ns.svc.cluster.local", false},
-		{"k8s name.namespace", "my-svc.my-ns", false},
-		{"k8s .svc suffix", "my-svc.my-ns.svc", false},
-		{"k8s pod.cluster.local", "10-0-0-1.my-ns.pod.cluster.local", false},
+		{"my-svc.my-ns", false},
+		{"my-svc.my-ns.svc.cluster.local", false},
+		{"pod.eks-secondary", false},
+		{"example.com", true}, // used to pass as "name.namespace" without resolving
+		{"ext.my-ns.svc.cluster.local", true},
+		{"169.254.169.254", true},
+		{"split.my-ns", true},
+		{"unknown.my-ns", true},
+		{"", true},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := task.validateClusterInternal(context.Background(), tt.host)
+		t.Run(tt.host, func(t *testing.T) {
+			err := tk.validateClusterInternal(context.Background(), tt.host)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateClusterInternal() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("validateClusterInternal(%q) error = %v, wantErr %v", tt.host, err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestIsKubernetesDNS(t *testing.T) {
-	tests := []struct {
-		host string
-		want bool
-	}{
-		{"my-svc.my-ns.svc.cluster.local", true},
-		{"my-svc.my-ns.svc", true},
-		{"my-svc.my-ns", true},
-		{"10-0-0-1.my-ns.pod.cluster.local", true},
-		{"my-svc", false},
-		{"example.com", true}, // Two parts treated as name.namespace
-		{"my-svc.my-ns.other.domain", false},
-	}
+// The dialer checks the address actually connected to, so a name that
+// validated against a cluster IP but connects elsewhere (DNS rebinding) is
+// refused. The test server listens on loopback, which isn't a cluster IP.
+func TestGuardedClientBlocksNonClusterConnect(t *testing.T) {
+	hit := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer server.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.host, func(t *testing.T) {
-			if got := isKubernetesDNS(tt.host); got != tt.want {
-				t.Errorf("isKubernetesDNS(%q) = %v, want %v", tt.host, got, tt.want)
-			}
-		})
+	tk := &Task{
+		httpClient: func(timeout time.Duration) *http.Client { return newGuardedClient(timeout, isClusterIP) },
+		resolver: func(ctx context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("10.0.0.1")}, nil // lies: validation passes
+		},
+	}
+	payload, _ := json.Marshal(Payload{Method: "GET", URL: server.URL})
+	result, err := tk.Execute(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Success || !strings.Contains(result.Error, "non-cluster address blocked") {
+		t.Fatalf("connection to a non-cluster address was not blocked: success=%v error=%q", result.Success, result.Error)
+	}
+	if hit {
+		t.Fatal("the request reached the server")
+	}
+}
+
+// Redirects are returned to the caller, not followed to another host.
+func TestGuardedClientDoesNotFollowRedirects(t *testing.T) {
+	targetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetHit = true }))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/latest/meta-data/", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	tk := &Task{
+		// Allow loopback here so only the redirect behaviour is under test.
+		httpClient: func(timeout time.Duration) *http.Client {
+			return newGuardedClient(timeout, func(ip net.IP) bool { return ip.IsLoopback() })
+		},
+		resolver: func(ctx context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("10.0.0.1")}, nil
+		},
+	}
+	payload, _ := json.Marshal(Payload{Method: "GET", URL: origin.URL})
+	result, err := tk.Execute(context.Background(), payload)
+	if err != nil || !result.Success {
+		t.Fatalf("Execute() err=%v result=%+v", err, result)
+	}
+	if targetHit {
+		t.Fatal("redirect was followed")
+	}
+	var details HTTPResult
+	raw, _ := json.Marshal(result.Details)
+	_ = json.Unmarshal(raw, &details)
+	if details.StatusCode != http.StatusFound || !strings.Contains(details.Headers["Location"], "/latest/meta-data/") {
+		t.Fatalf("want the 302 and its Location returned, got %d %v", details.StatusCode, details.Headers)
 	}
 }
 
@@ -67,8 +127,15 @@ func TestIsClusterIP(t *testing.T) {
 		{"172.16.0.1", true},
 		{"172.31.255.255", true},
 		{"192.168.1.1", true},
+		{"100.64.0.1", true},
+		{"100.127.255.255", true},
 		{"8.8.8.8", false},
 		{"1.2.3.4", false},
+		{"169.254.169.254", false}, // cloud metadata service
+		{"127.0.0.1", false},
+		{"100.128.0.1", false},
+		{"::ffff:10.0.0.1", true},
+		{"::1", false},
 	}
 
 	for _, tt := range tests {

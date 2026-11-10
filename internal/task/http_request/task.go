@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/loafoe/centcom-satellite/internal/task"
@@ -49,7 +50,7 @@ type Task struct {
 func New() *Task {
 	return &Task{
 		httpClient: func(timeout time.Duration) *http.Client {
-			return &http.Client{Timeout: timeout}
+			return newGuardedClient(timeout, isClusterIP)
 		},
 		resolver: func(ctx context.Context, host string) ([]net.IP, error) {
 			addrs, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
@@ -112,9 +113,15 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	), nil
 }
 
+// validateClusterInternal resolves host and requires every address to be a
+// cluster IP. Names are never trusted on their own: a two-label "name.ns"
+// pattern also matches "evil.com", and a *.svc.cluster.local name can be an
+// ExternalName service pointing anywhere. This is the early, readable
+// rejection; the dialer (newGuardedClient) enforces the same rule on the
+// address actually connected to, which also covers DNS rebinding.
 func (t *Task) validateClusterInternal(ctx context.Context, host string) error {
-	if isKubernetesDNS(host) {
-		return nil
+	if host == "" {
+		return fmt.Errorf("missing host")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -125,6 +132,9 @@ func (t *Task) validateClusterInternal(ctx context.Context, host string) error {
 		return fmt.Errorf("failed to resolve host: %v", err)
 	}
 
+	if len(ips) == 0 {
+		return fmt.Errorf("host did not resolve")
+	}
 	for _, ip := range ips {
 		if !isClusterIP(ip) {
 			return fmt.Errorf("host resolves to non-cluster IP: %s", ip)
@@ -133,25 +143,59 @@ func (t *Task) validateClusterInternal(ctx context.Context, host string) error {
 	return nil
 }
 
-func isKubernetesDNS(host string) bool {
-	if strings.HasSuffix(host, ".svc.cluster.local") ||
-		strings.HasSuffix(host, ".pod.cluster.local") ||
-		strings.HasSuffix(host, ".svc") {
-		return true
+// errBlockedAddress is returned by the guarded dialer.
+var errBlockedAddress = fmt.Errorf("connection to a non-cluster address blocked")
+
+// newGuardedClient returns the client http_request uses:
+//   - every connection's actual remote IP must satisfy allow (checked in the
+//     dialer's Control hook, after DNS resolution - so a name that resolved to
+//     a cluster IP during validation and to something else at connect time
+//     is still refused);
+//   - redirects are not followed: the 3xx and its Location header are
+//     returned to the caller instead of being chased to another host (an
+//     in-cluster endpoint could otherwise bounce the request to the cloud
+//     metadata service or the internet);
+//   - environment proxies are ignored, so the address checked is the target's.
+func newGuardedClient(timeout time.Duration, allow func(net.IP) bool) *http.Client {
+	dialer := &net.Dialer{
+		Timeout: timeout,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return errBlockedAddress
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || !allow(ip) {
+				return fmt.Errorf("%w: %s", errBlockedAddress, host)
+			}
+			return nil
+		},
 	}
-	parts := strings.Split(host, ".")
-	if len(parts) == 2 {
-		return true // name.namespace format
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy:               nil,
+			DialContext:         dialer.DialContext,
+			TLSHandshakeTimeout: timeout,
+			MaxIdleConns:        1,
+			DisableKeepAlives:   true,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	return false
 }
 
 func isClusterIP(ip net.IP) bool {
-	// Common cluster CIDRs - pod and service ranges
+	// Private ranges cluster pods and services live in: RFC1918 plus RFC 6598
+	// shared address space (EKS secondary pod CIDRs). Loopback, link-local
+	// (incl. the 169.254.169.254 metadata service) and public addresses are
+	// never cluster-internal.
 	clusterCIDRs := []string{
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
+		"100.64.0.0/10",
 	}
 	for _, cidr := range clusterCIDRs {
 		_, network, _ := net.ParseCIDR(cidr)
