@@ -164,6 +164,7 @@ type groupAcc struct {
 	packages             map[PackageFix]bool
 	fix, exploit         string
 	epss                 float64
+	cvss                 float64
 }
 
 // addFinding must be called with mu held.
@@ -247,10 +248,30 @@ func (s *scan) addFinding(f *itypes.Finding) {
 		if f.Epss != nil && f.Epss.Score > g.epss {
 			g.epss = f.Epss.Score
 		}
+		if cvss := maxCvssBaseScore(f); cvss > g.cvss {
+			g.cvss = cvss
+		}
 	}
 	for _, img := range imgs {
 		img.matched = true
 	}
+}
+
+// maxCvssBaseScore returns the highest CVSS base score Inspector reports
+// for f across every source (NVD, vendor, etc.) — a finding can carry more
+// than one, and they don't always agree.
+func maxCvssBaseScore(f *itypes.Finding) float64 {
+	v := f.PackageVulnerabilityDetails
+	if v == nil {
+		return 0
+	}
+	var best float64
+	for _, c := range v.Cvss {
+		if c.BaseScore != nil && *c.BaseScore > best {
+			best = *c.BaseScore
+		}
+	}
+	return best
 }
 
 func dedupe(v []string) []string {
@@ -312,7 +333,7 @@ func (g *groupAcc) toGroup() Group {
 	out := Group{
 		Key: g.key, Title: g.title, Severity: g.severity, Findings: g.findings,
 		SeverityCounts: g.sevCounts, Images: len(g.images), Vulnerabilities: len(g.vulns),
-		FixAvailable: g.fix, ExploitAvailable: g.exploit, EPSS: g.epss,
+		FixAvailable: g.fix, ExploitAvailable: g.exploit, EPSS: g.epss, CVSS: g.cvss,
 	}
 	vulns := make([]string, 0, len(g.vulns))
 	for v := range g.vulns {

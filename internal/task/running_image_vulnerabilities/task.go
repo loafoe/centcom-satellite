@@ -139,6 +139,9 @@ type Group struct {
 	FixAvailable     string  `json:"fix_available,omitempty"`
 	ExploitAvailable string  `json:"exploit_available,omitempty"`
 	EPSS             float64 `json:"epss,omitempty"`
+	// CVSS is the highest CVSS base score (0-10) Inspector reports for any
+	// finding in this group, across every source it carries one from.
+	CVSS float64 `json:"cvss,omitempty"`
 	// Workloads are namespace/Kind/name of the workloads running affected
 	// images (first maxListed), WorkloadsTotal the full count.
 	Workloads      []string `json:"workloads,omitempty"`

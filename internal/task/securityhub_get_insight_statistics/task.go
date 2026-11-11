@@ -8,25 +8,35 @@
 // are exact in a few calls, even for millions of findings.
 //
 // Custom Insights are a scarce, account-wide resource (100 per account and
-// region, shared with every human and tool), so this task uses exactly ONE
-// Insight per account and region — its "slot" — for every query:
+// region, shared with every human and tool), so this task caps itself at a
+// small, bounded pool of Insights per account and region (maxSlots) — its
+// "slots" — rather than claiming the whole quota:
 //
-//   - The slot is named "centcom-satellite-stats-<region>#<fingerprint>",
+//   - Each slot is named "centcom-satellite-stats-<region>#<fingerprint>",
 //     where the fingerprint identifies the query (group_by + a hash of the
 //     normalized filter). An Insight's filter is part of the Insight, so the
-//     name tells exactly which query the slot currently answers.
-//   - A call whose query is already in the slot reads the results directly.
-//     Otherwise it rewrites the slot (UpdateInsight: filters, group-by
-//     attribute and fingerprinted name) and then reads the results.
+//     name tells exactly which query a slot currently answers.
+//   - A call whose query already has a matching slot reads its results
+//     directly — no CreateInsight/UpdateInsight, just GetInsightResults.
+//     This is what makes switching between a handful of recurring queries
+//     (e.g. a dashboard's severity tabs) cheap after the first visit to
+//     each: distinct queries get distinct, persistent slots instead of
+//     evicting each other on every switch.
+//   - A call for a new query reuses a free slot if one exists below
+//     maxSlots, or rewrites the least-recently-used slot (UpdateInsight)
+//     once the pool is full — "recently used" is tracked in-process (an
+//     Insight itself has no last-read timestamp), so this LRU state does
+//     not survive a restart and is independent per replica.
 //   - After reading, it reads the slot's name back. If another caller (a
 //     second replica, or another satellite in the same account) rewrote the
 //     slot in between, the results may belong to that caller's query, so it
 //     retries (maxAttempts). Calls within one process are serialized per
 //     region, so retries are only needed across processes.
 //   - Once per process and region, it deletes this task's other Insights:
-//     ones from older versions (one per group_by, region or filter) and
-//     duplicate slots from a create race. DeleteInsight is commonly blocked
-//     by account/org policy (verified empirically via an explicit SCP deny
+//     ones from older versions (a different naming scheme) and any slots
+//     beyond maxSlots (e.g. left over from a lower cap in a previous
+//     release, or a create race). DeleteInsight is commonly blocked by
+//     account/org policy (verified empirically via an explicit SCP deny
 //     even under AdministratorAccess); that is logged and otherwise ignored
 //     — those slots then stay used, but no new ones are taken.
 //
@@ -45,8 +55,10 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/securityhub"
@@ -67,6 +79,13 @@ const insightNamePrefix = "centcom-satellite-stats-"
 // maxAttempts bounds retries when another process rewrites the slot
 // between our update and our read.
 const maxAttempts = 3
+
+// maxSlots bounds how many Insights this task keeps per account and region
+// — enough for a dashboard's handful of recurring queries (e.g. one
+// SEVERITY overview plus one RESOURCE_TYPE breakdown per severity tab) to
+// each get their own persistent slot, while staying a small, fixed
+// allocation against the shared 100-per-region quota.
+const maxSlots = 8
 
 // slotPrefix is the name prefix of the region's one slot.
 func slotPrefix(region string) string {
@@ -180,11 +199,31 @@ func (t *Task) Name() string { return TaskName }
 
 // regionLocks serializes slot use per region within this process; cleaned
 // records which regions' leftover Insights were already cleaned up.
+// lastUsed tracks, per slot ARN, when this process last read or wrote it —
+// the LRU key for eviction once a region's pool is at maxSlots. Insights
+// carry no last-read timestamp of their own, so this is process-local and
+// does not survive a restart (acceptable: it only affects which slot gets
+// reused first, never correctness).
 var (
 	regionLocksMu sync.Mutex
 	regionLocks   = map[string]*sync.Mutex{}
 	cleaned       = map[string]bool{}
+
+	lastUsedMu sync.Mutex
+	lastUsed   = map[string]time.Time{}
 )
+
+func touchLastUsed(arn string) {
+	lastUsedMu.Lock()
+	lastUsed[arn] = time.Now()
+	lastUsedMu.Unlock()
+}
+
+func lastUsedAt(arn string) time.Time {
+	lastUsedMu.Lock()
+	defer lastUsedMu.Unlock()
+	return lastUsed[arn] // zero value for an ARN never seen by this process
+}
 
 func regionLock(region string) *sync.Mutex {
 	regionLocksMu.Lock()
@@ -274,12 +313,15 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 }
 
-// useSlot returns the region's slot ARN with the slot set to answer name:
-// it finds the slot (creating it if this task has none), rewrites it if it
-// currently holds a different query, and — once per process and region —
-// deletes this task's other, leftover Insights.
+// useSlot returns a slot ARN set to answer name: an exact-match existing
+// slot is reused as-is (no AWS write at all); otherwise a free slot is
+// created, or — once the region's pool is at maxSlots — the
+// least-recently-used slot is rewritten (UpdateInsight) to answer the new
+// query. Once per process and region, it also deletes this task's other,
+// leftover Insights (old naming scheme, or more than maxSlots own-region
+// slots found at startup).
 func useSlot(ctx context.Context, client api, region, name, attribute string, filters *types.AwsSecurityFindingFilters) (string, error) {
-	var slot *types.Insight
+	var ours []types.Insight
 	var leftovers []types.Insight
 	var nextToken *string
 	for {
@@ -291,8 +333,8 @@ func useSlot(ctx context.Context, client api, region, name, attribute string, fi
 			in := out.Insights[i]
 			n := aws.ToString(in.Name)
 			switch {
-			case slot == nil && strings.HasPrefix(n, slotPrefix(region)):
-				slot = &in
+			case strings.HasPrefix(n, slotPrefix(region)):
+				ours = append(ours, in)
 			case strings.HasPrefix(n, insightNamePrefix):
 				leftovers = append(leftovers, in)
 			}
@@ -303,9 +345,20 @@ func useSlot(ctx context.Context, client api, region, name, attribute string, fi
 		nextToken = out.NextToken
 	}
 
+	// More own-region slots than the current cap allows (e.g. left over
+	// from a higher cap in a previous release): keep the first maxSlots
+	// (stable order), the rest become leftovers for cleanup below.
+	sort.Slice(ours, func(i, j int) bool { return aws.ToString(ours[i].InsightArn) < aws.ToString(ours[j].InsightArn) })
+	if len(ours) > maxSlots {
+		leftovers = append(leftovers, ours[maxSlots:]...)
+		ours = ours[:maxSlots]
+	}
+
 	var arn string
 	switch {
-	case slot == nil:
+	case exactMatch(ours, name) != nil:
+		arn = aws.ToString(exactMatch(ours, name).InsightArn)
+	case len(ours) < maxSlots:
 		created, err := client.CreateInsight(ctx, &securityhub.CreateInsightInput{
 			Name: aws.String(name), GroupByAttribute: aws.String(attribute), Filters: filters,
 		})
@@ -313,19 +366,42 @@ func useSlot(ctx context.Context, client api, region, name, attribute string, fi
 			return "", fmt.Errorf("create insight: %w", err)
 		}
 		arn = aws.ToString(created.InsightArn)
-	case aws.ToString(slot.Name) != name:
-		arn = aws.ToString(slot.InsightArn)
+	default:
+		victim := leastRecentlyUsed(ours)
+		arn = aws.ToString(victim.InsightArn)
 		if _, err := client.UpdateInsight(ctx, &securityhub.UpdateInsightInput{
 			InsightArn: aws.String(arn), Name: aws.String(name), GroupByAttribute: aws.String(attribute), Filters: filters,
 		}); err != nil {
 			return "", fmt.Errorf("update insight: %w", err)
 		}
-	default:
-		arn = aws.ToString(slot.InsightArn)
 	}
 
+	touchLastUsed(arn)
 	cleanupOnce(ctx, client, region, leftovers)
 	return arn, nil
+}
+
+// exactMatch returns the slot already named name, or nil.
+func exactMatch(slots []types.Insight, name string) *types.Insight {
+	for i := range slots {
+		if aws.ToString(slots[i].Name) == name {
+			return &slots[i]
+		}
+	}
+	return nil
+}
+
+// leastRecentlyUsed returns the slot this process least recently read or
+// wrote (zero value — never seen by this process — sorts first).
+func leastRecentlyUsed(slots []types.Insight) types.Insight {
+	best := slots[0]
+	bestAt := lastUsedAt(aws.ToString(best.InsightArn))
+	for _, s := range slots[1:] {
+		if at := lastUsedAt(aws.ToString(s.InsightArn)); at.Before(bestAt) {
+			best, bestAt = s, at
+		}
+	}
+	return best
 }
 
 // cleanupOnce deletes leftover Insights of this task once per process and

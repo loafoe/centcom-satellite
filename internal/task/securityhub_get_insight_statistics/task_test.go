@@ -142,7 +142,7 @@ func run(t *testing.T, tk *Task, payload string) Statistics {
 	return res.Details.(Statistics)
 }
 
-func TestExecute_CreatesOneSlotAndReusesIt(t *testing.T) {
+func TestExecute_DistinctQueriesGetDistinctSlotsUpToCap(t *testing.T) {
 	fake := &fakeAPI{results: map[string][]types.InsightResultValue{
 		"SeverityLabel": {resultValue("CRITICAL", 3), resultValue("HIGH", 4)},
 		"ResourceType":  {resultValue("AwsEcrContainerImage", 9)},
@@ -153,49 +153,96 @@ func TestExecute_CreatesOneSlotAndReusesIt(t *testing.T) {
 	if fake.createCalled != 1 || s.Total != 7 {
 		t.Fatalf("first call: created=%d total=%d, want 1/7", fake.createCalled, s.Total)
 	}
-	// Same query again: no create, no update.
+	// Same query again: no create, no update — exact-match reuse.
 	run(t, tk, `{}`)
 	if fake.createCalled != 1 || fake.updateCalled != 0 {
 		t.Errorf("repeat call: created=%d updated=%d, want 1/0", fake.createCalled, fake.updateCalled)
 	}
-	// Different group_by and filter: same slot, rewritten.
+	// Different group_by and filter, pool below cap: a second slot, not a
+	// rewrite of the first — this is what lets a dashboard's severity tabs
+	// each keep their own persistent, cheap-to-reread Insight.
 	s = run(t, tk, `{"group_by":"RESOURCE_TYPE","filter":{"severity_labels":["CRITICAL"]}}`)
-	if fake.createCalled != 1 || fake.updateCalled != 1 {
-		t.Errorf("new query: created=%d updated=%d, want 1/1", fake.createCalled, fake.updateCalled)
+	if fake.createCalled != 2 || fake.updateCalled != 0 {
+		t.Errorf("new query below cap: created=%d updated=%d, want 2/0", fake.createCalled, fake.updateCalled)
 	}
 	if s.Total != 9 || s.Counts[0].Key != "AwsEcrContainerImage" {
 		t.Errorf("new query answered with %+v", s)
 	}
-	if n := len(fake.named(insightNamePrefix)); n != 1 {
-		t.Errorf("%d statistics insights exist, want exactly 1", n)
+	if n := len(fake.named(insightNamePrefix)); n != 2 {
+		t.Errorf("%d statistics insights exist, want exactly 2", n)
 	}
-	slot := fake.named(slotPrefix(region))[0]
-	sev := slot.Filters.SeverityLabel
-	if len(sev) != 1 || aws.ToString(sev[0].Value) != "CRITICAL" {
-		t.Errorf("slot filter = %+v, want the new query's filter", sev)
+	// Switching back to the first query reuses its still-live slot: no new
+	// create or update at all.
+	s = run(t, tk, `{}`)
+	if fake.createCalled != 2 || fake.updateCalled != 0 || s.Total != 7 {
+		t.Errorf("switch back: created=%d updated=%d total=%d, want 2/0/7", fake.createCalled, fake.updateCalled, s.Total)
 	}
-	if r := slot.Filters.Region; len(r) != 1 || aws.ToString(r[0].Value) != region {
-		t.Errorf("slot Region filter = %+v, want [%s]", r, region)
+	for _, slot := range fake.named(slotPrefix(region)) {
+		if r := slot.Filters.Region; len(r) != 1 || aws.ToString(r[0].Value) != region {
+			t.Errorf("slot %s Region filter = %+v, want [%s]", aws.ToString(slot.Name), r, region)
+		}
+	}
+}
+
+func TestExecute_EvictsLeastRecentlyUsedSlotOncePoolIsFull(t *testing.T) {
+	results := map[string][]types.InsightResultValue{}
+	for i := 0; i < maxSlots; i++ {
+		results[fmt.Sprintf("Attr%d", i)] = []types.InsightResultValue{resultValue(fmt.Sprintf("v%d", i), int32(i))}
+	}
+	results["AttrNew"] = []types.InsightResultValue{resultValue("new", 42)}
+	fake := &fakeAPI{results: results}
+	tk, _ := newTestTask(fake)
+
+	// Fill the pool: maxSlots distinct queries, touched in order so slot 0
+	// is the least recently used once we're full.
+	for i := 0; i < maxSlots; i++ {
+		run(t, tk, fmt.Sprintf(`{"group_by":"RESOURCE_TYPE","filter":{"resource_ids":["r%d"]}}`, i))
+	}
+	if fake.createCalled != maxSlots {
+		t.Fatalf("filling the pool: created=%d, want %d", fake.createCalled, maxSlots)
+	}
+	// Re-touch every slot except the first, so it's the clear LRU victim.
+	for i := 1; i < maxSlots; i++ {
+		run(t, tk, fmt.Sprintf(`{"group_by":"RESOURCE_TYPE","filter":{"resource_ids":["r%d"]}}`, i))
+	}
+
+	// One more distinct query: the pool is full, so this must rewrite a
+	// slot (update), never create a new one beyond the cap.
+	s := run(t, tk, `{"group_by":"RESOURCE_TYPE","filter":{"resource_ids":["new"]}}`)
+	if fake.createCalled != maxSlots {
+		t.Errorf("created=%d after the pool was full, want still %d (no growth)", fake.createCalled, maxSlots)
+	}
+	if fake.updateCalled != 1 {
+		t.Errorf("updateCalled=%d, want exactly 1 (the eviction)", fake.updateCalled)
+	}
+	if s.InsightArn != "arn:new-1" {
+		t.Errorf("new query answered by %s, want the first-created (and now-evicted) slot", s.InsightArn)
+	}
+	if n := len(fake.named(insightNamePrefix)); n != maxSlots {
+		t.Errorf("%d statistics insights exist, want exactly %d (capped, not grown)", n, maxSlots)
 	}
 }
 
 func TestExecute_DeletesLeftoversOnce(t *testing.T) {
 	fake := &fakeAPI{results: map[string][]types.InsightResultValue{"SeverityLabel": {resultValue("LOW", 1)}}}
 	tk, region := newTestTask(fake)
+	// arn:slot's name is the exact slot the default `{}` payload will ask
+	// for, so this run also proves exact-match reuse (no create/update)
+	// alongside leftover deletion.
+	defaultName := slotName(region, "SEVERITY", shc.Filter{}.WithResolvedRegion(region))
 	fake.insights = []types.Insight{
 		insight("someone-elses-insight", "arn:user", "SeverityLabel"),
 		insight("centcom-satellite-stats-severity", "arn:old1", "SeverityLabel"),
 		insight("centcom-satellite-stats-resource_type-"+region+"-5a55b0518b12", "arn:old2", "ResourceType"),
-		insight(slotPrefix(region)+"type-aaaaaaaaaaaa", "arn:slot", "Type"),
-		insight(slotPrefix(region)+"type-bbbbbbbbbbbb", "arn:dup", "Type"),
+		insight(defaultName, "arn:slot", "SeverityLabel"),
 	}
 	s := run(t, tk, `{}`)
-	if s.InsightArn != "arn:slot" || fake.createCalled != 0 {
-		t.Errorf("used %s (created %d), want the existing slot arn:slot", s.InsightArn, fake.createCalled)
+	if s.InsightArn != "arn:slot" || fake.createCalled != 0 || fake.updateCalled != 0 {
+		t.Errorf("used %s (created %d updated %d), want the existing slot arn:slot reused as-is", s.InsightArn, fake.createCalled, fake.updateCalled)
 	}
-	want := map[string]bool{"arn:old1": true, "arn:old2": true, "arn:dup": true}
-	if len(fake.deleted) != 3 {
-		t.Fatalf("deleted %v, want old1, old2, dup", fake.deleted)
+	want := map[string]bool{"arn:old1": true, "arn:old2": true}
+	if len(fake.deleted) != 2 {
+		t.Fatalf("deleted %v, want old1, old2", fake.deleted)
 	}
 	for _, d := range fake.deleted {
 		if !want[d] {
@@ -205,8 +252,26 @@ func TestExecute_DeletesLeftoversOnce(t *testing.T) {
 	// Never touches a user's own Insight, and cleans up only once.
 	fake.insights = append(fake.insights, insight("centcom-satellite-stats-late", "arn:late", "Type"))
 	run(t, tk, `{}`)
-	if len(fake.deleted) != 3 {
+	if len(fake.deleted) != 2 {
 		t.Errorf("second call deleted again: %v", fake.deleted)
+	}
+}
+
+// TestExecute_DeletesOwnRegionSlotsBeyondCap covers upgrading from a
+// previous release with a higher (or unbounded) cap: own-region slots
+// found beyond maxSlots at startup are leftovers too, not kept forever.
+func TestExecute_DeletesOwnRegionSlotsBeyondCap(t *testing.T) {
+	fake := &fakeAPI{results: map[string][]types.InsightResultValue{"Type": {resultValue("x", 1)}}}
+	tk, region := newTestTask(fake)
+	for i := 0; i < maxSlots+2; i++ {
+		fake.insights = append(fake.insights, insight(fmt.Sprintf("%stype-%012d", slotPrefix(region), i), fmt.Sprintf("arn:extra-%d", i), "Type"))
+	}
+	run(t, tk, `{}`)
+	if n := len(fake.named(slotPrefix(region))); n != maxSlots {
+		t.Errorf("%d own-region slots remain, want exactly %d", n, maxSlots)
+	}
+	if len(fake.deleted) != 2 {
+		t.Errorf("deleted %v, want exactly 2 (the slots beyond the cap)", fake.deleted)
 	}
 }
 
@@ -222,7 +287,9 @@ func TestExecute_DeleteDeniedIsNotFatal(t *testing.T) {
 
 // TestExecute_RetriesWhenSlotRewrittenConcurrently: another process
 // rewrites the slot right after our read, so the read may be theirs; the
-// task must retry and only return a result read while the slot held ours.
+// task must retry and only return a result read while a slot held ours.
+// With room in the pool, retrying after a hijack creates a fresh slot for
+// our query rather than fighting over the hijacked one.
 func TestExecute_RetriesWhenSlotRewrittenConcurrently(t *testing.T) {
 	fake := &fakeAPI{results: map[string][]types.InsightResultValue{
 		"SeverityLabel": {resultValue("CRITICAL", 5)},
@@ -244,8 +311,8 @@ func TestExecute_RetriesWhenSlotRewrittenConcurrently(t *testing.T) {
 	if s.Total != 5 || s.Counts[0].Key != "CRITICAL" {
 		t.Errorf("result = %+v, want our SEVERITY counts after a retry", s)
 	}
-	if fake.updateCalled != 1 {
-		t.Errorf("updateCalled = %d, want 1 (rewrite after the hijack)", fake.updateCalled)
+	if fake.createCalled != 2 || fake.updateCalled != 0 {
+		t.Errorf("created=%d updated=%d, want 2/0 (a fresh slot on retry, pool not full)", fake.createCalled, fake.updateCalled)
 	}
 
 	// Permanently contended: give up with a clear error, not wrong data.
