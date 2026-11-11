@@ -271,8 +271,15 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 			if errors.As(err, &limitExceeded) {
 				return task.NewErrorResult("cannot create the statistics insight: the account's custom insight quota (100 per region) is exhausted; use securityhub_get_findings_statistics instead"), nil
 			}
-			if isNotFound(err) && attempt < maxAttempts {
-				continue // slot deleted under us (a duplicate cleaned up elsewhere)
+			if (isNotFound(err) || isConflict(err)) && attempt < maxAttempts {
+				// isNotFound: slot deleted under us (a duplicate cleaned up
+				// elsewhere). isConflict: another replica's CreateInsight for
+				// this exact query (same name) landed first — AWS enforces
+				// unique Insight names per account/region, so our own
+				// CreateInsight lost the race; re-listing on retry finds and
+				// reuses the slot the winner just created, same outcome as
+				// if we'd won.
+				continue
 			}
 			return awshelper.WrapError("prepare insight", err)
 		}
@@ -442,4 +449,19 @@ func insightNameOf(ctx context.Context, client api, arn string) (string, error) 
 func isNotFound(err error) bool {
 	var nf *types.ResourceNotFoundException
 	return errors.As(err, &nf)
+}
+
+// isConflict reports whether err is AWS rejecting CreateInsight because an
+// Insight with that exact Name already exists — Security Hub enforces
+// unique Insight names per account/region, so this is exactly the shape of
+// error two concurrent satellite replicas (or two calls racing within the
+// maxAttempts retry window) produce when both try to create the same
+// brand-new query's slot at once.
+func isConflict(err error) bool {
+	var rc *types.ResourceConflictException
+	if errors.As(err, &rc) {
+		return true
+	}
+	var c *types.ConflictException
+	return errors.As(err, &c)
 }

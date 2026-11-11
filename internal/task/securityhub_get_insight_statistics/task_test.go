@@ -26,6 +26,12 @@ type fakeAPI struct {
 	createCalled int
 	updateCalled int
 	deleted      []string
+	// racingPeerInsight, when set, simulates a concurrent replica's
+	// CreateInsight for the identical query winning the race: the first
+	// CreateInsight call appends this insight (the "peer's" slot) and
+	// returns ResourceConflictException, then clears itself so later calls
+	// behave normally.
+	racingPeerInsight *types.Insight
 
 	results map[string][]types.InsightResultValue // GroupByAttribute -> values
 	// onResults runs after GetInsightResults (simulates another process
@@ -48,6 +54,11 @@ func (f *fakeAPI) GetInsights(_ context.Context, in *securityhub.GetInsightsInpu
 
 func (f *fakeAPI) CreateInsight(_ context.Context, in *securityhub.CreateInsightInput, _ ...func(*securityhub.Options)) (*securityhub.CreateInsightOutput, error) {
 	f.createCalled++
+	if f.racingPeerInsight != nil {
+		f.insights = append(f.insights, *f.racingPeerInsight)
+		f.racingPeerInsight = nil
+		return nil, &types.ResourceConflictException{Message: aws.String("insight with this name already exists")}
+	}
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
@@ -220,6 +231,34 @@ func TestExecute_EvictsLeastRecentlyUsedSlotOncePoolIsFull(t *testing.T) {
 	}
 	if n := len(fake.named(insightNamePrefix)); n != maxSlots {
 		t.Errorf("%d statistics insights exist, want exactly %d (capped, not grown)", n, maxSlots)
+	}
+}
+
+// TestExecute_ConcurrentCreateRaceRetriesInsteadOfErroring covers the
+// scenario a second satellite replica (or another caller inside the same
+// maxAttempts window) hits: both see no existing slot for a brand-new
+// query and both call CreateInsight with the identical name. AWS enforces
+// unique Insight names per account/region, so the loser's CreateInsight
+// fails with ResourceConflictException — this must retry and pick up the
+// winner's slot, not surface a hard error to the caller.
+func TestExecute_ConcurrentCreateRaceRetriesInsteadOfErroring(t *testing.T) {
+	fake := &fakeAPI{results: map[string][]types.InsightResultValue{"SeverityLabel": {resultValue("CRITICAL", 7)}}}
+	tk, region := newTestTask(fake)
+	name := slotName(region, "SEVERITY", shc.Filter{}.WithResolvedRegion(region))
+	fake.racingPeerInsight = &types.Insight{
+		Name: aws.String(name), InsightArn: aws.String("arn:peer-won"), GroupByAttribute: aws.String("SeverityLabel"),
+	}
+
+	s := run(t, tk, `{}`)
+
+	if s.Total != 7 || s.InsightArn != "arn:peer-won" {
+		t.Fatalf("result = %+v, want the peer's winning slot's data", s)
+	}
+	if fake.createCalled != 1 {
+		t.Errorf("createCalled = %d, want 1 (lost the race once, then found the peer's slot on retry — no second create attempt needed)", fake.createCalled)
+	}
+	if fake.updateCalled != 0 {
+		t.Errorf("updateCalled = %d, want 0 (the peer's slot already answers our exact query)", fake.updateCalled)
 	}
 }
 
