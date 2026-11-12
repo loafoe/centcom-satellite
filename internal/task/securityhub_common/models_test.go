@@ -146,3 +146,11 @@ func TestNormalizeFinding_NoVulnerabilitiesLeavesFieldsZero(t *testing.T) {
 		t.Errorf("expected zero vulnerability fields, got %+v", got)
 	}
 }
+
+func TestNormalizeFinding_CarriesNote(t *testing.T) {
+	got := NormalizeFinding(types.AwsSecurityFinding{Id: aws.String("f"), ProductArn: aws.String("p"),
+		Note: &types.Note{Text: aws.String("Remediation tracked in JIRA: SEC-12101"), UpdatedBy: aws.String("loafoe"), UpdatedAt: aws.String("2026-11-01T10:00:00Z")}})
+	if got.NoteText != "Remediation tracked in JIRA: SEC-12101" || got.NoteUpdatedBy != "loafoe" || got.NoteUpdatedAt == "" {
+		t.Errorf("note = %q / %q / %q", got.NoteText, got.NoteUpdatedBy, got.NoteUpdatedAt)
+	}
+}

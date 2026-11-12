@@ -39,12 +39,17 @@ type Finding struct {
 	// across every entry/source a finding carries, same convention as
 	// running_image_vulnerabilities. Empty/zero when a finding carries no
 	// Vulnerabilities entries (e.g. a non-Inspector Security Hub finding).
-	VulnerabilityID  string          `json:"vulnerability_id,omitempty"`
-	CVSS             float64         `json:"cvss,omitempty"`
-	EPSS             float64         `json:"epss,omitempty"`
-	FixAvailable     string          `json:"fix_available,omitempty"`
-	ExploitAvailable string          `json:"exploit_available,omitempty"`
-	Detail           json.RawMessage `json:"detail,omitempty"`
+	VulnerabilityID  string  `json:"vulnerability_id,omitempty"`
+	CVSS             float64 `json:"cvss,omitempty"`
+	EPSS             float64 `json:"epss,omitempty"`
+	FixAvailable     string  `json:"fix_available,omitempty"`
+	ExploitAvailable string  `json:"exploit_available,omitempty"`
+	// NoteText / NoteUpdatedBy / NoteUpdatedAt are the finding's
+	// investigation note, if any.
+	NoteText      string          `json:"note_text,omitempty"`
+	NoteUpdatedBy string          `json:"note_updated_by,omitempty"`
+	NoteUpdatedAt string          `json:"note_updated_at,omitempty"`
+	Detail        json.RawMessage `json:"detail,omitempty"`
 }
 
 // NormalizeFinding maps an SDK finding to the normalized model. The full finding
@@ -69,6 +74,11 @@ func NormalizeFinding(f types.AwsSecurityFinding) Finding {
 	}
 	if f.Workflow != nil {
 		out.WorkflowStatus = string(f.Workflow.Status)
+	}
+	if f.Note != nil {
+		out.NoteText = aws.ToString(f.Note.Text)
+		out.NoteUpdatedBy = aws.ToString(f.Note.UpdatedBy)
+		out.NoteUpdatedAt = aws.ToString(f.Note.UpdatedAt)
 	}
 	if f.Compliance != nil {
 		out.ComplianceStatus = string(f.Compliance.Status)

@@ -43,6 +43,14 @@ type Filter struct {
 	// query to every vulnerability finding reported that year, filtered
 	// server-side by Security Hub rather than paged and matched client-side.
 	TitlePrefix string `json:"title_prefix,omitempty"`
+	// HasNote keeps only findings that carry a Note; NoteUpdatedByNot drops
+	// findings whose Note was last written by one of these authors (e.g. an
+	// enrichment automation). Together they find hand-written or
+	// tool-written notes, such as ticket references, without paging every
+	// finding: Security Hub cannot filter on a UserDefinedFields key's
+	// presence (MapFilter is EQUALS/NOT_EQUALS only).
+	HasNote          bool     `json:"has_note,omitempty"`
+	NoteUpdatedByNot []string `json:"note_updated_by_not,omitempty"`
 	// AWSAccountID keeps findings for this account ID.
 	AWSAccountID string `json:"aws_account_id,omitempty"`
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
@@ -106,6 +114,14 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 	}
 	if f.AWSAccountID != "" {
 		out.AwsAccountId = []types.StringFilter{equalsFilter(f.AWSAccountID)}
+	}
+	if f.HasNote {
+		// Any note in the last ~10 years: NoteUpdatedAt only exists on a
+		// finding that has a Note.
+		out.NoteUpdatedAt = []types.DateFilter{{DateRange: &types.DateRange{Value: aws.Int32(3650), Unit: types.DateRangeUnitDays}}}
+	}
+	for _, by := range f.NoteUpdatedByNot {
+		out.NoteUpdatedBy = append(out.NoteUpdatedBy, types.StringFilter{Value: aws.String(by), Comparison: types.StringFilterComparisonNotEquals})
 	}
 	if f.UpdatedAfter != "" || f.UpdatedBefore != "" {
 		df := types.DateFilter{}

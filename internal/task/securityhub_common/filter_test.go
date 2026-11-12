@@ -193,3 +193,16 @@ func TestBuildFilters_ExploitAndFixAvailable(t *testing.T) {
 		t.Error("unset exploit/fix filters must be omitted")
 	}
 }
+
+func TestBuildFilters_NoteFilters(t *testing.T) {
+	f := Filter{HasNote: true, NoteUpdatedByNot: []string{"Security Hub - Enrichment Automation"}}.BuildFilters()
+	if len(f.NoteUpdatedAt) != 1 || f.NoteUpdatedAt[0].DateRange == nil || aws.ToInt32(f.NoteUpdatedAt[0].DateRange.Value) != 3650 {
+		t.Errorf("NoteUpdatedAt = %+v, want a wide range so only findings with a note match", f.NoteUpdatedAt)
+	}
+	if len(f.NoteUpdatedBy) != 1 || f.NoteUpdatedBy[0].Comparison != types.StringFilterComparisonNotEquals || aws.ToString(f.NoteUpdatedBy[0].Value) != "Security Hub - Enrichment Automation" {
+		t.Errorf("NoteUpdatedBy = %+v", f.NoteUpdatedBy)
+	}
+	if g := (Filter{}).BuildFilters(); len(g.NoteUpdatedAt) != 0 || len(g.NoteUpdatedBy) != 0 {
+		t.Error("note filters must be off by default")
+	}
+}
