@@ -278,3 +278,21 @@ func TestHandleListTasks_WithMTLS(t *testing.T) {
 		t.Errorf("expected 1 task, got %d", len(tasks))
 	}
 }
+
+// TestHandleReadyz_FailsWhileDraining: once shutdown has begun the pod must
+// report not ready (while still serving), so it leaves every backend set
+// before its listener closes.
+func TestHandleReadyz_FailsWhileDraining(t *testing.T) {
+	h := setupTestHandlers(t, true)
+	rec := httptest.NewRecorder()
+	h.HandleReadyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("before draining: %d", rec.Code)
+	}
+	h.draining.Store(true)
+	rec = httptest.NewRecorder()
+	h.HandleReadyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "draining") {
+		t.Errorf("while draining: %d %s", rec.Code, rec.Body.String())
+	}
+}

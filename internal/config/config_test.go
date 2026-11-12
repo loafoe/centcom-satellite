@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad(t *testing.T) {
@@ -340,5 +341,25 @@ func TestLoad_CloudTrailFlag(t *testing.T) {
 	t.Setenv("CLOUDTRAIL_ENABLED", "true")
 	if cfg, _ = Load(); !cfg.Features.CloudTrailEnabled {
 		t.Fatal("CloudTrailEnabled = false, want true")
+	}
+}
+
+func TestShutdownDelay(t *testing.T) {
+	for _, c := range []struct {
+		env  string
+		want time.Duration
+	}{{"", 15 * time.Second}, {"0", 0}, {"30", 30 * time.Second}, {"-5", 0}, {"abc", 15 * time.Second}} {
+		os.Clearenv()
+		_ = os.Setenv("ALLOW_UNAUTHENTICATED", "true")
+		if c.env != "" {
+			_ = os.Setenv("SHUTDOWN_DELAY_SECONDS", c.env)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", c.env, err)
+		}
+		if cfg.ShutdownDelay != c.want {
+			t.Errorf("SHUTDOWN_DELAY_SECONDS=%q: %v, want %v", c.env, cfg.ShutdownDelay, c.want)
+		}
 	}
 }

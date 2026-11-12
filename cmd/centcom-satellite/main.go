@@ -255,14 +255,17 @@ func main() {
 	select {
 	case sig := <-sigCh:
 		slog.Info("received signal, shutting down", "signal", sig)
+		drainBeforeShutdown(srv, cfg.ShutdownDelay, sigCh)
 	case err := <-serverErrors:
 		if err != nil {
 			slog.Error("server error", "error", err)
 		}
 	}
 
-	// Graceful shutdown
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Graceful shutdown: waits for in-flight requests (task budgets are
+	// <=45s, WriteTimeout 60s). The chart's terminationGracePeriodSeconds
+	// covers ShutdownDelay plus this.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 55*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -486,4 +489,20 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 	}
 
 	return registry
+}
+
+// drainBeforeShutdown keeps the satellite serving for delay after SIGTERM,
+// with /readyz failing, so gateways drop this pod before the listener
+// closes. A second signal ends the wait early.
+func drainBeforeShutdown(srv *server.Server, delay time.Duration, sigCh <-chan os.Signal) {
+	if delay <= 0 {
+		return
+	}
+	srv.Drain()
+	slog.Info("draining: still serving before shutdown", "delay", delay)
+	select {
+	case <-time.After(delay):
+	case sig := <-sigCh:
+		slog.Info("second signal, shutting down now", "signal", sig)
+	}
 }

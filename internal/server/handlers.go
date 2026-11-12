@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/loafoe/centcom-satellite/internal/observability"
@@ -25,6 +26,9 @@ type Handlers struct {
 	metrics              *observability.Metrics
 	version              string
 	allowUnauthenticated bool
+	// draining is set once shutdown has begun: /readyz fails while the
+	// server keeps serving (see Server.Drain).
+	draining atomic.Bool
 }
 
 // NewHandlers creates a new handlers instance.
@@ -214,6 +218,10 @@ func (h *Handlers) HandleInfo(w http.ResponseWriter, r *http.Request) {
 
 // HandleReadyz handles readiness probe requests.
 func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
+	if h.draining.Load() {
+		h.writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "draining"})
+		return
+	}
 	if h.spireClient != nil {
 		if err := h.spireClient.HealthCheck(r.Context()); err != nil {
 			slog.Warn("readyz probe failed", "error", err)

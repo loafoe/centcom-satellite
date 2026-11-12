@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -21,6 +22,14 @@ type Config struct {
 
 	// MetricsPort is the port for Prometheus metrics endpoint.
 	MetricsPort int
+
+	// ShutdownDelay is how long the satellite keeps serving after SIGTERM
+	// before it closes its listeners (SHUTDOWN_DELAY_SECONDS, default 15).
+	// A terminating pod's endpoint takes a while to leave a gateway's
+	// backend set; closing at once made Envoy connect to a dead pod IP and
+	// answer 503 "upstream connect error ... connection timeout" for tens of
+	// seconds after each eviction (dip-ce-k3s-eu, 2026-11-12).
+	ShutdownDelay time.Duration
 
 	// AllowUnauthenticated allows requests without authentication.
 	// Only for local development - do not enable in production.
@@ -227,6 +236,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Port:                 getEnvInt("PORT", 8080),
 		MetricsPort:          getEnvInt("METRICS_PORT", 9090),
+		ShutdownDelay:        time.Duration(max(0, getEnvInt("SHUTDOWN_DELAY_SECONDS", 15))) * time.Second,
 		AllowUnauthenticated: getEnvBool("ALLOW_UNAUTHENTICATED", false),
 		LogLevel:             getEnvString("LOG_LEVEL", "info"),
 		LogFormat:            getEnvString("LOG_FORMAT", "json"),

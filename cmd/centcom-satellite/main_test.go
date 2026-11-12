@@ -2,7 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -10,6 +15,9 @@ import (
 
 	"github.com/loafoe/centcom-satellite/internal/config"
 	"github.com/loafoe/centcom-satellite/internal/k8s"
+	"github.com/loafoe/centcom-satellite/internal/observability"
+	"github.com/loafoe/centcom-satellite/internal/server"
+	"github.com/loafoe/centcom-satellite/internal/task"
 	"github.com/loafoe/centcom-satellite/internal/task/cluster_info"
 )
 
@@ -167,5 +175,29 @@ func TestRegisterTasks_AWSReadFlag(t *testing.T) {
 				t.Errorf("aws_read present=%v with AWSReadEnabled=%v awsOnly=%v", ok, enabled, awsOnly)
 			}
 		}
+	}
+}
+
+func TestDrainBeforeShutdown(t *testing.T) {
+	srv := server.New(server.Config{}, task.NewRegistry(), observability.NewMetricsWithRegistry(prometheus.NewRegistry()), nil, "test", true, nil)
+	sigCh := make(chan os.Signal, 1)
+
+	start := time.Now()
+	drainBeforeShutdown(srv, 0, sigCh)
+	if time.Since(start) > 50*time.Millisecond {
+		t.Error("a zero delay must not wait")
+	}
+
+	start = time.Now()
+	drainBeforeShutdown(srv, 150*time.Millisecond, sigCh)
+	if d := time.Since(start); d < 150*time.Millisecond {
+		t.Errorf("returned after %v, want the full delay", d)
+	}
+
+	sigCh <- syscall.SIGTERM
+	start = time.Now()
+	drainBeforeShutdown(srv, 10*time.Second, sigCh)
+	if time.Since(start) > time.Second {
+		t.Error("a second signal must end the wait")
 	}
 }
