@@ -87,3 +87,62 @@ func TestNormalizeFinding_NoResourcesLeavesResourceFieldsEmpty(t *testing.T) {
 		t.Errorf("expected empty resource fields, got type=%q id=%q", got.ResourceType, got.ResourceID)
 	}
 }
+
+// TestNormalizeFinding_ExtractsVulnerabilityFields covers an
+// Inspector-generated EC2 instance finding (ASFF's Vulnerabilities field,
+// distinct from PackageVulnerabilityDetails which only Inspector2's own
+// native API uses) — the shape running_image_vulnerabilities' own
+// maxCvssBaseScore does NOT see, since that task never calls Security Hub.
+func TestNormalizeFinding_ExtractsVulnerabilityFields(t *testing.T) {
+	sdk := types.AwsSecurityFinding{
+		Id:         aws.String("finding-3"),
+		ProductArn: aws.String("arn:x"),
+		Title:      aws.String("CVE-2026-12345 - openssl"),
+		Severity:   &types.Severity{Label: types.SeverityLabelCritical},
+		Resources: []types.Resource{
+			{Id: aws.String("arn:aws:ec2:eu-west-1:123456789012:instance/i-1"), Type: aws.String("AwsEc2Instance")},
+		},
+		Vulnerabilities: []types.Vulnerability{
+			{
+				Id:        aws.String("CVE-2026-12345"),
+				EpssScore: aws.Float64(0.42),
+				Cvss: []types.Cvss{
+					{BaseScore: aws.Float64(6.1), Source: aws.String("NVD")},
+					{BaseScore: aws.Float64(9.8), Source: aws.String("RedHat")},
+				},
+				FixAvailable:     types.VulnerabilityFixAvailableYes,
+				ExploitAvailable: types.VulnerabilityExploitAvailableYes,
+			},
+		},
+	}
+
+	got := NormalizeFinding(sdk)
+
+	if got.VulnerabilityID != "CVE-2026-12345" {
+		t.Errorf("VulnerabilityID = %q, want CVE-2026-12345", got.VulnerabilityID)
+	}
+	if got.CVSS != 9.8 {
+		t.Errorf("CVSS = %v, want the max across sources (9.8)", got.CVSS)
+	}
+	if got.EPSS != 0.42 {
+		t.Errorf("EPSS = %v, want 0.42", got.EPSS)
+	}
+	if got.FixAvailable != "YES" {
+		t.Errorf("FixAvailable = %q, want YES", got.FixAvailable)
+	}
+	if got.ExploitAvailable != "YES" {
+		t.Errorf("ExploitAvailable = %q, want YES", got.ExploitAvailable)
+	}
+}
+
+func TestNormalizeFinding_NoVulnerabilitiesLeavesFieldsZero(t *testing.T) {
+	sdk := types.AwsSecurityFinding{
+		Id:         aws.String("finding-4"),
+		ProductArn: aws.String("arn:x"),
+		Severity:   &types.Severity{Label: types.SeverityLabelLow},
+	}
+	got := NormalizeFinding(sdk)
+	if got.CVSS != 0 || got.EPSS != 0 || got.FixAvailable != "" || got.ExploitAvailable != "" || got.VulnerabilityID != "" {
+		t.Errorf("expected zero vulnerability fields, got %+v", got)
+	}
+}
