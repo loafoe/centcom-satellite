@@ -163,6 +163,14 @@ func (s *Server) startWithSPIRE() error {
 	return nil
 }
 
+// Drain marks the satellite as shutting down: /readyz starts failing while
+// both servers keep serving. Called on SIGTERM, a fixed delay before
+// Shutdown, so load balancers and gateways stop sending traffic here before
+// the listener closes (see config.ShutdownDelay).
+func (s *Server) Drain() {
+	s.handlers.draining.Store(true)
+}
+
 // Shutdown gracefully stops both servers.
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down servers")
