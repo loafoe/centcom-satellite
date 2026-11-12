@@ -1,4 +1,12 @@
 // Package connectivity_test provides TCP/HTTP connectivity testing functionality.
+//
+// Security: targets are restricted to cluster-internal addresses (the
+// shared internal/clusteraddr allowlist), enforced in the dialer's
+// Control hook on the address actually connected to - so this task can
+// probe in-cluster services but never the cloud metadata service, VPC
+// hosts outside the cluster ranges, or the public internet. HTTP targets
+// additionally do not follow redirects (an in-cluster endpoint could
+// otherwise bounce the request to the metadata service or the internet).
 package connectivity_test
 
 import (
@@ -12,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/loafoe/centcom-satellite/internal/clusteraddr"
 	"github.com/loafoe/centcom-satellite/internal/task"
 )
 
@@ -41,20 +50,40 @@ type ConnectivityResult struct {
 }
 
 // Task handles connectivity testing.
+//
+// dialer and httpClient are swappable for tests, mirroring http_request's
+// shape. The production constructor (New) always installs the
+// cluster-internal guard; tests that need to reach a local httptest
+// server substitute their own client/dialer.
 type Task struct {
 	dialer     func(ctx context.Context, network, address string) (net.Conn, error)
 	httpClient func(timeout time.Duration) *http.Client
 }
 
-// New creates a new connectivity test task.
+// New creates a new connectivity test task with the cluster-internal
+// address guard enforced on every TCP and HTTP connection.
 func New() *Task {
+	dialer := clusteraddr.GuardDialer(nil)
 	return &Task{
-		dialer: (&net.Dialer{}).DialContext,
+		dialer: dialer.DialContext,
 		httpClient: func(timeout time.Duration) *http.Client {
+			d := clusteraddr.GuardDialer(nil)
+			d.Timeout = timeout
 			return &http.Client{
 				Timeout: timeout,
 				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+					Proxy:               nil,
+					DialContext:         d.DialContext,
+					TLSHandshakeTimeout: timeout,
+					MaxIdleConns:        1,
+					DisableKeepAlives:   true,
+					TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
+				},
+				// Do not follow redirects: return the 3xx and its Location
+				// header instead of chasing it to another host (which could
+				// be a non-cluster address).
+				CheckRedirect: func(*http.Request, []*http.Request) error {
+					return http.ErrUseLastResponse
 				},
 			}
 		},
@@ -152,6 +181,10 @@ func (t *Task) testHTTP(ctx context.Context, target string, timeout time.Duratio
 	parsedURL, err := url.Parse(target)
 	if err != nil {
 		result.Error = fmt.Sprintf("invalid URL: %v", err)
+		return result
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		result.Error = "only http:// and https:// URLs are allowed"
 		return result
 	}
 	result.Target = parsedURL.String()

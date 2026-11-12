@@ -175,6 +175,14 @@ func (h *Handlers) HandleTask(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, result)
 }
 
+// healthzUnhealthyDetail is the fixed, detail-free message returned to
+// callers when the SPIRE health check fails. The probes are deliberately
+// unauthenticated, so the specific failure text (bundle fetch errors, X509
+// source state, trust-domain names, ...) is logged server-side only - it
+// would otherwise leak auth-backend internals to anyone who can reach the
+// port. See security review F-3 (docs/security-review-2026-11-12.md).
+const healthzUnhealthyDetail = "health check failed"
+
 // HandleHealthz handles liveness probe requests.
 func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	if h.spireClient != nil {
@@ -182,7 +190,7 @@ func (h *Handlers) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("healthz probe failed", "error", err)
 			h.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unhealthy",
-				"error":  err.Error(),
+				"error":  healthzUnhealthyDetail,
 			})
 			return
 		}
@@ -211,7 +219,7 @@ func (h *Handlers) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("readyz probe failed", "error", err)
 			h.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 				"status": "unhealthy",
-				"error":  err.Error(),
+				"error":  healthzUnhealthyDetail, // fixed message; detail goes to logs (F-3)
 			})
 			return
 		}

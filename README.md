@@ -19,7 +19,7 @@ A lightweight Kubernetes helper service that receives task requests and executes
 | `account_info` | Get the AWS account a satellite's credentials resolve to (works on cluster-less satellites too) |
 | `cluster_health` | Get cluster health status |
 | `cluster_info` | Get cluster information (version, nodes) |
-| `connectivity_test` | Test TCP/HTTP connectivity to endpoints |
+| `connectivity_test` | Test TCP/HTTP connectivity to cluster-internal endpoints (SSRF-guarded: refuses metadata/loopback/public addresses) |
 | `cost_explorer` | Get AWS cost & usage, optionally by service |
 | `cw_alarm_history` | Get CloudWatch alarm state-change history |
 | `cw_describe_log_groups` | List CloudWatch Logs log groups |

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -195,8 +196,13 @@ func TestHandleHealthz_SPIREFailure(t *testing.T) {
 	if resp["status"] != "unhealthy" {
 		t.Errorf("expected status 'unhealthy', got %q", resp["status"])
 	}
-	if resp["error"] == "" {
-		t.Error("expected non-empty error message")
+	// The probes are unauthenticated: the body must carry only the fixed
+	// detail-free message, never the underlying SPIRE error text (F-3).
+	if resp["error"] != "health check failed" {
+		t.Errorf("expected fixed error detail, got %q", resp["error"])
+	}
+	if strings.Contains(resp["error"], "SPIRE") || strings.Contains(resp["error"], "source") {
+		t.Errorf("error detail leaks internals: %q", resp["error"])
 	}
 }
 
@@ -221,8 +227,13 @@ func TestHandleReadyz_SPIREFailure(t *testing.T) {
 	if resp["status"] != "unhealthy" {
 		t.Errorf("expected status 'unhealthy', got %q", resp["status"])
 	}
-	if resp["error"] == "" {
-		t.Error("expected non-empty error message")
+	// The probes are unauthenticated: the body must carry only the fixed
+	// detail-free message, never the underlying SPIRE error text (F-3).
+	if resp["error"] != "health check failed" {
+		t.Errorf("expected fixed error detail, got %q", resp["error"])
+	}
+	if strings.Contains(resp["error"], "SPIRE") || strings.Contains(resp["error"], "source") {
+		t.Errorf("error detail leaks internals: %q", resp["error"])
 	}
 }
 
