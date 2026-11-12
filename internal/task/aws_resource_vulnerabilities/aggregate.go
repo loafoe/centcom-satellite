@@ -125,6 +125,12 @@ func (s *scan) addFinding(f *itypes.Finding) {
 		r.Findings++
 		r.SeverityCounts[sev]++
 		r.vulns[vulnID] = true
+		if len(pkgs) > 0 && r.pkgs[vulnID] == nil {
+			r.pkgs[vulnID] = map[Package]bool{}
+		}
+		for _, p := range pkgs {
+			r.pkgs[vulnID][p] = true
+		}
 		if v.FixAvailable == "YES" || string(f.FixAvailable) == "YES" {
 			r.fixable[vulnID] = true
 		}
@@ -199,18 +205,7 @@ func (s *scan) finish() {
 		out := v.Vulnerability
 		out.Resources = len(v.resources)
 		out.ResourceIDs = capN(sortedKeys(v.resources), s.payload.ListLimit)
-		pkgs := make([]Package, 0, len(v.packages))
-		for p := range v.packages {
-			pkgs = append(pkgs, p)
-		}
-		sort.Slice(pkgs, func(i, j int) bool {
-			a, b := pkgs[i], pkgs[j]
-			return a.Name+"\x00"+a.Version+"\x00"+a.FilePath < b.Name+"\x00"+b.Version+"\x00"+b.FilePath
-		})
-		if len(pkgs) > s.payload.ListLimit {
-			pkgs = pkgs[:s.payload.ListLimit]
-		}
-		out.Packages = pkgs
+		out.Packages = sortedPackages(v.packages, s.payload.ListLimit)
 		if !v.first.IsZero() {
 			out.FirstObservedAt = v.first.UTC().Format(time.RFC3339)
 		}
@@ -274,6 +269,15 @@ func (s *scan) finish() {
 			return a.CVSS > b.CVSS
 		})
 		out.VulnerabilityIDs = capN(ids, s.payload.ListLimit)
+		for _, id := range out.VulnerabilityIDs {
+			if len(r.pkgs[id]) == 0 {
+				continue
+			}
+			if out.VulnerabilityPackages == nil {
+				out.VulnerabilityPackages = map[string][]Package{}
+			}
+			out.VulnerabilityPackages[id] = sortedPackages(r.pkgs[id], s.payload.ListLimit)
+		}
 		res = append(res, out)
 	}
 	sort.Slice(res, func(i, j int) bool {
@@ -296,6 +300,21 @@ func (s *scan) finish() {
 		res = []Resource{}
 	}
 	s.report.Resources = res
+}
+
+func sortedPackages(set map[Package]bool, limit int) []Package {
+	pkgs := make([]Package, 0, len(set))
+	for p := range set {
+		pkgs = append(pkgs, p)
+	}
+	sort.Slice(pkgs, func(i, j int) bool {
+		a, b := pkgs[i], pkgs[j]
+		return a.Name+"\x00"+a.Version+"\x00"+a.FilePath < b.Name+"\x00"+b.Version+"\x00"+b.FilePath
+	})
+	if len(pkgs) > limit {
+		pkgs = pkgs[:limit]
+	}
+	return pkgs
 }
 
 func resourceName(r *resAcc) string {

@@ -32,6 +32,7 @@ type vulnAcc struct {
 type resAcc struct {
 	Resource
 	vulns       map[string]bool
+	pkgs        map[string]map[Package]bool
 	fixable     map[string]bool
 	exploitable map[string]bool
 	covered     bool
@@ -105,6 +106,7 @@ func (s *scan) resource(id string) *resAcc {
 		r = &resAcc{
 			Resource: Resource{ID: id, SeverityCounts: map[string]int{}},
 			vulns:    map[string]bool{}, fixable: map[string]bool{}, exploitable: map[string]bool{},
+			pkgs: map[string]map[Package]bool{},
 		}
 		s.resources[id] = r
 		s.order = append(s.order, id)

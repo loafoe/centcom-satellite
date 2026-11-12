@@ -248,3 +248,28 @@ func TestTruncate(t *testing.T) {
 		t.Errorf("truncate(short) = %q", got)
 	}
 }
+
+// A CVE's Packages list is the union across resources; each resource must
+// report only its own packages (an Ubuntu box must not be told to update an
+// Oracle Linux kernel package).
+func TestExecute_PackagesPerResource(t *testing.T) {
+	ubuntu := pkgFinding("i-1", "CVE-K", itypes.SeverityCritical, 9.8, itypes.FixAvailableYes)
+	ubuntu.PackageVulnerabilityDetails.VulnerablePackages = []itypes.VulnerablePackage{{Name: aws.String("linux-aws"), Version: aws.String("7.0.0"), FixedInVersion: aws.String("7.0.1")}}
+	oracle := pkgFinding("i-2", "CVE-K", itypes.SeverityCritical, 9.8, itypes.FixAvailableYes)
+	oracle.PackageVulnerabilityDetails.VulnerablePackages = []itypes.VulnerablePackage{{Name: aws.String("kernel-uek"), Version: aws.String("5.15.0"), FixedInVersion: aws.String("5.15.1")}}
+	fake := &fakeInspector{
+		covered:  []itypes.CoveredResource{ec2Coverage("i-1", "ubuntu", "ACTIVE"), ec2Coverage("i-2", "oracle", "ACTIVE")},
+		findings: []itypes.Finding{ubuntu, oracle},
+	}
+	r := run(t, fake, `{"resource_type":"EC2"}`, time.Minute)
+	if len(r.Vulnerabilities[0].Packages) != 2 {
+		t.Errorf("CVE packages = %+v, want the union of both", r.Vulnerabilities[0].Packages)
+	}
+	for _, res := range r.Resources {
+		pkgs := res.VulnerabilityPackages["CVE-K"]
+		want := map[string]string{"i-1": "linux-aws", "i-2": "kernel-uek"}[res.ID]
+		if len(pkgs) != 1 || pkgs[0].Name != want {
+			t.Errorf("%s packages = %+v, want only %s", res.ID, pkgs, want)
+		}
+	}
+}

@@ -149,20 +149,24 @@ type Resource struct {
 	// Findings and SeverityCounts count this resource's matching findings;
 	// Vulnerabilities the distinct vulnerability IDs among them, and
 	// Fixable/Exploitable how many of those have a fix / known exploit.
-	Findings         int               `json:"findings"`
-	SeverityCounts   map[string]int    `json:"severity_counts"`
-	Vulnerabilities  int               `json:"vulnerabilities"`
-	VulnerabilityIDs []string          `json:"vulnerability_ids,omitempty"`
-	Fixable          int               `json:"fixable"`
-	Exploitable      int               `json:"exploitable"`
-	MaxCVSS          float64           `json:"max_cvss,omitempty"`
-	MaxEPSS          float64           `json:"max_epss,omitempty"`
-	ScanStatus       string            `json:"scan_status,omitempty"`
-	ScanMode         string            `json:"scan_mode,omitempty"`
-	LastScannedAt    string            `json:"last_scanned_at,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
-	EC2              *EC2Details       `json:"ec2,omitempty"`
-	Lambda           *LambdaDetails    `json:"lambda,omitempty"`
+	Findings         int            `json:"findings"`
+	SeverityCounts   map[string]int `json:"severity_counts"`
+	Vulnerabilities  int            `json:"vulnerabilities"`
+	VulnerabilityIDs []string       `json:"vulnerability_ids,omitempty"`
+	// VulnerabilityPackages are, per listed vulnerability ID, the packages
+	// as installed on this resource (a CVE's Packages list is the union
+	// across resources, which can name another OS's package).
+	VulnerabilityPackages map[string][]Package `json:"vulnerability_packages,omitempty"`
+	Fixable               int                  `json:"fixable"`
+	Exploitable           int                  `json:"exploitable"`
+	MaxCVSS               float64              `json:"max_cvss,omitempty"`
+	MaxEPSS               float64              `json:"max_epss,omitempty"`
+	ScanStatus            string               `json:"scan_status,omitempty"`
+	ScanMode              string               `json:"scan_mode,omitempty"`
+	LastScannedAt         string               `json:"last_scanned_at,omitempty"`
+	Tags                  map[string]string    `json:"tags,omitempty"`
+	EC2                   *EC2Details          `json:"ec2,omitempty"`
+	Lambda                *LambdaDetails       `json:"lambda,omitempty"`
 }
 
 // Coverage says how much of this resource type Inspector actually assesses.
