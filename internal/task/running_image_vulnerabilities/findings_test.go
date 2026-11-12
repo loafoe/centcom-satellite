@@ -69,7 +69,7 @@ func TestAddFinding_GroupCarriesHighestCvssAndEpss(t *testing.T) {
 	s.addFinding(&f1)
 	s.addFinding(&f2)
 
-	g := s.groups["CVE-9"].toGroup()
+	g := s.groups["CVE-9"].toGroup(maxListed)
 	if g.CVSS != 9.8 {
 		t.Errorf("CVSS = %v, want 9.8 (the higher of the two findings)", g.CVSS)
 	}

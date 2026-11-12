@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/inspector2"
@@ -165,6 +166,9 @@ type groupAcc struct {
 	fix, exploit         string
 	epss                 float64
 	cvss                 float64
+	description          string
+	sourceURL            string
+	references           []string
 }
 
 // addFinding must be called with mu held.
@@ -239,6 +243,13 @@ func (s *scan) addFinding(f *itypes.Finding) {
 			g.title = aws.ToString(f.Title)
 			g.fix = string(f.FixAvailable)
 			g.exploit = string(f.ExploitAvailable)
+			if g.description == "" {
+				g.description = truncate(aws.ToString(f.Description), maxDescription)
+			}
+			if v := f.PackageVulnerabilityDetails; v != nil && g.sourceURL == "" {
+				g.sourceURL = aws.ToString(v.SourceUrl)
+				g.references = capN(v.ReferenceUrls, maxReferences)
+			}
 		}
 		if s.payload.GroupBy == GroupByImage {
 			for img := range g.images {
@@ -304,7 +315,7 @@ func (s *scan) finish() {
 	}
 	groups := make([]Group, 0, len(s.groups))
 	for _, g := range s.groups {
-		groups = append(groups, g.toGroup())
+		groups = append(groups, g.toGroup(s.payload.ListLimit))
 	}
 	sort.Slice(groups, func(i, j int) bool {
 		a, b := groups[i], groups[j]
@@ -329,11 +340,12 @@ func (s *scan) finish() {
 	s.report.Groups = groups
 }
 
-func (g *groupAcc) toGroup() Group {
+func (g *groupAcc) toGroup(listLimit int) Group {
 	out := Group{
 		Key: g.key, Title: g.title, Severity: g.severity, Findings: g.findings,
 		SeverityCounts: g.sevCounts, Images: len(g.images), Vulnerabilities: len(g.vulns),
 		FixAvailable: g.fix, ExploitAvailable: g.exploit, EPSS: g.epss, CVSS: g.cvss,
+		Description: g.description, SourceURL: g.sourceURL, ReferenceURLs: g.references,
 	}
 	vulns := make([]string, 0, len(g.vulns))
 	for v := range g.vulns {
@@ -341,7 +353,7 @@ func (g *groupAcc) toGroup() Group {
 	}
 	sort.Strings(vulns)
 	if len(vulns) > 1 || g.key != firstOr(vulns) {
-		out.VulnerabilityIDs = capList(vulns)
+		out.VulnerabilityIDs = capN(vulns, listLimit)
 	}
 	pkgs := make([]PackageFix, 0, len(g.packages))
 	for p := range g.packages {
@@ -350,31 +362,52 @@ func (g *groupAcc) toGroup() Group {
 	sort.Slice(pkgs, func(i, j int) bool {
 		return pkgs[i].Name+"\x00"+pkgs[i].Version < pkgs[j].Name+"\x00"+pkgs[j].Version
 	})
-	if len(pkgs) > maxListed {
-		pkgs = pkgs[:maxListed]
+	if len(pkgs) > listLimit {
+		pkgs = pkgs[:listLimit]
 	}
 	out.Packages = pkgs
 	wl := map[string]bool{}
+	refs := map[string]bool{}
 	for img := range g.images {
 		for w := range img.workloads {
 			wl[w] = true
 		}
+		if img.display != "" {
+			refs[img.display] = true
+		}
 	}
-	workloads := make([]string, 0, len(wl))
-	for w := range wl {
-		workloads = append(workloads, w)
-	}
-	sort.Strings(workloads)
-	out.WorkloadsTotal = len(workloads)
-	out.Workloads = capList(workloads)
+	out.WorkloadsTotal = len(wl)
+	out.Workloads = capN(sortedKeys(wl), listLimit)
+	out.ImageRefs = capN(sortedKeys(refs), listLimit)
 	return out
 }
 
-func capList(v []string) []string {
-	if len(v) > maxListed {
-		return v[:maxListed]
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func capN(v []string, n int) []string {
+	if len(v) > n {
+		return v[:n]
 	}
 	return v
+}
+
+// truncate cuts s to at most n bytes on a rune boundary, marking the cut.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }
 
 func firstOr(v []string) string {

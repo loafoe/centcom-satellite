@@ -50,9 +50,16 @@ const (
 	TimeBudget   = 45 * time.Second
 	defaultLimit = 50
 	maxLimit     = 500
-	// maxListed caps the per-group example lists (workloads, packages,
-	// vulnerability IDs) so one widespread CVE can't blow up the response.
-	maxListed = 10
+	// maxListed is the default cap on the per-group example lists
+	// (workloads, images, packages, vulnerability IDs) so one widespread
+	// CVE can't blow up the response; Payload.ListLimit raises it up to
+	// maxListLimit for a caller (e.g. a UI) that shows the full lists.
+	maxListed    = 10
+	maxListLimit = 200
+	// maxDescription caps a group's vulnerability description.
+	maxDescription = 1000
+	// maxReferences caps a group's reference URLs.
+	maxReferences = 5
 )
 
 // Group-by values.
@@ -82,6 +89,9 @@ type Payload struct {
 	// Limit caps the number of groups returned (default 50, max 500);
 	// totals and coverage always cover everything scanned.
 	Limit int `json:"limit,omitempty"`
+	// ListLimit caps each group's workloads/images/packages/vulnerability
+	// ID lists (default 10, max 200); the *_total counts are never capped.
+	ListLimit int `json:"list_limit,omitempty"`
 }
 
 // Coverage says how much of what runs could actually be assessed — read it
@@ -143,9 +153,18 @@ type Group struct {
 	// finding in this group, across every source it carries one from.
 	CVSS float64 `json:"cvss,omitempty"`
 	// Workloads are namespace/Kind/name of the workloads running affected
-	// images (first maxListed), WorkloadsTotal the full count.
+	// images (first ListLimit), WorkloadsTotal the full count.
 	Workloads      []string `json:"workloads,omitempty"`
 	WorkloadsTotal int      `json:"workloads_total"`
+	// ImageRefs are the affected images' pod-spec references (repo:tag,
+	// first ListLimit).
+	ImageRefs []string `json:"image_refs,omitempty"`
+	// Description, SourceURL and ReferenceURLs describe the vulnerability
+	// (VULNERABILITY groups only; description capped at 1000 chars,
+	// references at 5).
+	Description   string   `json:"description,omitempty"`
+	SourceURL     string   `json:"source_url,omitempty"`
+	ReferenceURLs []string `json:"reference_urls,omitempty"`
 }
 
 // Report is the task result payload.
@@ -301,6 +320,12 @@ func normalize(p *Payload) string {
 	}
 	if p.Limit > maxLimit {
 		p.Limit = maxLimit
+	}
+	if p.ListLimit <= 0 {
+		p.ListLimit = maxListed
+	}
+	if p.ListLimit > maxListLimit {
+		p.ListLimit = maxListLimit
 	}
 	return ""
 }
