@@ -21,6 +21,10 @@ func (f *fakeAPI) BatchUpdateFindings(_ context.Context, in *securityhub.BatchUp
 	return f.out, nil
 }
 
+func (f *fakeAPI) GetFindings(context.Context, *securityhub.GetFindingsInput, ...func(*securityhub.Options)) (*securityhub.GetFindingsOutput, error) {
+	return &securityhub.GetFindingsOutput{}, nil
+}
+
 func newTestTask(a api) *Task {
 	return NewWithClientFactory(func(_ context.Context, _ string) (api, error) { return a, nil })
 }
