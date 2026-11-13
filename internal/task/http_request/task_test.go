@@ -292,3 +292,41 @@ func TestExecuteRequiresURL(t *testing.T) {
 		t.Error("Expected failure when URL missing")
 	}
 }
+
+// Response bodies are kept up to 512KB (was 64KB) and truncated beyond it,
+// with body_truncated set.
+func TestExecuteResponseBodyCap(t *testing.T) {
+	for _, c := range []struct {
+		size      int
+		wantLen   int
+		truncated bool
+	}{
+		{300 * 1024, 300 * 1024, false},
+		{512 * 1024, 512 * 1024, false},
+		{600 * 1024, 512 * 1024, true},
+	} {
+		body := strings.Repeat("x", c.size)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		task := &Task{
+			httpClient: func(timeout time.Duration) *http.Client { return server.Client() },
+			resolver: func(ctx context.Context, host string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP("10.0.0.1")}, nil
+			},
+		}
+		payload, _ := json.Marshal(Payload{Method: "GET", URL: server.URL})
+		result, err := task.Execute(context.Background(), payload)
+		server.Close()
+		if err != nil || !result.Success {
+			t.Fatalf("size %d: err=%v result=%+v", c.size, err, result)
+		}
+		got, ok := result.Details.(*HTTPResult)
+		if !ok {
+			t.Fatalf("size %d: details are %T", c.size, result.Details)
+		}
+		if len(got.Body) != c.wantLen || got.BodyTruncated != c.truncated {
+			t.Errorf("size %d: body %d bytes truncated=%v, want %d truncated=%v", c.size, len(got.Body), got.BodyTruncated, c.wantLen, c.truncated)
+		}
+	}
+}

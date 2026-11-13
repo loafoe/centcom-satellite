@@ -21,7 +21,7 @@ const TaskName = "http_request"
 const (
 	defaultTimeoutMs = 5000
 	maxTimeoutMs     = 30000
-	maxBodySize      = 64 * 1024 // 64KB
+	maxBodySize      = 512 * 1024 // 512KB response bodies; larger ones are truncated (body_truncated)
 )
 
 type Payload struct {
