@@ -164,6 +164,12 @@ type FeaturesConfig struct {
 	// Disabled by default as it allows arbitrary HTTP requests within the cluster.
 	HTTPRequestEnabled bool
 
+	// HTTPRequestMaxBodyKB caps the response body http_request returns
+	// (HTTP_REQUEST_MAX_BODY_KB, default 512, clamped to 1..16384); larger
+	// bodies are truncated with body_truncated set. The whole body is held
+	// in memory, so keep it well under the pod's memory limit.
+	HTTPRequestMaxBodyKB int
+
 	// PvResizeEnabled enables the pv_resize task for resizing persistent volumes.
 	// Disabled by default as it requires write permissions and can impact storage.
 	PvResizeEnabled bool
@@ -272,6 +278,7 @@ func Load() (*Config, error) {
 			NodeclaimDeleteEnabled:  getEnvBool("NODECLAIM_DELETE_ENABLED", false),
 			ArgocdEnabled:           getEnvBool("FEATURES_ARGOCD", false),
 			HTTPRequestEnabled:      getEnvBool("HTTP_REQUEST_ENABLED", false),
+			HTTPRequestMaxBodyKB:    min(max(getEnvInt("HTTP_REQUEST_MAX_BODY_KB", 512), 1), 16384),
 			PvResizeEnabled:         getEnvBool("PV_RESIZE_ENABLED", false),
 			AutoRemediateEnabled:    getEnvBool("AUTO_REMEDIATE_ENABLED", false),
 			CloudWatchRCAEnabled:    getEnvBool("CLOUDWATCH_RCA_ENABLED", false),

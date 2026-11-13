@@ -251,7 +251,7 @@ func TestExecuteWithCustomHeaders(t *testing.T) {
 }
 
 func TestExecuteRejectsHTTPS(t *testing.T) {
-	task := New()
+	task := New(0)
 	payload, _ := json.Marshal(Payload{Method: "GET", URL: "https://example.com"})
 	result, _ := task.Execute(context.Background(), payload)
 
@@ -264,7 +264,7 @@ func TestExecuteRejectsHTTPS(t *testing.T) {
 }
 
 func TestExecuteRejectsInvalidMethod(t *testing.T) {
-	task := New()
+	task := New(0)
 	payload, _ := json.Marshal(Payload{Method: "PATCH", URL: "http://svc.ns:8080"})
 	result, _ := task.Execute(context.Background(), payload)
 
@@ -274,7 +274,7 @@ func TestExecuteRejectsInvalidMethod(t *testing.T) {
 }
 
 func TestExecuteRequiresMethod(t *testing.T) {
-	task := New()
+	task := New(0)
 	payload, _ := json.Marshal(Payload{URL: "http://svc.ns:8080"})
 	result, _ := task.Execute(context.Background(), payload)
 
@@ -284,7 +284,7 @@ func TestExecuteRequiresMethod(t *testing.T) {
 }
 
 func TestExecuteRequiresURL(t *testing.T) {
-	task := New()
+	task := New(0)
 	payload, _ := json.Marshal(Payload{Method: "GET"})
 	result, _ := task.Execute(context.Background(), payload)
 
@@ -293,24 +293,28 @@ func TestExecuteRequiresURL(t *testing.T) {
 	}
 }
 
-// Response bodies are kept up to 512KB (was 64KB) and truncated beyond it,
-// with body_truncated set.
+// Response bodies are kept up to the configured cap (default 512KB, was a
+// fixed 64KB) and truncated beyond it, with body_truncated set.
 func TestExecuteResponseBodyCap(t *testing.T) {
 	for _, c := range []struct {
+		limit     int
 		size      int
 		wantLen   int
 		truncated bool
 	}{
-		{300 * 1024, 300 * 1024, false},
-		{512 * 1024, 512 * 1024, false},
-		{600 * 1024, 512 * 1024, true},
+		{0, 300 * 1024, 300 * 1024, false}, // 0 = the 512KB default
+		{0, 512 * 1024, 512 * 1024, false},
+		{0, 600 * 1024, 512 * 1024, true},
+		{100 * 1024, 150 * 1024, 100 * 1024, true}, // HTTP_REQUEST_MAX_BODY_KB=100
+		{2048 * 1024, 1024 * 1024, 1024 * 1024, false},
 	} {
 		body := strings.Repeat("x", c.size)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))
 		task := &Task{
-			httpClient: func(timeout time.Duration) *http.Client { return server.Client() },
+			maxBodyBytes: c.limit,
+			httpClient:   func(timeout time.Duration) *http.Client { return server.Client() },
 			resolver: func(ctx context.Context, host string) ([]net.IP, error) {
 				return []net.IP{net.ParseIP("10.0.0.1")}, nil
 			},
@@ -326,7 +330,7 @@ func TestExecuteResponseBodyCap(t *testing.T) {
 			t.Fatalf("size %d: details are %T", c.size, result.Details)
 		}
 		if len(got.Body) != c.wantLen || got.BodyTruncated != c.truncated {
-			t.Errorf("size %d: body %d bytes truncated=%v, want %d truncated=%v", c.size, len(got.Body), got.BodyTruncated, c.wantLen, c.truncated)
+			t.Errorf("limit %d size %d: body %d bytes truncated=%v, want %d truncated=%v", c.limit, c.size, len(got.Body), got.BodyTruncated, c.wantLen, c.truncated)
 		}
 	}
 }

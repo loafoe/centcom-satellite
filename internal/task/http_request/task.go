@@ -21,7 +21,9 @@ const TaskName = "http_request"
 const (
 	defaultTimeoutMs = 5000
 	maxTimeoutMs     = 30000
-	maxBodySize      = 512 * 1024 // 512KB response bodies; larger ones are truncated (body_truncated)
+	// defaultMaxBodySize is the response body cap when none is configured
+	// (HTTP_REQUEST_MAX_BODY_KB); larger bodies are truncated (body_truncated).
+	defaultMaxBodySize = 512 * 1024
 )
 
 type Payload struct {
@@ -45,10 +47,16 @@ type HTTPResult struct {
 type Task struct {
 	httpClient func(timeout time.Duration) *http.Client
 	resolver   func(ctx context.Context, host string) ([]net.IP, error)
+	// maxBodyBytes caps the returned response body; 0 means
+	// defaultMaxBodySize.
+	maxBodyBytes int
 }
 
-func New() *Task {
+// New returns the task with a response body cap of maxBodyBytes (0 or less:
+// defaultMaxBodySize).
+func New(maxBodyBytes int) *Task {
 	return &Task{
+		maxBodyBytes: maxBodyBytes,
 		httpClient: func(timeout time.Duration) *http.Client {
 			return newGuardedClient(timeout, clusteraddr.IsClusterIP)
 		},
@@ -217,10 +225,14 @@ func (t *Task) doRequest(ctx context.Context, method string, payload Payload, ti
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
-	truncated := len(body) > maxBodySize
+	limit := t.maxBodyBytes
+	if limit <= 0 {
+		limit = defaultMaxBodySize
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	truncated := len(body) > limit
 	if truncated {
-		body = body[:maxBodySize]
+		body = body[:limit]
 	}
 
 	headers := make(map[string]string)

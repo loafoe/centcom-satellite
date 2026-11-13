@@ -363,3 +363,23 @@ func TestShutdownDelay(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPRequestMaxBodyKB(t *testing.T) {
+	for _, c := range []struct {
+		env  string
+		want int
+	}{{"", 512}, {"1024", 1024}, {"0", 1}, {"99999", 16384}, {"abc", 512}} {
+		os.Clearenv()
+		_ = os.Setenv("ALLOW_UNAUTHENTICATED", "true")
+		if c.env != "" {
+			_ = os.Setenv("HTTP_REQUEST_MAX_BODY_KB", c.env)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", c.env, err)
+		}
+		if cfg.Features.HTTPRequestMaxBodyKB != c.want {
+			t.Errorf("HTTP_REQUEST_MAX_BODY_KB=%q: %d, want %d", c.env, cfg.Features.HTTPRequestMaxBodyKB, c.want)
+		}
+	}
+}

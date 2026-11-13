@@ -408,8 +408,8 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 	// Optional: http_request task (arbitrary HTTP requests). No Kubernetes
 	// dependency — available in both modes.
 	if cfg.Features.HTTPRequestEnabled {
-		registry.Register(http_request.New())
-		slog.Info("http_request task enabled")
+		registry.Register(http_request.New(cfg.Features.HTTPRequestMaxBodyKB * 1024))
+		slog.Info("http_request task enabled", "max_body_kb", cfg.Features.HTTPRequestMaxBodyKB)
 	}
 
 	// Optional: CloudWatch RCA data-retrieval tasks (require AWS credentials + IAM)
