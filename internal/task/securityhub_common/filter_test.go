@@ -206,3 +206,31 @@ func TestBuildFilters_NoteFilters(t *testing.T) {
 		t.Error("note filters must be off by default")
 	}
 }
+
+// TestBuildFilters_ExcludeConfigNotApplicable covers the real incident on
+// dip-ce-k3s-eu: 3,574 of 3,575 ACTIVE MEDIUM findings across four
+// ec2-instance-* OrgConfigRules were permanent "ghost" findings (Config
+// evaluated a resource — a Karpenter node or its EBS volume — that was
+// already terminated by the time the finding was processed).
+// NOT_EQUALS is required (not EQUALS/NOT_CONTAINS) so a finding with no
+// aws/config/ConfigComplianceType ProductField at all (GuardDuty, Inspector,
+// native controls) still matches and isn't accidentally excluded.
+func TestBuildFilters_ExcludeConfigNotApplicable(t *testing.T) {
+	out := Filter{ExcludeConfigNotApplicable: true}.BuildFilters()
+	if len(out.ProductFields) != 1 {
+		t.Fatalf("ProductFields = %+v, want exactly one entry", out.ProductFields)
+	}
+	pf := out.ProductFields[0]
+	if aws.ToString(pf.Key) != "aws/config/ConfigComplianceType" {
+		t.Errorf("ProductFields key = %q, want aws/config/ConfigComplianceType", aws.ToString(pf.Key))
+	}
+	if aws.ToString(pf.Value) != "NOT_APPLICABLE" {
+		t.Errorf("ProductFields value = %q, want NOT_APPLICABLE", aws.ToString(pf.Value))
+	}
+	if pf.Comparison != types.MapFilterComparisonNotEquals {
+		t.Errorf("ProductFields comparison = %v, want NOT_EQUALS (so findings with no such field still match)", pf.Comparison)
+	}
+	if empty := (Filter{}).BuildFilters(); empty.ProductFields != nil {
+		t.Error("ExcludeConfigNotApplicable must default to off")
+	}
+}

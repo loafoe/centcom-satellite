@@ -51,6 +51,21 @@ type Filter struct {
 	// presence (MapFilter is EQUALS/NOT_EQUALS only).
 	HasNote          bool     `json:"has_note,omitempty"`
 	NoteUpdatedByNot []string `json:"note_updated_by_not,omitempty"`
+	// ExcludeConfigNotApplicable, when true, excludes findings whose
+	// aws/config/ConfigComplianceType ProductField is NOT_APPLICABLE — AWS
+	// Config's own signal that an organization-managed rule was evaluated
+	// against a resource that no longer exists (e.g. a terminated Karpenter
+	// node or one of its EBS volumes): a permanent "ghost" finding, never a
+	// real compliance gap, that keeps reappearing for as long as that
+	// resource type keeps churning. Confirmed live on dip-ce-k3s-eu,
+	// 2026-11-16: 3,574 of 3,575 ACTIVE MEDIUM findings across four
+	// ec2-instance-* OrgConfigRules were ghosts this way (every sampled
+	// instance ID either no longer existed or carried a
+	// KarpenterNodeInstanceProfile-* profile). Findings with no such
+	// ProductField at all (GuardDuty, Inspector, native Security Hub
+	// controls) are unaffected — AWS's NOT_EQUALS MapFilter semantics
+	// already include any finding missing the key.
+	ExcludeConfigNotApplicable bool `json:"exclude_config_not_applicable,omitempty"`
 	// AWSAccountID keeps findings for this account ID.
 	AWSAccountID string `json:"aws_account_id,omitempty"`
 	// UpdatedAfter / UpdatedBefore bound UpdatedAt as RFC3339 timestamps.
@@ -114,6 +129,13 @@ func (f Filter) BuildFilters() *types.AwsSecurityFindingFilters {
 	}
 	if f.AWSAccountID != "" {
 		out.AwsAccountId = []types.StringFilter{equalsFilter(f.AWSAccountID)}
+	}
+	if f.ExcludeConfigNotApplicable {
+		out.ProductFields = append(out.ProductFields, types.MapFilter{
+			Key:        aws.String("aws/config/ConfigComplianceType"),
+			Value:      aws.String("NOT_APPLICABLE"),
+			Comparison: types.MapFilterComparisonNotEquals,
+		})
 	}
 	if f.HasNote {
 		// Any note in the last ~10 years: NoteUpdatedAt only exists on a
