@@ -132,18 +132,21 @@ func TestRegisterTasks_AWSOnlyModeSkipsKubernetesWriteTasks(t *testing.T) {
 	}
 }
 
-// TestRegisterTasks_AccountInfoRequiresAWSCredentials proves account_info is
-// only registered when awsCredentialsAvailable is true - the fix for a
+// TestRegisterTasks_AccountInfoAlwaysRegistered proves account_info is
+// registered regardless of awsCredentialsAvailable (since v0.112.0) - a
 // satellite with no AWS integration at all (e.g. a homelab/on-prem cluster)
-// otherwise always advertising a task that could only ever 404. Unlike every
-// other task gated in this file, account_info has no Features.*Enabled flag
-// of its own; this parameter is its only gate.
-func TestRegisterTasks_AccountInfoRequiresAWSCredentials(t *testing.T) {
+// must still answer a definitive HTTP 200 aws_available:false, not 404.
+// Unlike every other task gated in this file, account_info has no
+// Features.*Enabled flag of its own; awsCredentialsAvailable instead picks
+// which Task implementation (account_info.New vs .NewUnavailable) gets
+// registered - see TestExecute_Unavailable in the account_info package for
+// the behavioral half of this.
+func TestRegisterTasks_AccountInfoAlwaysRegistered(t *testing.T) {
 	for _, available := range []bool{true, false} {
 		cfg := &config.Config{}
 		registry := registerTasks(cfg, newFakeK8sClient(), false, available, cluster_info.Capabilities{})
-		if _, ok := registry.Get("account_info"); ok != available {
-			t.Errorf("account_info present=%v, want %v (awsCredentialsAvailable=%v)", ok, available, available)
+		if _, ok := registry.Get("account_info"); !ok {
+			t.Errorf("account_info present=false, want true (awsCredentialsAvailable=%v)", available)
 		}
 	}
 }

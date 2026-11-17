@@ -144,22 +144,22 @@ func main() {
 	}
 	awsOnlyMode := cfg.AWSAssumeRole.ARN != ""
 
-	// account_info is otherwise unconditionally registered below regardless
-	// of whether this satellite has any AWS integration at all. On a
+	// account_info is always registered below (see registerTasks) regardless
+	// of whether this satellite has any AWS integration at all - but on a
 	// satellite with none (e.g. a homelab/on-prem cluster: no IRSA, no
-	// IMDS, no explicit keys), every account_info call used to ride out the
-	// AWS SDK's full IMDS retry/timeout chain (~5s) before failing - and
-	// still showed up in list_tasks as if it worked. awsOnlyMode already
-	// proves credentials are real here (Init's own verifyCallerIdentity
-	// call above would have os.Exit(1) otherwise); HasCredentials() is the
-	// cheap, synchronous, no-network-call signal for every other case -
-	// IRSA/Pod Identity env vars or token file, matching how every
-	// satellite in this fleet actually gets AWS credentials (no fleet
-	// satellite relies on a bare EC2 instance-profile role via node-level
-	// IMDS passthrough).
+	// IMDS, no explicit keys), it must not actually attempt a live STS
+	// call: that used to ride out the AWS SDK's full IMDS retry/timeout
+	// chain (~5s) before failing with a 500, or (pre-v0.100.0) not be
+	// registered at all and 404. awsOnlyMode already proves credentials are
+	// real here (Init's own verifyCallerIdentity call above would have
+	// os.Exit(1) otherwise); HasCredentials() is the cheap, synchronous,
+	// no-network-call signal for every other case - IRSA/Pod Identity env
+	// vars or token file, matching how every satellite in this fleet
+	// actually gets AWS credentials (no fleet satellite relies on a bare
+	// EC2 instance-profile role via node-level IMDS passthrough).
 	awsCredentialsAvailable := awsOnlyMode || awshelper.HasCredentials()
 	if !awsCredentialsAvailable {
-		slog.Info("no AWS credentials detected: account_info task will not be registered")
+		slog.Info("no AWS credentials detected: account_info will report aws_available=false with no AWS API call")
 	}
 
 	// Setup Kubernetes client (instrumented with Prometheus metrics), unless
@@ -177,10 +177,12 @@ func main() {
 
 	// capabilities advertises which optional task groups are enabled on this
 	// agent. Purely config-derived (no Kubernetes dependency), so it's
-	// computed once and reported by both account_info (registered whenever
-	// awsCredentialsAvailable, see below) and cluster_info (Kubernetes mode
+	// computed once and reported by both account_info (always registered,
+	// see below - available or not) and cluster_info (Kubernetes mode
 	// only) — account_info is the only
-	// capabilities source on a cluster-less (AWS-only AssumeRole) satellite.
+	// capabilities source on a cluster-less (AWS-only AssumeRole) satellite,
+	// and still reports Kubernetes-independent flags correctly even when
+	// AWS itself is unavailable.
 	capabilities := cluster_info.Capabilities{
 		WorkloadRestart:      cfg.Features.WorkloadRestartEnabled,
 		WorkloadScale:        cfg.Features.WorkloadScaleEnabled,
@@ -286,18 +288,23 @@ func main() {
 // this behavior in per-flag and against install.sh's READ_ONLY=true default
 // feature set.
 //
-// awsCredentialsAvailable gates account_info specifically: unlike every
-// other task here, it has no Features.*Enabled flag of its own - it's meant
-// to always be on, but only actually makes sense when this satellite has
-// some AWS identity to report. Deciding this once at startup (not inside
-// account_info.Execute itself) keeps list_tasks honest - a task that isn't
-// registered doesn't appear in the catalog at all, and a call for it fails
-// immediately via the same task.ErrTaskNotFound path every other
-// not-registered task already uses, with no per-call credential probe.
+// awsCredentialsAvailable decides account_info's *behavior*, not whether
+// it's registered: unlike every other task here, it has no
+// Features.*Enabled flag of its own, and it's always registered (since
+// v0.112.0) so a caller always gets a definitive HTTP 200 answer. When
+// credentials aren't available, account_info.NewUnavailable makes Execute
+// short-circuit to a successful aws_available:false result with no AWS API
+// call at all - no per-call credential probe, no live STS attempt doomed to
+// fail. Deciding the available/unavailable split once at startup (not
+// inside account_info.Execute on every call) is still what keeps that
+// cheap - this parameter is just the input to that decision now rather
+// than a registration gate.
 func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, awsCredentialsAvailable bool, capabilities cluster_info.Capabilities) *task.Registry {
 	registry := task.NewRegistry()
 	if awsCredentialsAvailable {
 		registry.Register(account_info.New(cfg.AWSAssumeRole.ARN).WithCapabilities(capabilities))
+	} else {
+		registry.Register(account_info.NewUnavailable("no AWS credentials detected on this satellite").WithCapabilities(capabilities))
 	}
 	registry.Register(dns_check.New())
 	registry.Register(connectivity_test.New())

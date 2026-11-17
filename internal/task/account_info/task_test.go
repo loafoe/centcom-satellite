@@ -1,6 +1,7 @@
 package account_info
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,5 +100,65 @@ func TestExecute_ReportsCapabilities(t *testing.T) {
 	}
 	if info.Capabilities.CloudWatchRCA {
 		t.Error("expected Capabilities.CloudWatchRCA = false (not set)")
+	}
+}
+
+func TestExecute_AvailablePathLeavesAWSAvailableNil(t *testing.T) {
+	// A response from the AWS-available path must stay byte-for-byte what
+	// an older centcom expects: no aws_available field in the JSON at all
+	// (a nil *bool serializes as omitted, not false), so this is a
+	// regression guard against accidentally always setting it.
+	api := &fakeAPI{out: &sts.GetCallerIdentityOutput{Account: aws.String("010526241823")}}
+	res, err := newTestTask("", api).Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info := res.Details.(Info)
+	if info.AWSAvailable != nil {
+		t.Errorf("AWSAvailable = %v, want nil on the AWS-available path", *info.AWSAvailable)
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(raw, []byte("aws_available")) {
+		t.Errorf("expected no aws_available key in JSON, got %s", raw)
+	}
+}
+
+func TestExecute_Unavailable(t *testing.T) {
+	// NewUnavailable must never touch the AWS API at all - clientFactory is
+	// left nil, so a regression that fell through to the normal path would
+	// nil-pointer panic here rather than silently calling AWS.
+	tsk := NewUnavailable("no AWS credentials detected on this satellite").WithCapabilities(cluster_info.Capabilities{
+		HttpRequest: true,
+	})
+	res, err := tsk.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	info := res.Details.(Info)
+	if info.AWSAvailable == nil || *info.AWSAvailable {
+		t.Errorf("AWSAvailable = %v, want a pointer to false", info.AWSAvailable)
+	}
+	if info.Reason != "no AWS credentials detected on this satellite" {
+		t.Errorf("Reason = %q, want the configured reason", info.Reason)
+	}
+	if info.AWSAccountID != "" || info.AWSCallerArn != "" || info.Region != "" {
+		t.Errorf("expected no AWS identity fields set, got %+v", info)
+	}
+	if !info.Capabilities.HttpRequest {
+		t.Error("expected Capabilities.HttpRequest = true to still flow through when AWS is unavailable")
+	}
+
+	raw, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"aws_available":false`)) {
+		t.Errorf("expected aws_available:false in JSON, got %s", raw)
 	}
 }
