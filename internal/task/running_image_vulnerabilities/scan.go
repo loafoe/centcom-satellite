@@ -20,6 +20,7 @@ type scan struct {
 	insp    inspectorAPI
 
 	images    map[string]*runningImage
+	matched   map[string]bool // workloads the workloads filter matched
 	platforms map[platformKey][]*runningImage
 	status    map[platformKey]string
 	groups    map[string]*groupAcc

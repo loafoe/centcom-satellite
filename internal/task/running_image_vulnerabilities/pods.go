@@ -66,6 +66,36 @@ func workloadOf(pod *corev1.Pod) string {
 	return pod.Namespace + "/Pod/" + pod.Name
 }
 
+// workloadWanted applies the workloads filter (see Payload.Workloads) and
+// records matches for the report.
+func (s *scan) workloadWanted(wl string) bool {
+	if len(s.payload.Workloads) == 0 {
+		return true
+	}
+	ns, rest, _ := strings.Cut(wl, "/")
+	kind, name, _ := strings.Cut(rest, "/")
+	for _, w := range s.payload.Workloads {
+		parts := strings.Split(w, "/")
+		var ok bool
+		switch len(parts) {
+		case 1:
+			ok = parts[0] == name
+		case 2:
+			ok = parts[0] == ns && parts[1] == name
+		default:
+			ok = parts[0] == ns && strings.EqualFold(parts[1], kind) && strings.Join(parts[2:], "/") == name
+		}
+		if ok {
+			if s.matched == nil {
+				s.matched = map[string]bool{}
+			}
+			s.matched[wl] = true
+			return true
+		}
+	}
+	return false
+}
+
 // collectPods records every image digest used by a live pod's containers
 // (init containers included: they ran this image too).
 func (s *scan) collectPods(ctx context.Context, cs kubernetes.Interface) error {
@@ -87,8 +117,11 @@ func (s *scan) collectPods(ctx context.Context, cs kubernetes.Interface) error {
 				if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 					continue
 				}
-				s.report.Coverage.RunningContainers += len(pod.Status.ContainerStatuses)
 				wl := workloadOf(pod)
+				if !s.workloadWanted(wl) {
+					continue
+				}
+				s.report.Coverage.RunningContainers += len(pod.Status.ContainerStatuses)
 				statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
 				for _, cst := range statuses {
 					s.addImage(cst, wl, other)

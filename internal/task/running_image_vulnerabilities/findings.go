@@ -355,6 +355,10 @@ func (s *scan) finish() {
 		return a.Key < b.Key
 	})
 	s.report.GroupsTotal = len(groups)
+	for wl := range s.matched {
+		s.report.MatchedWorkloads = append(s.report.MatchedWorkloads, wl)
+	}
+	sort.Strings(s.report.MatchedWorkloads)
 	s.report.Groups = vulnrecency.Keep(groups, s.payload.Limit, s.payload.PreferRecentDays, now(), func(g Group) time.Time {
 		t, _ := time.Parse(time.RFC3339, g.FirstObservedAt)
 		return t

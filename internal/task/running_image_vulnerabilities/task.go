@@ -77,6 +77,11 @@ type Payload struct {
 	Region string `json:"region,omitempty"`
 	// Namespaces limits the scan to pods in these namespaces; empty = all.
 	Namespaces []string `json:"namespaces,omitempty"`
+	// Workloads limits the scan to these workloads' pods: namespace/Kind/name
+	// (the workload keys this task reports, e.g. shop/Deployment/web),
+	// namespace/name (any kind) or name (any namespace and kind). When every
+	// entry names a namespace, only those namespaces are listed.
+	Workloads []string `json:"workloads,omitempty"`
 	// Severities to include (Inspector labels); default ["CRITICAL"].
 	Severities []string `json:"severities,omitempty"`
 	// FixAvailable keeps findings with this Inspector fixAvailable value:
@@ -195,11 +200,14 @@ type Report struct {
 	TotalFindings    int            `json:"total_findings"`
 	SeverityCounts   map[string]int `json:"severity_counts"`
 	GroupsTotal      int            `json:"groups_total"`
-	Groups           []Group        `json:"groups"`
-	Complete         bool           `json:"complete"`
-	StopReason       string         `json:"stop_reason,omitempty"`
-	ECRCalls         int            `json:"ecr_calls"`
-	InspectorCalls   int            `json:"inspector_calls"`
+	// MatchedWorkloads: with a workloads filter, the workloads it matched
+	// (empty = no running pod matched: check the spelling).
+	MatchedWorkloads []string `json:"matched_workloads,omitempty"`
+	Groups           []Group  `json:"groups"`
+	Complete         bool     `json:"complete"`
+	StopReason       string   `json:"stop_reason,omitempty"`
+	ECRCalls         int      `json:"ecr_calls"`
+	InspectorCalls   int      `json:"inspector_calls"`
 }
 
 type ecrAPI interface {
@@ -344,5 +352,29 @@ func normalize(p *Payload) string {
 		p.ListLimit = maxListLimit
 	}
 	p.PreferRecentDays = vulnrecency.Clamp(p.PreferRecentDays)
+	var wls []string
+	for _, w := range p.Workloads {
+		if w = strings.Trim(strings.TrimSpace(w), "/"); w != "" {
+			wls = append(wls, w)
+		}
+	}
+	p.Workloads = wls
+	if len(p.Workloads) > 0 && len(p.Namespaces) == 0 {
+		// Only list the namespaces the filter names (if it names them all).
+		seen := map[string]bool{}
+		var nss []string
+		for _, w := range p.Workloads {
+			ns, _, ok := strings.Cut(w, "/")
+			if !ok {
+				nss = nil
+				break
+			}
+			if !seen[ns] {
+				seen[ns] = true
+				nss = append(nss, ns)
+			}
+		}
+		p.Namespaces = nss
+	}
 	return ""
 }
