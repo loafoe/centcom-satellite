@@ -40,6 +40,7 @@ import (
 
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
 const TaskName = "running_image_vulnerabilities"
@@ -92,6 +93,11 @@ type Payload struct {
 	// ListLimit caps each group's workloads/images/packages/vulnerability
 	// ID lists (default 10, max 200); the *_total counts are never capped.
 	ListLimit int `json:"list_limit,omitempty"`
+	// PreferRecentDays keeps groups first observed within this many days
+	// ahead of the Limit cut (0 = off, max 90), so a brand-new CVE — no
+	// EPSS yet, few images — isn't the one the limit drops. Output order is
+	// unchanged.
+	PreferRecentDays int `json:"prefer_recent_days,omitempty"`
 }
 
 // Coverage says how much of what runs could actually be assessed — read it
@@ -159,6 +165,11 @@ type Group struct {
 	// ImageRefs are the affected images' pod-spec references (repo:tag,
 	// first ListLimit).
 	ImageRefs []string `json:"image_refs,omitempty"`
+	// FirstObservedAt is the earliest Inspector firstObservedAt among the
+	// group's findings (RFC 3339). Inspector sets it per finding, i.e. per
+	// image, so a long-known CVE gets a fresh one on every newly pushed
+	// image: it says "first seen on these images", not "new CVE".
+	FirstObservedAt string `json:"first_observed_at,omitempty"`
 	// Description, SourceURL and ReferenceURLs describe the vulnerability
 	// (VULNERABILITY groups only; description capped at 1000 chars,
 	// references at 5).
@@ -327,5 +338,6 @@ func normalize(p *Payload) string {
 	if p.ListLimit > maxListLimit {
 		p.ListLimit = maxListLimit
 	}
+	p.PreferRecentDays = vulnrecency.Clamp(p.PreferRecentDays)
 	return ""
 }

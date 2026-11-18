@@ -30,6 +30,7 @@ import (
 
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
 const TaskName = "aws_resource_vulnerabilities"
@@ -76,6 +77,10 @@ type Payload struct {
 	// ListLimit caps per-entry lists (resource IDs per vulnerability,
 	// vulnerability IDs per resource, packages; default 50, max 1000).
 	ListLimit int `json:"list_limit,omitempty"`
+	// PreferRecentDays keeps vulnerabilities first observed within this
+	// many days ahead of the Limit cut (0 = off, max 90); output order is
+	// unchanged. See internal/task/vulnrecency.
+	PreferRecentDays int `json:"prefer_recent_days,omitempty"`
 }
 
 // Package is one vulnerable package as installed and the version fixing it.
@@ -313,5 +318,6 @@ func normalize(p *Payload) string {
 		p.ListLimit = defaultListLimit
 	}
 	p.ListLimit = min(p.ListLimit, maxListLimit)
+	p.PreferRecentDays = vulnrecency.Clamp(p.PreferRecentDays)
 	return ""
 }

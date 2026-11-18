@@ -7,7 +7,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+
 	itypes "github.com/aws/aws-sdk-go-v2/service/inspector2/types"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
 // addFinding folds one finding into both groupings; mu held.
@@ -235,7 +237,10 @@ func (s *scan) finish() {
 		byID[v.ID] = v
 	}
 	s.report.VulnerabilitiesTotal = len(vulns)
-	s.report.Vulnerabilities = capVulns(vulns, s.payload.Limit)
+	s.report.Vulnerabilities = vulnrecency.Keep(vulns, s.payload.Limit, s.payload.PreferRecentDays, now(), func(v Vulnerability) time.Time {
+		t, _ := time.Parse(time.RFC3339, v.FirstObservedAt)
+		return t
+	})
 
 	cov.Resources, cov.Scanned, cov.NotScanned, cov.WithFindings = 0, 0, 0, 0
 	cov.ScanStatus = map[string]int{}
@@ -327,12 +332,8 @@ func resourceName(r *resAcc) string {
 	return ""
 }
 
-func capVulns(v []Vulnerability, n int) []Vulnerability {
-	if len(v) > n {
-		return v[:n]
-	}
-	return v
-}
+// now is the clock prefer_recent_days measures against (a var for tests).
+var now = time.Now
 
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))

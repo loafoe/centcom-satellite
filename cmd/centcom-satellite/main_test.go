@@ -164,6 +164,28 @@ func TestRegisterTasks_CloudTrailFlag(t *testing.T) {
 	}
 }
 
+// TestRegisterTasks_InspectorTasksFollowSecurityHubFlag: the Inspector
+// count/details tasks share the securityhub feature gate and IAM policy, and
+// need no Kubernetes client (AWS-only satellites get them too).
+func TestRegisterTasks_InspectorTasksFollowSecurityHubFlag(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		cfg := &config.Config{}
+		cfg.Features.SecurityHubEnabled = enabled
+		for _, awsOnly := range []bool{false, true} {
+			var k8sClient = newFakeK8sClient()
+			if awsOnly {
+				k8sClient = nil
+			}
+			registry := registerTasks(cfg, k8sClient, awsOnly, true, cluster_info.Capabilities{})
+			for _, name := range []string{"inspector_finding_counts", "inspector_vulnerability_details"} {
+				if _, ok := registry.Get(name); ok != enabled {
+					t.Errorf("%s present=%v with SecurityHubEnabled=%v awsOnly=%v", name, ok, enabled, awsOnly)
+				}
+			}
+		}
+	}
+}
+
 func TestRegisterTasks_AWSReadFlag(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		cfg := &config.Config{}

@@ -44,6 +44,8 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/guardduty_list_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/helm_application"
 	"github.com/loafoe/centcom-satellite/internal/task/http_request"
+	"github.com/loafoe/centcom-satellite/internal/task/inspector_finding_counts"
+	"github.com/loafoe/centcom-satellite/internal/task/inspector_vulnerability_details"
 	"github.com/loafoe/centcom-satellite/internal/task/list_argocd_applications"
 	"github.com/loafoe/centcom-satellite/internal/task/list_configmaps"
 	"github.com/loafoe/centcom-satellite/internal/task/list_endpoints"
@@ -462,6 +464,13 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		// too; same inspector2:ListFindings/ListCoverage IAM as below).
 		registry.Register(aws_resource_vulnerabilities.New())
 		slog.Info("aws_resource_vulnerabilities task enabled")
+		// Live Inspector counts + Security Hub sync sample, and vulnerability
+		// publish dates (inspector2:ListFindingAggregations /
+		// SearchVulnerabilities): lets callers stay ahead of Security Hub's
+		// asynchronous, sometimes hours-late ingestion of Inspector findings.
+		registry.Register(inspector_finding_counts.New())
+		registry.Register(inspector_vulnerability_details.New())
+		slog.Info("inspector tasks enabled", "tasks", "inspector_finding_counts,inspector_vulnerability_details")
 		// Inspector findings for the images running in this cluster (same
 		// findings Security Hub aggregates, joined with the cluster's pods;
 		// needs ecr:BatchGetImage + inspector2:ListFindings/ListCoverage).

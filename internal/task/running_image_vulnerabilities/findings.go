@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/inspector2"
 	itypes "github.com/aws/aws-sdk-go-v2/service/inspector2/types"
+
+	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
+
+// now is the clock prefer_recent_days measures against (a var for tests).
+var now = time.Now
 
 // hashesPerCall is Inspector's limit on values per ListFindings string
 // filter (verified: 11 ecrImageHash values fail validation).
@@ -169,6 +175,7 @@ type groupAcc struct {
 	description          string
 	sourceURL            string
 	references           []string
+	firstObserved        time.Time
 }
 
 // addFinding must be called with mu held.
@@ -256,6 +263,9 @@ func (s *scan) addFinding(f *itypes.Finding) {
 				g.title = img.display
 			}
 		}
+		if t := aws.ToTime(f.FirstObservedAt); !t.IsZero() && (g.firstObserved.IsZero() || t.Before(g.firstObserved)) {
+			g.firstObserved = t
+		}
 		if f.Epss != nil && f.Epss.Score > g.epss {
 			g.epss = f.Epss.Score
 		}
@@ -334,10 +344,10 @@ func (s *scan) finish() {
 		return a.Key < b.Key
 	})
 	s.report.GroupsTotal = len(groups)
-	if len(groups) > s.payload.Limit {
-		groups = groups[:s.payload.Limit]
-	}
-	s.report.Groups = groups
+	s.report.Groups = vulnrecency.Keep(groups, s.payload.Limit, s.payload.PreferRecentDays, now(), func(g Group) time.Time {
+		t, _ := time.Parse(time.RFC3339, g.FirstObservedAt)
+		return t
+	})
 }
 
 func (g *groupAcc) toGroup(listLimit int) Group {
@@ -346,6 +356,9 @@ func (g *groupAcc) toGroup(listLimit int) Group {
 		SeverityCounts: g.sevCounts, Images: len(g.images), Vulnerabilities: len(g.vulns),
 		FixAvailable: g.fix, ExploitAvailable: g.exploit, EPSS: g.epss, CVSS: g.cvss,
 		Description: g.description, SourceURL: g.sourceURL, ReferenceURLs: g.references,
+	}
+	if !g.firstObserved.IsZero() {
+		out.FirstObservedAt = g.firstObserved.UTC().Format(time.RFC3339)
 	}
 	vulns := make([]string, 0, len(g.vulns))
 	for v := range g.vulns {
