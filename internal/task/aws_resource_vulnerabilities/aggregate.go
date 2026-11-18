@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	itypes "github.com/aws/aws-sdk-go-v2/service/inspector2/types"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnagg"
 	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
@@ -100,14 +101,10 @@ func (s *scan) addFinding(f *itypes.Finding) {
 		v.EPSS = max(v.EPSS, f.Epss.Score)
 	}
 	v.InspectorScore = max(v.InspectorScore, aws.ToFloat64(f.InspectorScore))
-	if fa := string(f.FixAvailable); fa != "" && (v.FixAvailable == "" || fa == "YES") {
-		v.FixAvailable = fa
-	}
-	if ea := string(f.ExploitAvailable); ea == "YES" || v.ExploitAvailable == "" {
-		if ea != "" {
-			v.ExploitAvailable = ea
-		}
-	}
+	// Order-independent across resources (vulnagg): a fix for any affected
+	// resource makes the vulnerability fixable.
+	v.FixAvailable = vulnagg.MergeFix(v.FixAvailable, string(f.FixAvailable))
+	v.ExploitAvailable = vulnagg.MergeExploit(v.ExploitAvailable, string(f.ExploitAvailable))
 	if e := f.ExploitabilityDetails; e != nil && e.LastKnownExploitAt != nil {
 		v.LastKnownExploitAt = e.LastKnownExploitAt.UTC().Format(time.RFC3339)
 	}
@@ -133,7 +130,9 @@ func (s *scan) addFinding(f *itypes.Finding) {
 		for _, p := range pkgs {
 			r.pkgs[vulnID][p] = true
 		}
-		if v.FixAvailable == "YES" || string(f.FixAvailable) == "YES" {
+		// This resource's own finding only: v.FixAvailable is the
+		// vulnerability-wide value (another resource may have the fix).
+		if string(f.FixAvailable) == "YES" {
 			r.fixable[vulnID] = true
 		}
 		if string(f.ExploitAvailable) == "YES" {

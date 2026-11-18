@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/inspector2"
 	itypes "github.com/aws/aws-sdk-go-v2/service/inspector2/types"
 
+	"github.com/loafoe/centcom-satellite/internal/task/vulnagg"
 	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
@@ -176,6 +177,9 @@ type groupAcc struct {
 	sourceURL            string
 	references           []string
 	firstObserved        time.Time
+	// fixImages are the group's images with a fix (fixAvailable YES) on
+	// their own finding — a CVE can be fixable on one image and not another.
+	fixImages map[*runningImage]bool
 }
 
 // addFinding must be called with mu held.
@@ -227,7 +231,7 @@ func (s *scan) addFinding(f *itypes.Finding) {
 	for _, key := range dedupe(keys) {
 		g := s.groups[key]
 		if g == nil {
-			g = &groupAcc{key: key, sevCounts: map[string]int{}, images: map[*runningImage]bool{}, vulns: map[string]bool{}, packages: map[PackageFix]bool{}}
+			g = &groupAcc{key: key, sevCounts: map[string]int{}, images: map[*runningImage]bool{}, vulns: map[string]bool{}, packages: map[PackageFix]bool{}, fixImages: map[*runningImage]bool{}}
 			s.groups[key] = g
 		}
 		g.findings++
@@ -248,8 +252,15 @@ func (s *scan) addFinding(f *itypes.Finding) {
 		}
 		if s.payload.GroupBy == GroupByVulnerability {
 			g.title = aws.ToString(f.Title)
-			g.fix = string(f.FixAvailable)
-			g.exploit = string(f.ExploitAvailable)
+			// Order-independent: findings arrive from concurrent workers,
+			// and fix availability differs per image (vulnagg).
+			g.fix = vulnagg.MergeFix(g.fix, string(f.FixAvailable))
+			g.exploit = vulnagg.MergeExploit(g.exploit, string(f.ExploitAvailable))
+			if f.FixAvailable == itypes.FixAvailableYes {
+				for _, img := range imgs {
+					g.fixImages[img] = true
+				}
+			}
 			if g.description == "" {
 				g.description = truncate(aws.ToString(f.Description), maxDescription)
 			}
@@ -391,6 +402,16 @@ func (g *groupAcc) toGroup(listLimit int) Group {
 	}
 	out.WorkloadsTotal = len(wl)
 	out.Workloads = capN(sortedKeys(wl), listLimit)
+	if g.fix != "" { // VULNERABILITY groups
+		fw := map[string]bool{}
+		for img := range g.fixImages {
+			for w := range img.workloads {
+				fw[w] = true
+			}
+		}
+		out.FixableWorkloadsTotal = len(fw)
+		out.FixableWorkloads = capN(sortedKeys(fw), listLimit)
+	}
 	out.ImageRefs = capN(sortedKeys(refs), listLimit)
 	return out
 }

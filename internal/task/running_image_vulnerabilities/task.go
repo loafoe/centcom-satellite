@@ -162,6 +162,11 @@ type Group struct {
 	// images (first ListLimit), WorkloadsTotal the full count.
 	Workloads      []string `json:"workloads,omitempty"`
 	WorkloadsTotal int      `json:"workloads_total"`
+	// FixableWorkloads are the workloads whose own image has a fix for this
+	// vulnerability (first ListLimit; VULNERABILITY groups only) —
+	// FixAvailable is YES when any affected image has one.
+	FixableWorkloads      []string `json:"fixable_workloads,omitempty"`
+	FixableWorkloadsTotal int      `json:"fixable_workloads_total,omitempty"`
 	// ImageRefs are the affected images' pod-spec references (repo:tag,
 	// first ListLimit).
 	ImageRefs []string `json:"image_refs,omitempty"`
