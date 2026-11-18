@@ -122,6 +122,9 @@ func (s *scan) filterCriteria(hashes []string) *itypes.FilterCriteria {
 	for _, h := range hashes {
 		fc.EcrImageHash = append(fc.EcrImageHash, eq(h))
 	}
+	for _, id := range s.payload.VulnerabilityIDs {
+		fc.VulnerabilityId = append(fc.VulnerabilityId, eq(id))
+	}
 	for _, sev := range s.payload.Severities {
 		fc.Severity = append(fc.Severity, eq(sev))
 	}

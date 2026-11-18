@@ -40,6 +40,7 @@ import (
 
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnagg"
 	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
@@ -82,6 +83,9 @@ type Payload struct {
 	// namespace/name (any kind) or name (any namespace and kind). When every
 	// entry names a namespace, only those namespaces are listed.
 	Workloads []string `json:"workloads,omitempty"`
+	// VulnerabilityIDs keeps only these CVE/GHSA IDs (at most 10): one CVE's
+	// affected workloads and installed/fixed versions in one fast scan.
+	VulnerabilityIDs []string `json:"vulnerability_ids,omitempty"`
 	// Severities to include (Inspector labels); default ["CRITICAL"].
 	Severities []string `json:"severities,omitempty"`
 	// FixAvailable keeps findings with this Inspector fixAvailable value:
@@ -203,11 +207,15 @@ type Report struct {
 	// MatchedWorkloads: with a workloads filter, the workloads it matched
 	// (empty = no running pod matched: check the spelling).
 	MatchedWorkloads []string `json:"matched_workloads,omitempty"`
-	Groups           []Group  `json:"groups"`
-	Complete         bool     `json:"complete"`
-	StopReason       string   `json:"stop_reason,omitempty"`
-	ECRCalls         int      `json:"ecr_calls"`
-	InspectorCalls   int      `json:"inspector_calls"`
+	// AppliedFilters names the optional filters this scan honored
+	// (workloads, vulnerability_ids): a caller can tell an older satellite
+	// that ignored one from a filter that matched nothing.
+	AppliedFilters []string `json:"applied_filters,omitempty"`
+	Groups         []Group  `json:"groups"`
+	Complete       bool     `json:"complete"`
+	StopReason     string   `json:"stop_reason,omitempty"`
+	ECRCalls       int      `json:"ecr_calls"`
+	InspectorCalls int      `json:"inspector_calls"`
 }
 
 type ecrAPI interface {
@@ -275,6 +283,12 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 		ExploitAvailable: p.ExploitAvailable, GroupBy: p.GroupBy,
 		Coverage:       Coverage{ScanStatus: map[string]int{}},
 		SeverityCounts: map[string]int{}, Groups: []Group{}, Complete: true,
+	}
+	if len(p.Workloads) > 0 {
+		s.report.AppliedFilters = append(s.report.AppliedFilters, "workloads")
+	}
+	if len(p.VulnerabilityIDs) > 0 {
+		s.report.AppliedFilters = append(s.report.AppliedFilters, "vulnerability_ids")
 	}
 
 	if err := s.collectPods(ctx, t.clientset); err != nil {
@@ -359,6 +373,11 @@ func normalize(p *Payload) string {
 		}
 	}
 	p.Workloads = wls
+	ids, msg := vulnagg.CleanIDs("vulnerability_ids", p.VulnerabilityIDs, vulnagg.MaxVulnerabilityIDs, true)
+	if msg != "" {
+		return msg
+	}
+	p.VulnerabilityIDs = ids
 	if len(p.Workloads) > 0 && len(p.Namespaces) == 0 {
 		// Only list the namespaces the filter names (if it names them all).
 		seen := map[string]bool{}

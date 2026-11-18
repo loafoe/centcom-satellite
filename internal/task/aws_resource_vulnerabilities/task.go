@@ -31,6 +31,7 @@ import (
 
 	awshelper "github.com/loafoe/centcom-satellite/internal/aws"
 	"github.com/loafoe/centcom-satellite/internal/task"
+	"github.com/loafoe/centcom-satellite/internal/task/vulnagg"
 	"github.com/loafoe/centcom-satellite/internal/task/vulnrecency"
 )
 
@@ -85,7 +86,15 @@ type Payload struct {
 	// SkipExposure skips the EC2 Internet-exposure lookup (NETWORK_REACHABILITY
 	// findings, ~1 call per 10 instances, run alongside the scan).
 	SkipExposure bool `json:"skip_exposure,omitempty"`
+	// ResourceIDs keeps only these instances / functions (EC2 instance IDs,
+	// Lambda function ARNs or names; at most 100): every package upgrade one
+	// instance needs, without scanning the account.
+	ResourceIDs []string `json:"resource_ids,omitempty"`
+	// VulnerabilityIDs keeps only these CVE/GHSA IDs (at most 10).
+	VulnerabilityIDs []string `json:"vulnerability_ids,omitempty"`
 }
+
+const maxResourceIDs = 100
 
 // Package is one vulnerable package as installed and the version fixing it.
 type Package struct {
@@ -210,7 +219,11 @@ type Report struct {
 	SeverityCounts       map[string]int  `json:"severity_counts"`
 	VulnerabilitiesTotal int             `json:"vulnerabilities_total"`
 	Vulnerabilities      []Vulnerability `json:"vulnerabilities"`
-	ResourcesTotal       int             `json:"resources_total"`
+	// AppliedFilters names the optional filters this scan honored
+	// (resource_ids, vulnerability_ids): a caller can tell an older
+	// satellite that ignored one from a filter that matched nothing.
+	AppliedFilters []string `json:"applied_filters,omitempty"`
+	ResourcesTotal int      `json:"resources_total"`
 	// ExposureChecked: Internet exposure was looked up (EC2, completed);
 	// InternetExposedResources counts the instances with any exposed port.
 	ExposureChecked          bool `json:"exposure_checked"`
@@ -350,5 +363,12 @@ func normalize(p *Payload) string {
 	}
 	p.ListLimit = min(p.ListLimit, maxListLimit)
 	p.PreferRecentDays = vulnrecency.Clamp(p.PreferRecentDays)
+	var msg string
+	if p.ResourceIDs, msg = vulnagg.CleanIDs("resource_ids", p.ResourceIDs, maxResourceIDs, false); msg != "" {
+		return msg
+	}
+	if p.VulnerabilityIDs, msg = vulnagg.CleanIDs("vulnerability_ids", p.VulnerabilityIDs, vulnagg.MaxVulnerabilityIDs, true); msg != "" {
+		return msg
+	}
 	return ""
 }

@@ -60,8 +60,15 @@ func (f *fakeInspector) ListFindings(ctx context.Context, in *inspector2.ListFin
 	for _, s := range in.FilterCriteria.Severity {
 		sevs[aws.ToString(s.Value)] = true
 	}
+	vulns := map[string]bool{}
+	for _, v := range in.FilterCriteria.VulnerabilityId {
+		vulns[aws.ToString(v.Value)] = true
+	}
 	var match []itypes.Finding
 	for _, fd := range f.findings {
+		if len(vulns) > 0 && (fd.PackageVulnerabilityDetails == nil || !vulns[aws.ToString(fd.PackageVulnerabilityDetails.VulnerabilityId)]) {
+			continue
+		}
 		if want[aws.ToString(fd.Resources[0].Id)] && sevs[string(fd.Severity)] {
 			match = append(match, fd)
 		}

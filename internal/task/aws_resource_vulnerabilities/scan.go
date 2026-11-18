@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,7 +53,7 @@ type scan struct {
 }
 
 func newScan(p Payload, insp inspectorAPI) *scan {
-	return &scan{
+	s := &scan{
 		exposure: map[string]*InternetExposure{},
 		payload:  p, insp: insp,
 		resources: map[string]*resAcc{}, vulns: map[string]*vulnAcc{},
@@ -64,6 +65,13 @@ func newScan(p Payload, insp inspectorAPI) *scan {
 			Complete: true,
 		},
 	}
+	if len(p.ResourceIDs) > 0 {
+		s.report.AppliedFilters = append(s.report.AppliedFilters, "resource_ids")
+	}
+	if len(p.VulnerabilityIDs) > 0 {
+		s.report.AppliedFilters = append(s.report.AppliedFilters, "vulnerability_ids")
+	}
+	return s
 }
 
 func eq(v string) itypes.StringFilter {
@@ -149,7 +157,7 @@ func (s *scan) collectCoverage(ctx context.Context) error {
 // one record per scan type (package, code): ACTIVE wins.
 func (s *scan) addCoverage(c *itypes.CoveredResource) {
 	id := aws.ToString(c.ResourceId)
-	if id == "" {
+	if id == "" || !s.resourceWanted(id) {
 		return
 	}
 	r := s.resource(id)
@@ -276,6 +284,9 @@ func (s *scan) filterCriteria(ids []string) *itypes.FilterCriteria {
 	for _, sev := range s.payload.Severities {
 		fc.Severity = append(fc.Severity, eq(sev))
 	}
+	for _, v := range s.payload.VulnerabilityIDs {
+		fc.VulnerabilityId = append(fc.VulnerabilityId, eq(v))
+	}
 	if s.payload.FixAvailable != "" {
 		fc.FixAvailable = []itypes.StringFilter{eq(s.payload.FixAvailable)}
 	}
@@ -310,4 +321,23 @@ func (s *scan) queryBatch(ctx context.Context, ids []string) error {
 		}
 		next = out.NextToken
 	}
+}
+
+// resourceWanted applies the resource_ids filter: an exact ID, or for a
+// Lambda function ARN its function name (with or without a version or
+// alias qualifier).
+func (s *scan) resourceWanted(id string) bool {
+	if len(s.payload.ResourceIDs) == 0 {
+		return true
+	}
+	name := ""
+	if _, rest, ok := strings.Cut(id, ":function:"); ok {
+		name, _, _ = strings.Cut(rest, ":")
+	}
+	for _, w := range s.payload.ResourceIDs {
+		if w == id || (name != "" && w == name) || strings.HasPrefix(id, w+":") {
+			return true
+		}
+	}
+	return false
 }
