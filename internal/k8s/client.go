@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
@@ -20,7 +21,10 @@ import (
 type Client struct {
 	Clientset     kubernetes.Interface
 	DynamicClient dynamic.Interface
-	RESTMapper    meta.RESTMapper
+	// MetadataClient lists objects' metadata only (labels, owners): a
+	// fraction of the full objects' size, for joins that need nothing else.
+	MetadataClient metadata.Interface
+	RESTMapper     meta.RESTMapper
 }
 
 // NewClient creates a new Kubernetes client.
@@ -48,6 +52,10 @@ func NewClient(recorder K8sMetricsRecorder) (*Client, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	metadataClient, err := metadata.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metadata client: %w", err)
+	}
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery client: %w", err)
@@ -61,9 +69,10 @@ func NewClient(recorder K8sMetricsRecorder) (*Client, error) {
 	restMapper := restmapper.NewDiscoveryRESTMapper(groupResources)
 
 	return &Client{
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		RESTMapper:    restMapper,
+		Clientset:      clientset,
+		DynamicClient:  dynamicClient,
+		MetadataClient: metadataClient,
+		RESTMapper:     restMapper,
 	}, nil
 }
 

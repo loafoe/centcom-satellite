@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 
 	"github.com/loafoe/centcom-satellite/internal/config"
 	"github.com/loafoe/centcom-satellite/internal/k8s"
@@ -23,8 +24,9 @@ import (
 
 func newFakeK8sClient() *k8s.Client {
 	return &k8s.Client{
-		Clientset:     fake.NewSimpleClientset(),
-		DynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		Clientset:      fake.NewSimpleClientset(),
+		DynamicClient:  dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		MetadataClient: metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()),
 	}
 }
 
@@ -183,6 +185,16 @@ func TestRegisterTasks_InspectorTasksFollowSecurityHubFlag(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestRegisterTasks_WorkloadExposureNeedsKubernetes(t *testing.T) {
+	cfg := &config.Config{}
+	if _, ok := registerTasks(cfg, newFakeK8sClient(), false, true, cluster_info.Capabilities{}).Get("workload_exposure"); !ok {
+		t.Error("workload_exposure must be registered when Kubernetes is available")
+	}
+	if _, ok := registerTasks(cfg, nil, true, true, cluster_info.Capabilities{}).Get("workload_exposure"); ok {
+		t.Error("workload_exposure must not be registered in AWS-only mode")
 	}
 }
 

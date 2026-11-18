@@ -80,6 +80,7 @@ import (
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_list_standards"
 	"github.com/loafoe/centcom-satellite/internal/task/securityhub_update_findings"
 	"github.com/loafoe/centcom-satellite/internal/task/storage_status"
+	"github.com/loafoe/centcom-satellite/internal/task/workload_exposure"
 	"github.com/loafoe/centcom-satellite/internal/task/workload_restart"
 	"github.com/loafoe/centcom-satellite/internal/task/workload_scale"
 )
@@ -333,6 +334,10 @@ func registerTasks(cfg *config.Config, k8sClient *k8s.Client, awsOnlyMode bool, 
 		registry.Register(list_ingresses.New(k8sClient.Clientset))
 		registry.Register(list_gateways.New(k8sClient.DynamicClient))
 		registry.Register(list_routes.New(k8sClient.DynamicClient))
+		// Which workloads are reachable from outside the cluster (Gateway /
+		// Ingress / LoadBalancer -> Service -> pods), from the Kubernetes API
+		// only; read-only, covered by the existing RBAC.
+		registry.Register(workload_exposure.New(k8sClient.Clientset, k8sClient.DynamicClient, k8sClient.MetadataClient))
 		registry.Register(list_endpoints.New(k8sClient.Clientset))
 		registry.Register(list_network_policies.New(k8sClient.Clientset))
 		registry.Register(list_nodeclaims.New(k8sClient.DynamicClient))
