@@ -16,10 +16,11 @@ import (
 // fakeInspector serves coverage from a fixed list and findings filtered by
 // the request's resourceId values, paging findings pageSize at a time.
 type fakeInspector struct {
-	covered  []itypes.CoveredResource
-	findings []itypes.Finding
-	pageSize int
-	delay    time.Duration
+	covered      []itypes.CoveredResource
+	findings     []itypes.Finding
+	reachability []itypes.Finding // NETWORK_REACHABILITY findings
+	pageSize     int
+	delay        time.Duration
 
 	mu      sync.Mutex
 	filters []*itypes.FilterCriteria
@@ -43,6 +44,17 @@ func (f *fakeInspector) ListFindings(ctx context.Context, in *inspector2.ListFin
 	want := map[string]bool{}
 	for _, id := range in.FilterCriteria.ResourceId {
 		want[aws.ToString(id.Value)] = true
+	}
+	for _, ft := range in.FilterCriteria.FindingType {
+		if aws.ToString(ft.Value) == "NETWORK_REACHABILITY" {
+			var out []itypes.Finding
+			for _, fd := range f.reachability {
+				if want[aws.ToString(fd.Resources[0].Id)] {
+					out = append(out, fd)
+				}
+			}
+			return &inspector2.ListFindingsOutput{Findings: out}, nil
+		}
 	}
 	sevs := map[string]bool{}
 	for _, s := range in.FilterCriteria.Severity {
@@ -171,7 +183,7 @@ func TestExecute_BatchesResourceIDsTenPerCall(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		fake.covered = append(fake.covered, ec2Coverage("i-"+string(rune('a'+i)), "", "ACTIVE"))
 	}
-	run(t, fake, `{"resource_type":"EC2"}`, time.Minute)
+	run(t, fake, `{"resource_type":"EC2","skip_exposure":true}`, time.Minute) // counts vulnerability queries only
 	if len(fake.filters) != 3 {
 		t.Fatalf("ListFindings calls = %d, want 3 (25 resources / 10)", len(fake.filters))
 	}
@@ -190,7 +202,7 @@ func TestExecute_PaginatesFindings(t *testing.T) {
 	for _, cve := range []string{"CVE-1", "CVE-2", "CVE-3", "CVE-4", "CVE-5"} {
 		fake.findings = append(fake.findings, pkgFinding("i-1", cve, itypes.SeverityCritical, 9, itypes.FixAvailableYes))
 	}
-	r := run(t, fake, `{"resource_type":"AWS_EC2_INSTANCE"}`, time.Minute)
+	r := run(t, fake, `{"resource_type":"AWS_EC2_INSTANCE","skip_exposure":true}`, time.Minute) // counts vulnerability queries only
 	if r.TotalFindings != 5 || r.VulnerabilitiesTotal != 5 || len(fake.filters) != 3 {
 		t.Errorf("findings=%d vulns=%d calls=%d, want 5/5/3", r.TotalFindings, r.VulnerabilitiesTotal, len(fake.filters))
 	}

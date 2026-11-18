@@ -206,6 +206,15 @@ func (s *scan) finish() {
 		out := v.Vulnerability
 		out.Resources = len(v.resources)
 		out.ResourceIDs = capN(sortedKeys(v.resources), s.payload.ListLimit)
+		var exposed []string
+		for id := range v.resources {
+			if s.exposure[id] != nil {
+				exposed = append(exposed, id)
+			}
+		}
+		sort.Strings(exposed)
+		out.ExposedResourcesTotal = len(exposed)
+		out.ExposedResources = capN(exposed, s.payload.ListLimit)
 		out.Packages = sortedPackages(v.packages, s.payload.ListLimit)
 		if !v.first.IsZero() {
 			out.FirstObservedAt = v.first.UTC().Format(time.RFC3339)
@@ -264,6 +273,10 @@ func (s *scan) finish() {
 		out.Vulnerabilities = len(r.vulns)
 		out.Fixable = len(r.fixable)
 		out.Exploitable = len(r.exploitable)
+		if e := s.exposure[out.ID]; e != nil {
+			sortPorts(e.Ports)
+			out.InternetExposure = e
+		}
 		ids := sortedKeys(r.vulns)
 		sort.SliceStable(ids, func(i, j int) bool {
 			a, b := byID[ids[i]], byID[ids[j]]
@@ -297,6 +310,28 @@ func (s *scan) finish() {
 		return a.ID < b.ID
 	})
 	s.report.ResourcesTotal = len(res)
+	// Every covered instance with exposed ports, findings or not.
+	for _, id := range s.order {
+		e := s.exposure[id]
+		if e == nil {
+			continue
+		}
+		sortPorts(e.Ports)
+		r := s.resources[id]
+		s.report.ExposedInstances = append(s.report.ExposedInstances, ExposedInstance{
+			ID: id, Name: resourceName(r), Direct: e.Direct, Ports: e.Ports, PortsTotal: e.PortsTotal, Vulnerabilities: len(r.vulns)})
+	}
+	s.report.InternetExposedResources = len(s.report.ExposedInstances)
+	sort.SliceStable(s.report.ExposedInstances, func(i, j int) bool {
+		a, b := s.report.ExposedInstances[i], s.report.ExposedInstances[j]
+		if a.Direct != b.Direct {
+			return a.Direct
+		}
+		return a.Vulnerabilities > b.Vulnerabilities
+	})
+	if len(s.report.ExposedInstances) > maxExposedInstances {
+		s.report.ExposedInstances = s.report.ExposedInstances[:maxExposedInstances]
+	}
 	if len(res) > s.payload.Limit {
 		res = res[:s.payload.Limit]
 	}

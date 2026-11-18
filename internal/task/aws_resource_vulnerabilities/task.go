@@ -20,6 +20,7 @@ package aws_resource_vulnerabilities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -81,6 +82,9 @@ type Payload struct {
 	// many days ahead of the Limit cut (0 = off, max 90); output order is
 	// unchanged. See internal/task/vulnrecency.
 	PreferRecentDays int `json:"prefer_recent_days,omitempty"`
+	// SkipExposure skips the EC2 Internet-exposure lookup (NETWORK_REACHABILITY
+	// findings, ~1 call per 10 instances, run alongside the scan).
+	SkipExposure bool `json:"skip_exposure,omitempty"`
 }
 
 // Package is one vulnerable package as installed and the version fixing it.
@@ -101,25 +105,29 @@ type Vulnerability struct {
 	Severity string `json:"severity"`
 	// CVSS is the highest base score across every source; EPSS the highest
 	// probability; InspectorScore Inspector's own (environment-adjusted).
-	CVSS               float64   `json:"cvss,omitempty"`
-	EPSS               float64   `json:"epss,omitempty"`
-	InspectorScore     float64   `json:"inspector_score,omitempty"`
-	FixAvailable       string    `json:"fix_available,omitempty"`
-	ExploitAvailable   string    `json:"exploit_available,omitempty"`
-	LastKnownExploitAt string    `json:"last_known_exploit_at,omitempty"`
-	VendorSeverity     string    `json:"vendor_severity,omitempty"`
-	Findings           int       `json:"findings"`
-	Resources          int       `json:"resources"`
-	ResourceIDs        []string  `json:"resource_ids,omitempty"`
-	Packages           []Package `json:"packages,omitempty"`
-	Description        string    `json:"description,omitempty"`
-	Remediation        string    `json:"remediation,omitempty"`
-	SourceURL          string    `json:"source_url,omitempty"`
-	ReferenceURLs      []string  `json:"reference_urls,omitempty"`
-	CWEs               []string  `json:"cwes,omitempty"`
-	Detector           string    `json:"detector,omitempty"`
-	FirstObservedAt    string    `json:"first_observed_at,omitempty"`
-	LastObservedAt     string    `json:"last_observed_at,omitempty"`
+	CVSS               float64  `json:"cvss,omitempty"`
+	EPSS               float64  `json:"epss,omitempty"`
+	InspectorScore     float64  `json:"inspector_score,omitempty"`
+	FixAvailable       string   `json:"fix_available,omitempty"`
+	ExploitAvailable   string   `json:"exploit_available,omitempty"`
+	LastKnownExploitAt string   `json:"last_known_exploit_at,omitempty"`
+	VendorSeverity     string   `json:"vendor_severity,omitempty"`
+	Findings           int      `json:"findings"`
+	Resources          int      `json:"resources"`
+	ResourceIDs        []string `json:"resource_ids,omitempty"`
+	// ExposedResources: the affected instances reachable from the Internet
+	// (EC2 only; first ListLimit), ExposedResourcesTotal all of them.
+	ExposedResources      []string  `json:"exposed_resources,omitempty"`
+	ExposedResourcesTotal int       `json:"exposed_resources_total,omitempty"`
+	Packages              []Package `json:"packages,omitempty"`
+	Description           string    `json:"description,omitempty"`
+	Remediation           string    `json:"remediation,omitempty"`
+	SourceURL             string    `json:"source_url,omitempty"`
+	ReferenceURLs         []string  `json:"reference_urls,omitempty"`
+	CWEs                  []string  `json:"cwes,omitempty"`
+	Detector              string    `json:"detector,omitempty"`
+	FirstObservedAt       string    `json:"first_observed_at,omitempty"`
+	LastObservedAt        string    `json:"last_observed_at,omitempty"`
 }
 
 // EC2Details describes an instance.
@@ -164,14 +172,17 @@ type Resource struct {
 	VulnerabilityPackages map[string][]Package `json:"vulnerability_packages,omitempty"`
 	Fixable               int                  `json:"fixable"`
 	Exploitable           int                  `json:"exploitable"`
-	MaxCVSS               float64              `json:"max_cvss,omitempty"`
-	MaxEPSS               float64              `json:"max_epss,omitempty"`
-	ScanStatus            string               `json:"scan_status,omitempty"`
-	ScanMode              string               `json:"scan_mode,omitempty"`
-	LastScannedAt         string               `json:"last_scanned_at,omitempty"`
-	Tags                  map[string]string    `json:"tags,omitempty"`
-	EC2                   *EC2Details          `json:"ec2,omitempty"`
-	Lambda                *LambdaDetails       `json:"lambda,omitempty"`
+	// InternetExposure: ports reachable from the Internet (EC2; nil = none
+	// found), from Inspector's network reachability analysis.
+	InternetExposure *InternetExposure `json:"internet_exposure,omitempty"`
+	MaxCVSS          float64           `json:"max_cvss,omitempty"`
+	MaxEPSS          float64           `json:"max_epss,omitempty"`
+	ScanStatus       string            `json:"scan_status,omitempty"`
+	ScanMode         string            `json:"scan_mode,omitempty"`
+	LastScannedAt    string            `json:"last_scanned_at,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
+	EC2              *EC2Details       `json:"ec2,omitempty"`
+	Lambda           *LambdaDetails    `json:"lambda,omitempty"`
 }
 
 // Coverage says how much of this resource type Inspector actually assesses.
@@ -200,10 +211,17 @@ type Report struct {
 	VulnerabilitiesTotal int             `json:"vulnerabilities_total"`
 	Vulnerabilities      []Vulnerability `json:"vulnerabilities"`
 	ResourcesTotal       int             `json:"resources_total"`
-	Resources            []Resource      `json:"resources"`
-	Complete             bool            `json:"complete"`
-	StopReason           string          `json:"stop_reason,omitempty"`
-	InspectorCalls       int             `json:"inspector_calls"`
+	// ExposureChecked: Internet exposure was looked up (EC2, completed);
+	// InternetExposedResources counts the instances with any exposed port.
+	ExposureChecked          bool `json:"exposure_checked"`
+	InternetExposedResources int  `json:"internet_exposed_resources"`
+	// ExposedInstances: every covered instance with Internet-reachable
+	// ports (direct exposure first; first 200), with or without findings.
+	ExposedInstances []ExposedInstance `json:"exposed_instances,omitempty"`
+	Resources        []Resource        `json:"resources"`
+	Complete         bool              `json:"complete"`
+	StopReason       string            `json:"stop_reason,omitempty"`
+	InspectorCalls   int               `json:"inspector_calls"`
 }
 
 type inspectorAPI interface {
@@ -261,11 +279,24 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	if err := s.collectCoverage(ctx); err != nil {
 		return s.partialOrError(err)
 	}
-	if err := s.queryFindings(ctx); err != nil {
+	// Internet exposure (EC2) alongside the vulnerability queries.
+	exposureDone := make(chan error, 1)
+	if p.ResourceType == ResourceEC2 && !p.SkipExposure {
+		go func() { exposureDone <- s.queryExposure(ctx) }()
+	} else {
+		exposureDone <- errSkipped
+	}
+	err = s.queryFindings(ctx)
+	expErr := <-exposureDone
+	s.report.ExposureChecked = expErr == nil
+	if err != nil {
 		return s.partialOrError(err)
 	}
 	return s.result(), nil
 }
+
+// errSkipped marks the exposure lookup as not run.
+var errSkipped = errors.New("skipped")
 
 func (s *scan) partialOrError(err error) (*task.Result, error) {
 	if s.stopped {

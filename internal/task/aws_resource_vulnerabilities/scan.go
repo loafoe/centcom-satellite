@@ -46,13 +46,15 @@ type scan struct {
 	resources map[string]*resAcc
 	order     []string
 	vulns     map[string]*vulnAcc
+	exposure  map[string]*InternetExposure // EC2 instance -> Internet-reachable ports
 	report    Report
 	stopped   bool
 }
 
 func newScan(p Payload, insp inspectorAPI) *scan {
 	return &scan{
-		payload: p, insp: insp,
+		exposure: map[string]*InternetExposure{},
+		payload:  p, insp: insp,
 		resources: map[string]*resAcc{}, vulns: map[string]*vulnAcc{},
 		report: Report{
 			ResourceType: p.ResourceType, Severities: p.Severities,
