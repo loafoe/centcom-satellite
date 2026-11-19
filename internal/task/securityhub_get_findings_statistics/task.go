@@ -12,7 +12,7 @@
 // remain available via the securityhub_get_findings task (paginated) or the
 // UI/MCP tooling built on it.
 //
-// TYPE, PRODUCT and RESOURCE_TYPE are open-ended free-form strings with no enumerable value
+// TYPE, PRODUCT, RESOURCE_TYPE and ACCOUNT_ID are open-ended free-form strings with no enumerable value
 // set, so they keep the exhaustive client-side aggregation: page through
 // GetFindings and count every matching finding, paced by interPageDelay to
 // stay under AWS's throttling limit.
@@ -47,7 +47,7 @@ const pageSize int32 = 100
 const interPageDelay = 200 * time.Millisecond
 
 // defaultExhaustiveScanBudget bounds how long exhaustiveStats (TYPE/PRODUCT/
-// RESOURCE_TYPE/TITLE/RESOURCE_ID group_by) pages through GetFindings before
+// RESOURCE_TYPE/TITLE/RESOURCE_ID/ACCOUNT_ID group_by) pages through GetFindings before
 // giving up and returning a partial, Truncated result instead of a hard
 // error. Hit live 2026-10-30: an unfiltered group_by=TITLE scan on a real
 // account (ops-sandbox) was still paging past 25s when deliberately cut off,
@@ -59,7 +59,7 @@ const interPageDelay = 200 * time.Millisecond
 const defaultExhaustiveScanBudget = 45 * time.Second
 
 // groupByExtractors covers the exhaustive-scan group_by values (TYPE,
-// PRODUCT, RESOURCE_TYPE): open-ended strings with no fixed value set to query per-bucket.
+// PRODUCT, RESOURCE_TYPE, ACCOUNT_ID): open-ended strings with no fixed value set to query per-bucket.
 var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 	"TYPE": func(f types.AwsSecurityFinding) string {
 		if len(f.Types) == 0 {
@@ -86,6 +86,17 @@ var groupByExtractors = map[string]func(types.AwsSecurityFinding) string{
 			return ""
 		}
 		return aws.ToString(f.Resources[0].Id)
+	},
+	// The account a finding belongs to — same AwsAccountId field normalized
+	// findings already carry (securityhub_common.Finding.AWSAccountID).
+	// Added so a satellite whose AWS identity is a Security Hub
+	// administrator (seeing findings aggregated across many member
+	// accounts, not just its own) can get an exact "findings per account"
+	// breakdown instead of one combined, account-blind total. A no-op for
+	// every other satellite today: AwsAccountId is always the calling
+	// account, so this just reports one bucket.
+	"ACCOUNT_ID": func(f types.AwsSecurityFinding) string {
+		return aws.ToString(f.AwsAccountId)
 	},
 }
 
@@ -118,7 +129,7 @@ type Payload struct {
 	Filter  shc.Filter `json:"filter,omitempty"`
 	GroupBy string     `json:"group_by,omitempty"` // default SEVERITY
 	// NextToken resumes an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/
-	// RESOURCE_ID) scan right after a previous call's Truncated response —
+	// RESOURCE_ID/ACCOUNT_ID) scan right after a previous call's Truncated response —
 	// pass that response's own NextToken back here, with the same
 	// group_by/filter/region, to scan the next up-to-45s slice instead of
 	// re-scanning from the start. Ignored for SEVERITY/WORKFLOW_STATUS,
@@ -131,7 +142,7 @@ type Payload struct {
 // exhaustive; for TYPE/PRODUCT, counts are always exhaustive over every
 // finding matching the filter. Total sums the (possibly capped) bucket
 // counts, so it is a lower bound whenever any bucket is capped. Truncated
-// is set when an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/RESOURCE_ID)
+// is set when an exhaustive (TYPE/PRODUCT/RESOURCE_TYPE/TITLE/RESOURCE_ID/ACCOUNT_ID)
 // scan hit defaultExhaustiveScanBudget before finishing — Total/Counts then
 // cover only the findings seen in that one call's up-to-45s slice, not a
 // running sum across calls. NextToken is set alongside Truncated: feed it
@@ -228,7 +239,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	default:
 		extract, ok := groupByExtractors[groupByStr]
 		if !ok {
-			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID)", groupByStr)), nil
+			return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, TITLE, RESOURCE_ID, ACCOUNT_ID)", groupByStr)), nil
 		}
 		result, err = t.exhaustiveStats(ctx, client, filter, groupByStr, extract, payload.NextToken)
 	}

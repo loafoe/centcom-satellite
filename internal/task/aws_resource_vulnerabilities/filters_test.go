@@ -79,6 +79,64 @@ func TestResourceWanted_LambdaNameOrARN(t *testing.T) {
 	}
 }
 
+// account_ids: narrows ListCoverage and ListFindings to specific member
+// accounts (meaningful only when this satellite's identity is an Inspector
+// delegated administrator — a no-op filter value on every other satellite,
+// since ListCoverage/ListFindings already only ever see the calling
+// account's own resources).
+func TestExecute_AccountIDsFilter(t *testing.T) {
+	fake := filterFake()
+	r := run(t, fake, `{"resource_type":"ec2","account_ids":[" 111111111111 ","111111111111"]}`, time.Minute)
+	if strings.Join(r.AppliedFilters, ",") != "account_ids" {
+		t.Errorf("applied_filters = %v, want [account_ids]", r.AppliedFilters)
+	}
+	sentToFindings := false
+	for _, fc := range fake.filters {
+		for _, id := range fc.AwsAccountId {
+			if aws.ToString(id.Value) != "111111111111" {
+				t.Errorf("ListFindings AwsAccountId filter = %s, want 111111111111", aws.ToString(id.Value))
+			}
+			sentToFindings = true
+		}
+	}
+	if !sentToFindings {
+		t.Error("account_ids never reached ListFindings' FilterCriteria.AwsAccountId")
+	}
+	sentToCoverage := false
+	for _, fc := range fake.coverageFilters {
+		for _, id := range fc.AccountId {
+			if aws.ToString(id.Value) != "111111111111" {
+				t.Errorf("ListCoverage AccountId filter = %s, want 111111111111", aws.ToString(id.Value))
+			}
+			sentToCoverage = true
+		}
+	}
+	if !sentToCoverage {
+		t.Error("account_ids never reached ListCoverage's CoverageFilterCriteria.AccountId")
+	}
+	// Deduped (the payload passed the same ID twice, trimmed/untrimmed).
+	for _, fc := range fake.filters {
+		if len(fc.AwsAccountId) > 1 {
+			t.Errorf("AwsAccountId not deduped: %d entries", len(fc.AwsAccountId))
+		}
+	}
+}
+
+// Resource.AccountID is populated from ListCoverage's own CoveredResource.AccountId
+// — present for every covered resource, independent of the account_ids filter.
+func TestExecute_ResourceAccountIDFromCoverage(t *testing.T) {
+	covered := ec2Coverage("i-1", "web-1", "ACTIVE")
+	covered.AccountId = aws.String("222222222222")
+	fake := &fakeInspector{
+		covered:  []itypes.CoveredResource{covered},
+		findings: []itypes.Finding{pkgFinding("i-1", "CVE-A", itypes.SeverityCritical, 9.8, itypes.FixAvailableYes)},
+	}
+	r := run(t, fake, `{"resource_type":"ec2"}`, time.Minute)
+	if len(r.Resources) != 1 || r.Resources[0].AccountID != "222222222222" {
+		t.Fatalf("resources = %+v, want one resource with account_id 222222222222", r.Resources)
+	}
+}
+
 func TestNormalize_FilterLimits(t *testing.T) {
 	ids := make([]string, 11)
 	for i := range ids {

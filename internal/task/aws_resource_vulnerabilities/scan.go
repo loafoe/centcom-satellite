@@ -71,6 +71,9 @@ func newScan(p Payload, insp inspectorAPI) *scan {
 	if len(p.VulnerabilityIDs) > 0 {
 		s.report.AppliedFilters = append(s.report.AppliedFilters, "vulnerability_ids")
 	}
+	if len(p.AccountIDs) > 0 {
+		s.report.AppliedFilters = append(s.report.AppliedFilters, "account_ids")
+	}
 	return s
 }
 
@@ -129,6 +132,11 @@ func (s *scan) collectCoverage(ctx context.Context) error {
 	fc := &itypes.CoverageFilterCriteria{ResourceType: []itypes.CoverageStringFilter{{
 		Comparison: itypes.CoverageStringComparisonEquals, Value: aws.String(s.payload.ResourceType),
 	}}}
+	for _, id := range s.payload.AccountIDs {
+		fc.AccountId = append(fc.AccountId, itypes.CoverageStringFilter{
+			Comparison: itypes.CoverageStringComparisonEquals, Value: aws.String(id),
+		})
+	}
 	var next *string
 	for {
 		if err := s.spend(ctx); err != nil {
@@ -161,6 +169,7 @@ func (s *scan) addCoverage(c *itypes.CoveredResource) {
 		return
 	}
 	r := s.resource(id)
+	r.AccountID = first(r.AccountID, aws.ToString(c.AccountId))
 	status := "UNKNOWN"
 	if c.ScanStatus != nil {
 		status = string(c.ScanStatus.StatusCode)
@@ -292,6 +301,9 @@ func (s *scan) filterCriteria(ids []string) *itypes.FilterCriteria {
 	}
 	if s.payload.ExploitAvailable != "" {
 		fc.ExploitAvailable = []itypes.StringFilter{eq(s.payload.ExploitAvailable)}
+	}
+	for _, id := range s.payload.AccountIDs {
+		fc.AwsAccountId = append(fc.AwsAccountId, eq(id))
 	}
 	return fc
 }

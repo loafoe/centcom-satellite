@@ -22,11 +22,15 @@ type fakeInspector struct {
 	pageSize     int
 	delay        time.Duration
 
-	mu      sync.Mutex
-	filters []*itypes.FilterCriteria
+	mu              sync.Mutex
+	filters         []*itypes.FilterCriteria
+	coverageFilters []*itypes.CoverageFilterCriteria
 }
 
-func (f *fakeInspector) ListCoverage(_ context.Context, _ *inspector2.ListCoverageInput, _ ...func(*inspector2.Options)) (*inspector2.ListCoverageOutput, error) {
+func (f *fakeInspector) ListCoverage(_ context.Context, in *inspector2.ListCoverageInput, _ ...func(*inspector2.Options)) (*inspector2.ListCoverageOutput, error) {
+	f.mu.Lock()
+	f.coverageFilters = append(f.coverageFilters, in.FilterCriteria)
+	f.mu.Unlock()
 	return &inspector2.ListCoverageOutput{CoveredResources: f.covered}, nil
 }
 

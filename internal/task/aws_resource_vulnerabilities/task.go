@@ -1,7 +1,13 @@
 // Package aws_resource_vulnerabilities reports Amazon Inspector package and
-// code vulnerability findings for this account's EC2 instances or Lambda
-// functions in the satellite's region, grouped both by vulnerability and by
-// resource from one scan.
+// code vulnerability findings for EC2 instances or Lambda functions in the
+// satellite's region, grouped both by vulnerability and by resource from one
+// scan. Ordinarily that's "this account's" resources, since ListCoverage/
+// ListFindings only ever see the calling AWS identity's own account — but if
+// this satellite's identity is an Inspector delegated administrator, the
+// same calls return resources aggregated across every linked member
+// account, and each Resource carries its own AccountID (from
+// CoveredResource.AccountId) so a caller can tell them apart; the optional
+// AccountIDs filter then narrows the whole scan to specific member accounts.
 //
 // How it gets there:
 //
@@ -92,6 +98,13 @@ type Payload struct {
 	ResourceIDs []string `json:"resource_ids,omitempty"`
 	// VulnerabilityIDs keeps only these CVE/GHSA IDs (at most 10).
 	VulnerabilityIDs []string `json:"vulnerability_ids,omitempty"`
+	// AccountIDs keeps only resources/findings owned by these AWS account
+	// IDs (at most 10) — meaningful only when this satellite's AWS identity
+	// is an Inspector delegated administrator seeing resources aggregated
+	// across many member accounts; on every other satellite ListCoverage/
+	// ListFindings only ever see the calling account's own resources
+	// anyway, so this is a no-op. See Resource.AccountID.
+	AccountIDs []string `json:"account_ids,omitempty"`
 }
 
 const maxResourceIDs = 100
@@ -168,6 +181,15 @@ type LambdaDetails struct {
 type Resource struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
+	// AccountID is the resource's own AWS account, from Inspector's
+	// ListCoverage (CoveredResource.AccountId) — populated for every
+	// resource, not just ones with findings. Always the calling identity's
+	// own account today, since no satellite's identity spans accounts yet;
+	// becomes meaningful (and can legitimately differ per resource) once a
+	// satellite runs as an Inspector delegated administrator aggregating
+	// resources across many member accounts. Report.AccountID (the calling
+	// identity's account from STS) stays the scan-level default/fallback.
+	AccountID string `json:"account_id,omitempty"`
 	// Findings and SeverityCounts count this resource's matching findings;
 	// Vulnerabilities the distinct vulnerability IDs among them, and
 	// Fixable/Exploitable how many of those have a fix / known exploit.
@@ -220,7 +242,7 @@ type Report struct {
 	VulnerabilitiesTotal int             `json:"vulnerabilities_total"`
 	Vulnerabilities      []Vulnerability `json:"vulnerabilities"`
 	// AppliedFilters names the optional filters this scan honored
-	// (resource_ids, vulnerability_ids): a caller can tell an older
+	// (resource_ids, vulnerability_ids, account_ids): a caller can tell an older
 	// satellite that ignored one from a filter that matched nothing.
 	AppliedFilters []string `json:"applied_filters,omitempty"`
 	ResourcesTotal int      `json:"resources_total"`
@@ -368,6 +390,9 @@ func normalize(p *Payload) string {
 		return msg
 	}
 	if p.VulnerabilityIDs, msg = vulnagg.CleanIDs("vulnerability_ids", p.VulnerabilityIDs, vulnagg.MaxVulnerabilityIDs, true); msg != "" {
+		return msg
+	}
+	if p.AccountIDs, msg = vulnagg.CleanIDs("account_ids", p.AccountIDs, vulnagg.MaxVulnerabilityIDs, false); msg != "" {
 		return msg
 	}
 	return ""

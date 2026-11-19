@@ -138,6 +138,19 @@ var groupByAttributes = map[string]string{
 	// a separate, client-side aggregation that AWS's Insight restriction does
 	// not apply to).
 	"RESOURCE_ID": "ResourceId",
+	// The account a finding belongs to. Confirmed live against a real
+	// account (ops-sandbox, eu-west-1, 2026-11-19): CreateInsight accepts
+	// "AwsAccountId" and GetInsightResults returns account-keyed buckets
+	// (same verification method as the TITLE rejection noted below, since
+	// the SDK itself has no client-side enum for valid values). Added so a
+	// satellite whose AWS identity is a Security Hub administrator (seeing
+	// findings aggregated across many member accounts) can get an exact
+	// "findings per account" breakdown via one Insight call instead of one
+	// combined, account-blind total. A no-op for every other satellite
+	// today: AwsAccountId is always the calling account, so this just
+	// reports one bucket. Same 100-value truncation caveat as RESOURCE_ID
+	// above, for an org with more than 100 linked accounts.
+	"ACCOUNT_ID": "AwsAccountId",
 }
 
 // maxInsightValues is how many result values GetInsightResults returns at
@@ -248,7 +261,7 @@ func (t *Task) Execute(ctx context.Context, rawPayload json.RawMessage) (*task.R
 	}
 	attribute, ok := groupByAttributes[groupByStr]
 	if !ok {
-		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, RESOURCE_ID; TITLE is not supported by AWS Insights — use filter.title_prefix instead, or securityhub_get_findings_statistics's group_by=TITLE)", groupByStr)), nil
+		return task.NewErrorResult(fmt.Sprintf("unsupported group_by %q (allowed: SEVERITY, TYPE, WORKFLOW_STATUS, PRODUCT, RESOURCE_TYPE, RESOURCE_ID, ACCOUNT_ID; TITLE is not supported by AWS Insights — use filter.title_prefix instead, or securityhub_get_findings_statistics's group_by=TITLE)", groupByStr)), nil
 	}
 
 	client, resolvedRegion, err := t.clientFactory(ctx, payload.Region)

@@ -502,3 +502,37 @@ func resourceFinding(resourceTypes ...string) types.AwsSecurityFinding {
 	}
 	return f
 }
+
+// TestExecute_AccountID_AggregatesExhaustively covers the new ACCOUNT_ID
+// group_by (added for a Security Hub administrator satellite aggregating
+// findings across many member accounts) — same exhaustive-scan shape as
+// TYPE/PRODUCT/RESOURCE_TYPE, just keyed by AwsAccountId instead.
+func TestExecute_AccountID_AggregatesExhaustively(t *testing.T) {
+	api := &pagedFakeAPI{
+		pages: [][]types.AwsSecurityFinding{
+			{accountFinding("111111111111"), accountFinding("111111111111"), accountFinding("222222222222")},
+		},
+	}
+	res, err := newTestTask(api).Execute(context.Background(), json.RawMessage(`{"group_by":"ACCOUNT_ID"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	stats := res.Details.(Statistics)
+	if stats.GroupBy != "ACCOUNT_ID" {
+		t.Errorf("GroupBy = %q, want ACCOUNT_ID", stats.GroupBy)
+	}
+	got := statCounts(stats)
+	want := map[string]int32{"111111111111": 2, "222222222222": 1}
+	for k, v := range want {
+		if got[k].Count != v {
+			t.Errorf("counts[%q] = %d, want %d (all: %+v)", k, got[k].Count, v, got)
+		}
+	}
+	if stats.Total != 3 {
+		t.Errorf("Total = %d, want 3", stats.Total)
+	}
+}
+
+func accountFinding(accountID string) types.AwsSecurityFinding {
+	return types.AwsSecurityFinding{AwsAccountId: aws.String(accountID)}
+}

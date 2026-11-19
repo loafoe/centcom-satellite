@@ -391,6 +391,32 @@ func TestExecute_ResourceIDGroupByTruncation(t *testing.T) {
 	}
 }
 
+// TestExecute_AccountIDGroupBy verifies the new ACCOUNT_ID group_by (added
+// for a Security Hub administrator satellite aggregating findings across
+// many member accounts) reaches AWS as GroupByAttribute "AwsAccountId" and
+// returns account-keyed buckets — same Insight-slot path as every other
+// group_by value, just a different AWS attribute name.
+func TestExecute_AccountIDGroupBy(t *testing.T) {
+	fake := &fakeAPI{results: map[string][]types.InsightResultValue{
+		"AwsAccountId": {resultValue("111111111111", 5), resultValue("222222222222", 2)},
+	}}
+	tk, _ := newTestTask(fake)
+	s := run(t, tk, `{"group_by":"ACCOUNT_ID"}`)
+	if s.GroupBy != "ACCOUNT_ID" {
+		t.Errorf("group_by = %s, want ACCOUNT_ID", s.GroupBy)
+	}
+	counts := map[string]int32{}
+	for _, c := range s.Counts {
+		counts[c.Key] = c.Count
+	}
+	if counts["111111111111"] != 5 || counts["222222222222"] != 2 {
+		t.Errorf("counts = %+v, want 5/2", counts)
+	}
+	if len(fake.insights) != 1 || aws.ToString(fake.insights[0].GroupByAttribute) != "AwsAccountId" {
+		t.Errorf("insight GroupByAttribute = %q, want AwsAccountId", aws.ToString(fake.insights[0].GroupByAttribute))
+	}
+}
+
 // TestExecute_TitleGroupByRejectedBeforeAnyAPICall verifies group_by=TITLE
 // returns the satellite's own clear error (and points callers at
 // title_prefix) without ever calling CreateInsight/UpdateInsight — AWS
